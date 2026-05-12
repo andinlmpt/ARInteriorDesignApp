@@ -1,0 +1,20 @@
+{
+  "name": "ar-interior-design-app",
+  "version": "1.0.0",
+  "description": "AR Interior Design Application with React Native frontend and Node.js backend",
+  "scripts": {
+    "start": "npm start --prefix frontend",
+    "start:frontend": "npm start --prefix frontend",
+    "start:backend": "npm start --prefix backend",
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
+    "dev": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"blue,green\" \"npm run start:backend\" \"npm run start:frontend\"",
+    "start:all": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"blue,green\" \"npm run start:backend\" \"npm run start:frontend\""
+  },
+  "dependencies": {
+    "react-native-dotenv": "^3.4.11",
+    "react-native-encrypted-storage": "^4.0.3"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
