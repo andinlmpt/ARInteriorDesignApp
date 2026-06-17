@@ -1,803 +1,600 @@
-/**
- * AI Design Screen - Refactored
- * Clean, modular version using custom hooks and utilities
- * 
- * Original: 5567 lines
- * Refactored: ~500 lines (90% reduction!)
- */
-
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  TextInput,
-  Alert,
   ActivityIndicator,
+  Alert,
+  TextInput,
   KeyboardAvoidingView,
   Platform,
-  RefreshControl,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import NetInfo from '@react-native-community/netinfo';
-import { AnimatedButton, AnimatedCard, FadeInView, SlideInView, ScaleInView } from '@/components/interactive';
-import { Image } from 'expo-image';
-
-// Custom Hooks (replaces 40+ useState!)
-import { useAIDesignForm } from '@/hooks/useAIDesignForm';
-import { useAIDesignGeneration } from '@/hooks/useAIDesignGeneration';
-import { useAIDesignUI } from '@/hooks/useAIDesignUI';
-
-// Configuration & Constants
-import {
-  DESIGN_STYLES,
-  ROOM_TYPES,
-  BUDGET_OPTIONS,
-  OPTIMIZATION_GOALS,
-} from '@/config/aiDesign.config';
-
-// Business Logic
-// getFurnitureShape - kept for future use in floor plan visualization
-
-// Storage & Utilities
-import {
-  loadDesignHistory,
-  hasSeenTutorial,
-} from '@/utils/aiDesignStorage';
-
-// Services
-import { ideaAssistantService } from '@/services/IdeaAssistantService';
-import { aiTrainingService } from '@/services/AITrainingService';
-import { designImageGenerationService } from '@/services/DesignImageGenerationService';
-
-// Types
-import type { TrainingStats } from '@/types/ai-design-ui';
-import type { DesignProposal } from '@/types/ai-design';
-
-// Theme
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withTiming,
+  withSequence,
+} from 'react-native-reanimated';
+import { callApi } from '@/services/apiClient';
+import FloorPlan2D, { FurnitureItem } from '@/components/FloorPlan2D';
 import { useTheme } from '@/contexts/ThemeContext';
 
-export default function AIDesignScreen() {
+// ─── Types ─────────────────────────────────────────────────────────────────────
+
+interface GeneratedLayout {
+  id: string;
+  furniture: FurnitureItem[];
+  safety_warnings: string[];
+  score: number;
+}
+
+// ─── Constants ─────────────────────────────────────────────────────────────────
+
+const OBSTACLE_OPTIONS = [
+  { label: '🚪 Door', value: 'door' },
+  { label: '🪟 Window', value: 'window' },
+  { label: '🏛️ Pillar', value: 'pillar' },
+  { label: '🪜 Column', value: 'column' },
+  { label: '🚿 Bathroom Fixtures', value: 'bathroom fixtures' },
+  { label: '🍳 Kitchen Counter', value: 'kitchen counter' },
+  { label: '🗄️ Built-in Wardrobe', value: 'built-in wardrobe' },
+  { label: '🔥 Fireplace', value: 'fireplace' },
+];
+
+const ROOM_TYPES = ['Bedroom', 'Living Room', 'Dining Area', 'Office'];
+const STYLE_OPTIONS = ['Minimalist', 'Modern', 'Traditional', 'Scandinavian', 'Industrial'];
+
+// ─── Main Component ─────────────────────────────────────────────────────────────
+
+export default function AIDesignModule() {
   const router = useRouter();
-  const params = useLocalSearchParams();
   const { colors, statusBarStyle } = useTheme();
 
-  // Custom hooks replace 40+ useState hooks!
-  const form = useAIDesignForm();
-  const generation = useAIDesignGeneration();
-  const ui = useAIDesignUI();
+  // Step: 1=Room Input, 2=Preferences, 3=Loading, 4=Results
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
-  // Additional state
-  const [isOffline, setIsOffline] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [trainingStats, setTrainingStats] = useState<TrainingStats | null>(null);
+  // ── Step 1: Room Dimensions ──
+  const [widthInput, setWidthInput] = useState('');
+  const [depthInput, setDepthInput] = useState('');
+  const [heightInput, setHeightInput] = useState('');
+  const [selectedObstacles, setSelectedObstacles] = useState<string[]>([]);
 
-  // Monitor network status
+  // ── Step 2: Preferences ──
+  const [roomType, setRoomType] = useState('');
+  const [style, setStyle] = useState('');
+
+  // ── Step 4: Results ──
+  const [layouts, setLayouts] = useState<GeneratedLayout[]>([]);
+  const [activeLayoutIndex, setActiveLayoutIndex] = useState(0);
+
+  // ── Shimmer animation ──
+  const opacity = useSharedValue(0.3);
   useEffect(() => {
-    const unsubscribe = NetInfo.addEventListener(state => {
-      setIsOffline(!state.isConnected);
-    });
-
-    NetInfo.fetch().then(state => setIsOffline(!state.isConnected));
-
-    return () => unsubscribe();
-  }, []);
-
-  // Load data on mount
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const [history, tutorialSeen, aiStats] = await Promise.all([
-          loadDesignHistory(),
-          hasSeenTutorial(),
-          aiTrainingService.getTrainingStats(),
-        ]);
-
-        if (history.length > 0) {
-          generation.setDesignHistory(history);
-        }
-
-        if (!tutorialSeen) {
-          ui.setShowTutorial(true);
-        }
-
-        if (aiStats && aiStats.totalGenerations > 0) {
-          setTrainingStats({
-            accuracy: typeof aiStats.accuracy === 'number' ? aiStats.accuracy : 0,
-            totalGenerations: aiStats.totalGenerations || 0,
-          });
-        }
-      } catch (error) {
-        console.error('[AIDesign] Failed to load data:', error);
-      }
-    };
-
-    loadData();
-    // Only run on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Load room dimensions from params
-  useEffect(() => {
-    if (params.roomWidth) form.setRoomWidth(params.roomWidth as string);
-    if (params.roomLength) form.setRoomLength(params.roomLength as string);
-    if (params.roomHeight) form.setRoomHeight(params.roomHeight as string);
-  }, [params, form]);
-
-  // AI auto-suggestions as user types
-  useEffect(() => {
-    if (!form.prompt || form.prompt.length < 10) {
-      return;
+    if (step === 3) {
+      opacity.value = withRepeat(
+        withSequence(
+          withTiming(1, { duration: 900 }),
+          withTiming(0.3, { duration: 900 })
+        ),
+        -1,
+        true
+      );
     }
+  }, [step]);
+  const shimmerStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
 
-    const timer = setTimeout(async () => {
-      const suggestions = await ideaAssistantService.analyzePrompt(form.prompt);
+  // ── Computed values ──
+  const roomWidth = parseFloat(widthInput) || 0;
+  const roomDepth = parseFloat(depthInput) || 0;
+  const roomHeight = parseFloat(heightInput) || 0;
+  const availableFloorSpace = parseFloat((roomWidth * roomDepth * 0.75).toFixed(1));
+  const isStep1Valid = roomWidth > 0 && roomDepth > 0 && roomHeight > 0;
+  const isStep2Valid = roomType !== '' && style !== '';
 
-      // Apply suggestions (Always override if AI finds a specific match)
-      if (suggestions.roomType) {
-        form.setSelectedRoom(suggestions.roomType);
-      }
-      if (suggestions.style) {
-        form.setSelectedStyle(suggestions.style);
-      }
-    }, 800); // Slightly longer debounce for better stability
+  // ── Toggle obstacle ──
+  const toggleObstacle = useCallback((value: string) => {
+    setSelectedObstacles(prev =>
+      prev.includes(value) ? prev.filter(o => o !== value) : [...prev, value]
+    );
+  }, []);
 
-    return () => clearTimeout(timer);
-  }, [form.prompt]); // Only depend on the prompt text
-
-  // Generate image for design
-  const handleGenerateImage = useCallback(async (proposal: DesignProposal) => {
+  // ── Generate Layouts ──
+  const handleGenerate = async () => {
+    setStep(3);
     try {
-      ui.setGeneratingImages(prev => ({ ...prev, [proposal.id]: true }));
-
-      // Clear the current image for this proposal to show it's being refreshed
-      ui.setDesignImages(prev => {
-        const next = { ...prev };
-        delete next[proposal.id];
-        return next;
+      const token = await AsyncStorage.getItem('auth_token');
+      const response = await callApi<GeneratedLayout[]>('/design/generate', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: {
+          roomDimensions: { width: roomWidth, height: roomHeight, depth: roomDepth },
+          detectedObstacles: selectedObstacles,
+          availableFloorSpace,
+          roomType,
+          style,
+        },
       });
 
-      const imageResult = await designImageGenerationService.generateDesignImage(proposal, {
-        roomType: proposal.roomType || 'Room',
-        style: form.selectedStyle || 'Modern',
-        colors: proposal.colorPalette,
-        budget: form.budget,
-        quality: ui.imageQuality,
-        imageStyle: ui.imageStyle,
-        customDesign: form.prompt, // Pass user's prompt for better adherence
-      });
-
-      if (imageResult.imageUrl) {
-        ui.setDesignImages(prev => ({ ...prev, [proposal.id]: imageResult.imageUrl! }));
+      if (response && response.length > 0) {
+        setLayouts(response);
+        setActiveLayoutIndex(0);
+        setStep(4);
+      } else {
+        throw new Error('No layouts returned');
       }
     } catch (error) {
-      console.error(`[AIDesign] Image generation error for ${proposal.id}:`, error);
-      Alert.alert('Image Generation Failed', 'Unable to generate image. Please try again.');
-    } finally {
-      ui.setGeneratingImages(prev => ({ ...prev, [proposal.id]: false }));
+      console.error('Failed to generate design:', error);
+      Alert.alert('Generation Failed', 'Could not connect to the AI. Make sure your backend is running and the Gemini API key is set.');
+      setStep(2);
     }
-  }, [form, ui]);
+  };
 
-  // Handle generate with validation
-  const handleGenerate = useCallback(async () => {
-    const validation = form.validate();
-    if (!validation.isValid) {
-      Alert.alert('Validation Errors', validation.errors.join('\n'));
-      return;
-    }
+  // ─── Render: Step 1 — Room Measurement Input ──────────────────────────────────
 
-    // Clear stale images before starting new generation
-    ui.setDesignImages({});
+  const renderStep1 = () => (
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* Hero */}
+      <View style={styles.heroContainer}>
+        <Text style={styles.heroEmoji}>📐</Text>
+        <Text style={[styles.heroTitle, { color: colors.textPrimary }]}>Room Measurements</Text>
+        <Text style={[styles.heroSubtitle, { color: colors.textSecondary }]}>
+          Measure your room with a tape measure and enter the values below.
+        </Text>
+      </View>
 
-    const result = await generation.handleGenerate({
-      selectedRoom: form.selectedRoom,
-      selectedStyle: form.selectedStyle,
-      roomWidth: form.roomWidth,
-      roomLength: form.roomLength,
-      roomHeight: form.roomHeight,
-      budget: form.budget,
-      optimizationGoal: form.optimizationGoal,
-      prompt: form.prompt,
-    }, isOffline);
+      {/* Dimensions Card */}
+      <View style={[styles.card, { backgroundColor: colors.surfacePrimary, borderColor: colors.border }]}>
+        <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Room Dimensions</Text>
 
-    // Automatically trigger image generation for the primary design
-    if (result && result.proposals && result.proposals.length > 0) {
-      handleGenerateImage(result.proposals[0]);
-    }
-  }, [form, generation, isOffline, handleGenerateImage]);
+        <View style={styles.dimensionRow}>
+          <View style={styles.dimensionField}>
+            <Text style={[styles.dimensionLabel, { color: colors.textSecondary }]}>Width (m)</Text>
+            <TextInput
+              style={[styles.dimensionInput, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.background }]}
+              value={widthInput}
+              onChangeText={setWidthInput}
+              keyboardType="decimal-pad"
+              placeholder="e.g. 4.5"
+              placeholderTextColor={colors.textSecondary}
+            />
+          </View>
+          <Text style={[styles.dimensionSeparator, { color: colors.textSecondary }]}>×</Text>
+          <View style={styles.dimensionField}>
+            <Text style={[styles.dimensionLabel, { color: colors.textSecondary }]}>Depth (m)</Text>
+            <TextInput
+              style={[styles.dimensionInput, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.background }]}
+              value={depthInput}
+              onChangeText={setDepthInput}
+              keyboardType="decimal-pad"
+              placeholder="e.g. 3.8"
+              placeholderTextColor={colors.textSecondary}
+            />
+          </View>
+          <Text style={[styles.dimensionSeparator, { color: colors.textSecondary }]}>×</Text>
+          <View style={styles.dimensionField}>
+            <Text style={[styles.dimensionLabel, { color: colors.textSecondary }]}>Height (m)</Text>
+            <TextInput
+              style={[styles.dimensionInput, { color: colors.textPrimary, borderColor: colors.border, backgroundColor: colors.background }]}
+              value={heightInput}
+              onChangeText={setHeightInput}
+              keyboardType="decimal-pad"
+              placeholder="e.g. 2.7"
+              placeholderTextColor={colors.textSecondary}
+            />
+          </View>
+        </View>
 
-  // Handle refresh
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      const aiStats = await aiTrainingService.getTrainingStats();
-      if (aiStats.totalGenerations > 0) {
-        setTrainingStats({
-          accuracy: aiStats.accuracy,
-          totalGenerations: aiStats.totalGenerations,
-        });
-      }
-    } catch (error) {
-      console.error('[AIDesign] Refresh failed:', error);
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
+        {/* Auto-calculated floor space */}
+        {isStep1Valid && (
+          <View style={[styles.computedRow, { backgroundColor: colors.background }]}>
+            <Text style={[styles.computedLabel, { color: colors.textSecondary }]}>Usable floor space</Text>
+            <Text style={[styles.computedValue, { color: colors.accent }]}>{availableFloorSpace} m²</Text>
+          </View>
+        )}
+      </View>
 
-  // Calculate floor plan visualization - kept for future use
-  // const calculateFloorPlan = useCallback((design: DesignProposal) => {
-  //   const containerWidth = Math.min(320, screenWidth - 80);
-  //   const scale = containerWidth / parseFloat(form.roomWidth);
+      {/* Obstacles Card */}
+      <View style={[styles.card, { backgroundColor: colors.surfacePrimary, borderColor: colors.border }]}>
+        <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Obstacles & Fixed Features</Text>
+        <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
+          Select everything that is permanently in or on your room walls.
+        </Text>
+        <View style={styles.obstacleGrid}>
+          {OBSTACLE_OPTIONS.map(opt => {
+            const selected = selectedObstacles.includes(opt.value);
+            return (
+              <TouchableOpacity
+                key={opt.value}
+                style={[
+                  styles.obstacleChip,
+                  { borderColor: selected ? colors.accent : colors.border },
+                  selected && { backgroundColor: colors.accent },
+                ]}
+                onPress={() => toggleObstacle(opt.value)}
+              >
+                <Text style={[styles.obstacleChipText, { color: selected ? '#fff' : colors.textPrimary }]}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
 
-  //   return design.layout.furniture.map((item) => {
-  //     const itemWidthPx = item.dimensions.width * scale;
-  //     const itemLengthPx = item.dimensions.length * scale;
-  //     const xPercent = (item.position.x / parseFloat(form.roomWidth)) * 100;
-  //     const zPercent = (item.position.z / parseFloat(form.roomLength)) * 100;
-  //     const furnitureShape = getFurnitureShape(item);
+      <TouchableOpacity
+        style={[styles.primaryButton, !isStep1Valid && styles.primaryButtonDisabled]}
+        disabled={!isStep1Valid}
+        onPress={() => setStep(2)}
+      >
+        <Text style={styles.primaryButtonText}>Next: Set Preferences →</Text>
+      </TouchableOpacity>
+    </KeyboardAvoidingView>
+  );
 
-  //     return {
-  //       ...item,
-  //       itemWidthPx,
-  //       itemLengthPx,
-  //       xPercent,
-  //       zPercent,
-  //       furnitureShape,
-  //     };
-  //   });
-  // }, [form.roomWidth, form.roomLength, screenWidth]);
+  // ─── Render: Step 2 — Preferences ─────────────────────────────────────────────
+
+  const renderStep2 = () => (
+    <>
+      {/* Room Summary Banner */}
+      <View style={[styles.summaryBanner, { backgroundColor: colors.accent }]}>
+        <Text style={styles.summaryBannerText}>
+          📐 {roomWidth}m × {roomDepth}m × {roomHeight}m  ·  {availableFloorSpace} m²  ·  {selectedObstacles.length} obstacle{selectedObstacles.length !== 1 ? 's' : ''}
+        </Text>
+        <TouchableOpacity onPress={() => setStep(1)}>
+          <Text style={styles.summaryBannerEdit}>Edit</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={[styles.card, { backgroundColor: colors.surfacePrimary, borderColor: colors.border }]}>
+        <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Design Preferences</Text>
+
+        <Text style={[styles.label, { color: colors.textPrimary }]}>Room Type</Text>
+        <View style={styles.chipRow}>
+          {ROOM_TYPES.map(type => (
+            <TouchableOpacity
+              key={type}
+              style={[
+                styles.chip,
+                { borderColor: roomType === type ? colors.accent : colors.border },
+                roomType === type && { backgroundColor: colors.accent },
+              ]}
+              onPress={() => setRoomType(type)}
+            >
+              <Text style={[styles.chipText, { color: roomType === type ? '#fff' : colors.textPrimary }]}>
+                {type}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <Text style={[styles.label, { color: colors.textPrimary }]}>Style Preference</Text>
+        <View style={styles.chipRow}>
+          {STYLE_OPTIONS.map(sty => (
+            <TouchableOpacity
+              key={sty}
+              style={[
+                styles.chip,
+                { borderColor: style === sty ? colors.accent : colors.border },
+                style === sty && { backgroundColor: colors.accent },
+              ]}
+              onPress={() => setStyle(sty)}
+            >
+              <Text style={[styles.chipText, { color: style === sty ? '#fff' : colors.textPrimary }]}>
+                {sty}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <TouchableOpacity
+          style={[styles.primaryButton, !isStep2Valid && styles.primaryButtonDisabled, { marginTop: 24 }]}
+          disabled={!isStep2Valid}
+          onPress={handleGenerate}
+        >
+          <Text style={styles.primaryButtonText}>✨ Generate Layout</Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+
+  // ─── Render: Step 3 — Loading Shimmer ─────────────────────────────────────────
+
+  const renderStep3 = () => (
+    <Animated.View style={[styles.shimmerContainer, shimmerStyle]}>
+      <View style={styles.shimmerOrb}>
+        <Text style={{ fontSize: 48 }}>🏠</Text>
+      </View>
+      <ActivityIndicator size="large" color={colors.accent} style={{ marginTop: 24 }} />
+      <Text style={[styles.shimmerTitle, { color: colors.textPrimary }]}>Designing your space…</Text>
+      <Text style={[styles.shimmerSubtitle, { color: colors.textSecondary }]}>
+        Gemini is generating 3 optimized furniture layouts for your {roomWidth}m × {roomDepth}m room
+      </Text>
+    </Animated.View>
+  );
+
+  // ─── Render: Step 4 — Results ──────────────────────────────────────────────────
+
+  const renderStep4 = () => {
+    if (layouts.length === 0) return null;
+    const activeLayout = layouts[activeLayoutIndex];
+
+    return (
+      <View>
+        {/* Summary Banner */}
+        <View style={[styles.summaryBanner, { backgroundColor: colors.accent }]}>
+          <Text style={styles.summaryBannerText}>
+            {roomType}  ·  {style}  ·  {roomWidth}m × {roomDepth}m
+          </Text>
+          <TouchableOpacity onPress={() => { setStep(2); }}>
+            <Text style={styles.summaryBannerEdit}>Change</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Layout Tabs */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsScroll} contentContainerStyle={{ paddingHorizontal: 16 }}>
+          {layouts.map((layout, idx) => (
+            <TouchableOpacity
+              key={layout.id}
+              style={[styles.tab, activeLayoutIndex === idx && styles.tabActive]}
+              onPress={() => setActiveLayoutIndex(idx)}
+            >
+              <Text style={[styles.tabText, activeLayoutIndex === idx && styles.tabTextActive]}>
+                Layout {idx + 1}
+              </Text>
+              <View style={[styles.scoreBadge, { backgroundColor: layout.score >= 80 ? '#10b981' : layout.score >= 60 ? '#f59e0b' : '#ef4444' }]}>
+                <Text style={styles.scoreBadgeText}>{layout.score}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        {/* 2D Floor Plan */}
+        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Top-Down Floor Plan</Text>
+        <FloorPlan2D
+          roomDimensions={{ width: roomWidth, height: roomHeight, depth: roomDepth }}
+          furniture={activeLayout.furniture}
+          obstacles={selectedObstacles}
+        />
+
+        {/* Safety Warnings */}
+        {activeLayout.safety_warnings && activeLayout.safety_warnings.length > 0 && (
+          <View style={styles.warningCard}>
+            <Text style={styles.warningTitle}>⚠️ Safety Warnings</Text>
+            {activeLayout.safety_warnings.map((w, i) => (
+              <Text key={i} style={styles.warningText}>• {w}</Text>
+            ))}
+          </View>
+        )}
+
+        {/* Furniture Legend */}
+        <View style={[styles.card, { backgroundColor: colors.surfacePrimary, borderColor: colors.border }]}>
+          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Furniture List</Text>
+          {activeLayout.furniture.map((item, i) => (
+            <View key={i} style={styles.furnitureRow}>
+              <View style={[styles.furnitureColorDot, { backgroundColor: item.color }]} />
+              <Text style={[styles.furnitureName, { color: colors.textPrimary }]}>{item.name}</Text>
+              <Text style={[styles.furnitureDims, { color: colors.textSecondary }]}>
+                {item.width}m × {item.depth}m
+              </Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Regenerate */}
+        <TouchableOpacity style={[styles.primaryButton, { margin: 16 }]} onPress={() => setStep(2)}>
+          <Text style={styles.primaryButtonText}>🔄 Regenerate</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  // ─── Main Render ───────────────────────────────────────────────────────────────
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={[styles.container, { backgroundColor: colors.background }]}
-    >
+    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} keyboardShouldPersistTaps="handled">
       <StatusBar style={statusBarStyle} />
 
-      <ScrollView
-        style={styles.scrollView}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-      >
-        {/* Header */}
-        <FadeInView delay={0}>
-          <View style={[styles.header, { backgroundColor: colors.surfacePrimary, borderBottomColor: colors.border }]}>
-            <AnimatedButton onPress={() => router.back()} hapticType="light">
-              <Text style={[styles.backButton, { color: colors.accent }]}>← Back</Text>
-            </AnimatedButton>
-            <Text style={[styles.title, { color: colors.textPrimary }]}>AI Design Assistant</Text>
-          </View>
-        </FadeInView>
-
-        {/* Offline Banner */}
-        {isOffline && (
-          <View style={styles.offlineBanner}>
-            <Text style={styles.offlineText}>📵 Offline Mode</Text>
-          </View>
-        )}
-
-        {/* Training Stats */}
-        {trainingStats && (
-          <View style={[styles.statsCard, { backgroundColor: colors.surfacePrimary, borderColor: colors.border }]}>
-            <Text style={[styles.statsText, { color: colors.textPrimary }]}>
-              🤖 AI Accuracy: {trainingStats.accuracy.toFixed(1)}%
-            </Text>
-            <Text style={[styles.statsSubtext, { color: colors.textSecondary }]}>
-              {trainingStats.totalGenerations} designs generated
-            </Text>
-          </View>
-        )}
-
-        {/* Form Inputs */}
-        <View style={[styles.section, { backgroundColor: colors.surfacePrimary, borderColor: colors.border }]}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Describe Your Vision</Text>
-          <TextInput
-            style={[styles.textInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.textPrimary }]}
-            placeholder="E.g., Cozy modern living room with natural light..."
-            placeholderTextColor={colors.textMuted}
-            value={form.prompt}
-            onChangeText={form.setPrompt}
-            multiline
-            numberOfLines={3}
-          />
+      {/* Header */}
+      <View style={[styles.header, { backgroundColor: colors.surfacePrimary, borderBottomColor: colors.border }]}>
+        <TouchableOpacity onPress={() => router.back()}>
+          <Text style={[styles.backButton, { color: colors.accent }]}>← Back</Text>
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>AI Design</Text>
+        {/* Step indicator */}
+        <View style={styles.stepIndicator}>
+          {[1, 2, 3, 4].map(s => (
+            <View
+              key={s}
+              style={[
+                styles.stepDot,
+                { backgroundColor: step >= s ? colors.accent : colors.border },
+              ]}
+            />
+          ))}
         </View>
+      </View>
 
-
-        {/* Style Selection */}
-        <View style={[styles.section, { backgroundColor: colors.surfacePrimary, borderColor: colors.border }]}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Design Style</Text>
-          <View style={styles.optionsGrid}>
-            {DESIGN_STYLES.map((style, idx) => (
-              <ScaleInView key={style.id} delay={idx * 50}>
-                <AnimatedCard
-                  style={[
-                    styles.optionButton,
-                    { backgroundColor: colors.background, borderColor: colors.border },
-                    form.selectedStyle === style.name && { borderColor: colors.accent, backgroundColor: colors.accentSoft },
-                  ]}
-                  onPress={() => form.setSelectedStyle(style.name)}
-                  hapticFeedback={true}
-                >
-                  <Text style={styles.emoji}>{style.emoji}</Text>
-                  <Text style={[styles.optionText, { color: colors.textPrimary }]}>{style.name}</Text>
-                </AnimatedCard>
-              </ScaleInView>
-            ))}
-          </View>
-        </View>
-
-        {/* Room Dimensions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Room Dimensions (meters)</Text>
-          <View style={styles.dimensionsRow}>
-            <View style={styles.dimensionInput}>
-              <Text style={styles.label}>Width</Text>
-              <TextInput
-                style={styles.input}
-                value={form.roomWidth}
-                onChangeText={form.setRoomWidth}
-                keyboardType="numeric"
-              />
-            </View>
-            <View style={styles.dimensionInput}>
-              <Text style={styles.label}>Length</Text>
-              <TextInput
-                style={styles.input}
-                value={form.roomLength}
-                onChangeText={form.setRoomLength}
-                keyboardType="numeric"
-              />
-            </View>
-            <View style={styles.dimensionInput}>
-              <Text style={styles.label}>Height</Text>
-              <TextInput
-                style={styles.input}
-                value={form.roomHeight}
-                onChangeText={form.setRoomHeight}
-                keyboardType="numeric"
-              />
-            </View>
-          </View>
-        </View>
-
-        {/* Budget Selection */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Budget</Text>
-          <View style={styles.optionsRow}>
-            {BUDGET_OPTIONS.map((budgetOption, idx) => (
-              <SlideInView key={budgetOption} direction="bottom" delay={idx * 50}>
-                <AnimatedButton
-                  style={[
-                    styles.budgetButton,
-                    { backgroundColor: colors.background, borderColor: colors.border },
-                    form.budget === budgetOption && { borderColor: colors.accent, backgroundColor: colors.accentSoft },
-                  ]}
-                  onPress={() => form.setBudget(budgetOption)}
-                  hapticType="light"
-                >
-                  <Text style={[styles.budgetText, { color: colors.textPrimary }]}>{budgetOption}</Text>
-                </AnimatedButton>
-              </SlideInView>
-            ))}
-          </View>
-        </View>
-
-        {/* Optimization Goal */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Optimization Goal</Text>
-          <View style={styles.optionsRow}>
-            {OPTIMIZATION_GOALS.map((goal, idx) => (
-              <SlideInView key={goal} direction="bottom" delay={idx * 50}>
-                <AnimatedButton
-                  style={[
-                    styles.goalButton,
-                    { backgroundColor: colors.background, borderColor: colors.border },
-                    form.optimizationGoal === goal && { borderColor: colors.accent, backgroundColor: colors.accentSoft },
-                  ]}
-                  onPress={() => form.setOptimizationGoal(goal)}
-                  hapticType="light"
-                >
-                  <Text style={[styles.goalText, { color: colors.textPrimary }]}>{goal}</Text>
-                </AnimatedButton>
-              </SlideInView>
-            ))}
-          </View>
-        </View>
-
-        {/* Generate Button */}
-        <SlideInView direction="bottom" delay={300}>
-          <AnimatedButton
-            style={[
-              styles.generateButton,
-              { backgroundColor: colors.accent },
-              generation.isGenerating && { backgroundColor: colors.textMuted },
-            ]}
-            onPress={handleGenerate}
-            disabled={generation.isGenerating}
-            hapticType="success"
-          >
-            {generation.isGenerating ? (
-              <>
-                <ActivityIndicator color="#fff" style={styles.buttonSpinner} />
-                <Text style={styles.generateButtonText}>Generating...</Text>
-              </>
-            ) : (
-              <Text style={styles.generateButtonText}>✨ Generate Design</Text>
-            )}
-          </AnimatedButton>
-        </SlideInView>
-
-        {/* Validation Errors */}
-        {form.validationErrors.length > 0 && (
-          <View style={[styles.errorCard, { backgroundColor: colors.danger + '20', borderLeftColor: colors.danger }]}>
-            {form.validationErrors.map((error, idx) => (
-              <Text key={idx} style={[styles.errorText, { color: colors.danger }]}>• {error}</Text>
-            ))}
-          </View>
-        )}
-
-        {/* Results */}
-        {generation.generatedDesigns.length > 0 && (
-          <View style={styles.resultsSection}>
-            <Text style={[styles.resultsTitle, { color: colors.textPrimary }]}>
-              Generated Designs ({generation.generatedDesigns.length})
-            </Text>
-
-            {generation.generatedDesigns.map((design, index) => (
-              <ScaleInView key={design.id} delay={index * 100}>
-                <AnimatedCard style={[styles.designCard, { backgroundColor: colors.surfacePrimary, borderColor: colors.border }]}>
-                  <Text style={[styles.designTitle, { color: colors.textPrimary }]}>
-                    {index + 1}. {design.title}
-                  </Text>
-                  <Text style={[styles.designDescription, { color: colors.textSecondary }]}>{design.description}</Text>
-
-                  {/* Score */}
-                  <View style={styles.scoreRow}>
-                    <Text style={[styles.scoreLabel, { color: colors.textSecondary }]}>Performance Score:</Text>
-                    <Text style={[styles.scoreValue, { color: colors.accent }]}>
-                      {design.performanceScore.overall.toFixed(1)}/100
-                    </Text>
-                  </View>
-
-                  {/* Cost */}
-                  <View style={styles.costRow}>
-                    <Text style={[styles.costLabel, { color: colors.textSecondary }]}>Estimated Cost:</Text>
-                    <Text style={[styles.costValue, { color: colors.textPrimary }]}>
-                      ${design.estimatedCost.low.toLocaleString()} - $
-                      {design.estimatedCost.high.toLocaleString()}
-                    </Text>
-                  </View>
-
-                  {/* Furniture Count */}
-                  <Text style={[styles.furnitureCount, { color: colors.textSecondary }]}>
-                    🪑 {design.layout.furniture.length} furniture items
-                  </Text>
-
-                  {/* Color Palette */}
-                  <View style={styles.colorPalette}>
-                    {design.colorPalette.map((color, idx) => (
-                      <View
-                        key={idx}
-                        style={[styles.colorSwatch, { backgroundColor: color }]}
-                      />
-                    ))}
-                  </View>
-
-                  {/* Actions */}
-                  <View style={styles.designActions}>
-                    <AnimatedButton
-                      style={styles.actionButton}
-                      onPress={() => ui.toggleFavorite(design.id)}
-                      hapticType="light"
-                    >
-                      <Text style={styles.actionButtonText}>
-                        {ui.favoriteDesigns.has(design.id) ? '❤️' : '🤍'} Favorite
-                      </Text>
-                    </AnimatedButton>
-
-                    <AnimatedButton
-                      style={styles.actionButton}
-                      onPress={() => handleGenerateImage(design)}
-                      disabled={ui.generatingImages[design.id]}
-                      hapticType="medium"
-                    >
-                      {ui.generatingImages[design.id] ? (
-                        <ActivityIndicator size="small" />
-                      ) : (
-                        <Text style={styles.actionButtonText}>🖼️ Generate Image</Text>
-                      )}
-                    </AnimatedButton>
-
-                    <AnimatedButton
-                      style={styles.actionButton}
-                      onPress={() => router.push(`/ar-view?designId=${design.id}`)}
-                      hapticType="medium"
-                    >
-                      <Text style={styles.actionButtonText}>👓 View in AR</Text>
-                    </AnimatedButton>
-                  </View>
-
-                  {/* Display Generated Image */}
-                  {ui.designImages[design.id] && (
-                    <View style={styles.imageContainer}>
-                      <Text style={styles.imageLabel}>Generated Visualization:</Text>
-                      <Image
-                        source={{ uri: ui.designImages[design.id] }}
-                        style={styles.generatedImage}
-                        contentFit="cover"
-                        transition={500}
-                      />
-                    </View>
-                  )}
-                </AnimatedCard>
-              </ScaleInView>
-            ))}
-          </View>
-        )}
-      </ScrollView>
-    </KeyboardAvoidingView>
+      <View style={styles.content}>
+        {step === 1 && renderStep1()}
+        {step === 2 && renderStep2()}
+        {step === 3 && renderStep3()}
+        {step === 4 && renderStep4()}
+      </View>
+    </ScrollView>
   );
 }
 
+// ─── Styles ─────────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-  },
+  container: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
   },
-  backButton: {
-    fontSize: 16,
-    marginRight: 16,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: '600',
-  },
-  offlineBanner: {
-    backgroundColor: '#F59E0B',
-    padding: 12,
-    alignItems: 'center',
-  },
-  offlineText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
-  statsCard: {
+  backButton: { fontSize: 16, fontWeight: '500', minWidth: 60 },
+  headerTitle: { fontSize: 18, fontWeight: 'bold' },
+  stepIndicator: { flexDirection: 'row', gap: 6, minWidth: 60, justifyContent: 'flex-end' },
+  stepDot: { width: 8, height: 8, borderRadius: 4 },
+  content: { paddingBottom: 48 },
+
+  // Hero
+  heroContainer: { alignItems: 'center', paddingTop: 32, paddingBottom: 8, paddingHorizontal: 24 },
+  heroEmoji: { fontSize: 56, marginBottom: 12 },
+  heroTitle: { fontSize: 22, fontWeight: 'bold', marginBottom: 8 },
+  heroSubtitle: { fontSize: 15, textAlign: 'center', lineHeight: 22 },
+
+  // Card
+  card: {
     margin: 16,
+    marginTop: 8,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 16,
     borderWidth: 1,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
   },
-  statsText: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  statsSubtext: {
-    fontSize: 14,
-  },
-  section: {
-    margin: 16,
-    padding: 16,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 12,
-  },
-  textInput: {
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    minHeight: 80,
-  },
-  optionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  optionButton: {
-    flexDirection: 'column',
-    alignItems: 'center',
-    padding: 12,
-    borderWidth: 1,
-    borderRadius: 8,
-    minWidth: 100,
-  },
-  optionButtonActive: {
-  },
-  emoji: {
-    fontSize: 24,
-    marginBottom: 4,
-  },
-  optionText: {
-    fontSize: 14,
-  },
-  dimensionsRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
+  cardTitle: { fontSize: 17, fontWeight: '700', marginBottom: 4 },
+  cardSubtitle: { fontSize: 13, marginBottom: 14, lineHeight: 18 },
+
+  // Dimensions
+  dimensionRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginTop: 12 },
+  dimensionField: { flex: 1 },
+  dimensionLabel: { fontSize: 12, fontWeight: '600', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
   dimensionInput: {
-    flex: 1,
-  },
-  label: {
-    fontSize: 14,
-    marginBottom: 4,
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
+    borderWidth: 1.5,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
     fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
   },
-  optionsRow: {
+  dimensionSeparator: { fontSize: 18, fontWeight: '300', marginBottom: 10 },
+  computedRow: {
     flexDirection: 'row',
-    gap: 8,
-  },
-  budgetButton: {
-    flex: 1,
-    padding: 12,
-    borderWidth: 1,
-    borderRadius: 8,
+    justifyContent: 'space-between',
     alignItems: 'center',
-  },
-  budgetButtonActive: {
-  },
-  budgetText: {
-    fontSize: 14,
-    textTransform: 'capitalize',
-  },
-  goalButton: {
-    flex: 1,
+    borderRadius: 10,
     padding: 12,
-    borderWidth: 1,
-    borderRadius: 8,
-    alignItems: 'center',
+    marginTop: 14,
   },
-  goalButtonActive: {
+  computedLabel: { fontSize: 14 },
+  computedValue: { fontSize: 18, fontWeight: '700' },
+
+  // Obstacles
+  obstacleGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
+  obstacleChip: {
+    borderWidth: 1.5,
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
   },
-  goalText: {
-    fontSize: 14,
-    textTransform: 'capitalize',
-  },
-  generateButton: {
-    margin: 16,
-    padding: 16,
-    borderRadius: 8,
+  obstacleChipText: { fontSize: 13, fontWeight: '600' },
+
+  // Summary Banner
+  summaryBanner: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  summaryBannerText: { color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 },
+  summaryBannerEdit: { color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: '600', marginLeft: 12 },
+
+  // Chips
+  label: { fontSize: 15, fontWeight: '700', marginTop: 16, marginBottom: 10 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: {
+    borderWidth: 1.5,
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  chipText: { fontSize: 14, fontWeight: '600' },
+
+  // Primary Button
+  primaryButton: {
+    backgroundColor: '#3b82f6',
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 8,
+    shadowColor: '#3b82f6',
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  primaryButtonDisabled: { backgroundColor: '#94a3b8', shadowOpacity: 0, elevation: 0 },
+  primaryButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+  // Shimmer
+  shimmerContainer: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 32 },
+  shimmerOrb: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#eff6ff',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  generateButtonDisabled: {
-  },
-  buttonSpinner: {
-    marginRight: 8,
-  },
-  generateButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  errorCard: {
-    margin: 16,
-    padding: 16,
-    borderRadius: 8,
-    borderLeftWidth: 4,
-  },
-  errorText: {
-    marginBottom: 4,
-  },
-  resultsSection: {
-    margin: 16,
-  },
-  resultsTitle: {
-    fontSize: 22,
-    fontWeight: '600',
-    marginBottom: 16,
-  },
-  designCard: {
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 16,
-    borderWidth: 1,
-  },
-  designTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  designDescription: {
-    fontSize: 14,
-    marginBottom: 12,
-  },
-  scoreRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  scoreLabel: {
-    fontSize: 14,
-  },
-  scoreValue: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  costRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  costLabel: {
-    fontSize: 14,
-  },
-  costValue: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  furnitureCount: {
-    fontSize: 14,
-    marginBottom: 12,
-  },
-  colorPalette: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
-  },
-  colorSwatch: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  designActions: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-  },
-  actionButton: {
-    flex: 1,
-    padding: 12,
-    borderWidth: 1,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  actionButtonText: {
-    fontSize: 12,
-  },
-  imageContainer: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: '#0F172A',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  imageLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 8,
-    color: '#FFFFFF',
-  },
-  generatedImage: {
-    width: '100%',
-    height: 300,
-    borderRadius: 8,
-    backgroundColor: '#1E293B',
-  },
-});
+  shimmerTitle: { fontSize: 20, fontWeight: '700', marginTop: 20, marginBottom: 8 },
+  shimmerSubtitle: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
 
+  // Results Tabs
+  tabsScroll: { marginTop: 16, marginBottom: 8 },
+  tab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#e2e8f0',
+    marginRight: 10,
+  },
+  tabActive: { backgroundColor: '#3b82f6' },
+  tabText: { fontWeight: '700', color: '#475569' },
+  tabTextActive: { color: '#fff' },
+  scoreBadge: {
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    marginLeft: 8,
+  },
+  scoreBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+
+  sectionTitle: { fontSize: 17, fontWeight: '700', marginLeft: 16, marginTop: 8, marginBottom: 4 },
+
+  // Warning Card
+  warningCard: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#f87171',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 16,
+    margin: 16,
+    marginTop: 8,
+  },
+  warningTitle: { color: '#dc2626', fontWeight: '700', fontSize: 15, marginBottom: 8 },
+  warningText: { color: '#b91c1c', fontSize: 14, marginBottom: 4, lineHeight: 20 },
+
+  // Furniture Legend
+  furnitureRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#e2e8f0' },
+  furnitureColorDot: { width: 12, height: 12, borderRadius: 6, marginRight: 10 },
+  furnitureName: { flex: 1, fontSize: 14, fontWeight: '500' },
+  furnitureDims: { fontSize: 13 },
+});

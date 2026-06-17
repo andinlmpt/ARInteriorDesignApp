@@ -128,7 +128,7 @@ export default function SavedScreen() {
       } else if (item.type === 'design') {
         router.push(`/ai-design?id=${item.id}`);
       } else if (item.type === 'theme') {
-        router.push(`/theme-recommend?id=${item.id}`);
+        router.push(`/explore?id=${item.id}`);
       } else {
         // For furniture items, could navigate to a detail screen
         // For now, show an alert

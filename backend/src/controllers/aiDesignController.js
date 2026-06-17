@@ -8,6 +8,8 @@
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
 import geminiService from '../services/geminiService.js';
+import DesignSession from '../models/DesignSession.js';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
 
@@ -66,6 +68,166 @@ const FURNITURE_CATALOG = {
     { type: 'china-cabinet', name: 'China Cabinet', width: 1.2, length: 0.45, height: 1.8, category: 'storage' },
   ],
 };
+
+// ============================================================================
+// STYLE COLOR SCHEMES FOR FALLBACK
+// ============================================================================
+
+const STYLE_COLORS = {
+  Minimalist:   ['#f1f5f9', '#e2e8f0', '#94a3b8', '#64748b', '#f8fafc'],
+  Modern:       ['#a0c4ff', '#bdb2ff', '#ffc6ff', '#caffbf', '#9bf6ff'],
+  Traditional:  ['#c9a86a', '#d4a574', '#b8860b', '#8b7355', '#f5deb3'],
+  Scandinavian: ['#a8d5e2', '#d4e8d0', '#f7c5a0', '#e8d5c4', '#b8d4e8'],
+  Industrial:   ['#a0a0a0', '#808080', '#b87333', '#5a5a5a', '#c0b090'],
+};
+
+// ============================================================================
+// SMART RULE-BASED FALLBACK LAYOUT GENERATOR
+// ============================================================================
+
+function clamp(val, min, max) { return Math.max(min, Math.min(max, val)); }
+
+function generateFallbackLayouts(roomDimensions, roomType, style, detectedObstacles = []) {
+  const W = roomDimensions.width || 5;
+  const D = roomDimensions.depth || 4;
+  const PAD = 0.15;
+  const colorPalette = STYLE_COLORS[style] || STYLE_COLORS.Modern;
+
+  const catalogKey = { 'Living Room': 'Living Room', 'Bedroom': 'Bedroom', 'Dining Area': 'Dining Room', 'Office': 'Office' }[roomType] || 'Living Room';
+  const catalog = FURNITURE_CATALOG[catalogKey] || FURNITURE_CATALOG['Living Room'];
+
+  function makeFurn(item, x, y, rotation = 0, colorIdx = 0) {
+    const fw = (rotation === 90 || rotation === 270) ? item.length : item.width;
+    const fd = (rotation === 90 || rotation === 270) ? item.width : item.length;
+    return {
+      name: item.name,
+      x: parseFloat(clamp(x, PAD, W - fw - PAD).toFixed(2)),
+      y: parseFloat(clamp(y, PAD, D - fd - PAD).toFixed(2)),
+      width: parseFloat(fw.toFixed(2)),
+      depth: parseFloat(fd.toFixed(2)),
+      rotation,
+      color: colorPalette[colorIdx % colorPalette.length],
+    };
+  }
+
+  const warnings = [];
+  if (detectedObstacles.includes('door'))   warnings.push('Keep a clear 1m walkway path to the door.');
+  if (detectedObstacles.includes('pillar')) warnings.push('Pillar may affect furniture placement — plan around it.');
+  if (detectedObstacles.includes('window')) warnings.push('Avoid placing tall furniture in front of windows.');
+
+  function buildLivingRoom() {
+    const sofa = catalog.find(i => i.type === 'sofa');
+    const chair = catalog.find(i => i.type === 'armchair');
+    const coffee = catalog.find(i => i.type === 'coffee-table');
+    const tv = catalog.find(i => i.type === 'tv-stand');
+    const lamp = catalog.find(i => i.type === 'floor-lamp');
+    return [
+      { id: 'layout_1', score: 88, safety_warnings: warnings, furniture: [
+        makeFurn(tv, PAD, PAD, 0, 0),
+        makeFurn(sofa, (W - sofa.width) / 2, D - sofa.length - PAD, 0, 1),
+        ...(coffee ? [makeFurn(coffee, (W - coffee.width) / 2, D - sofa.length - coffee.length - 0.6, 0, 2)] : []),
+        ...(chair ? [makeFurn(chair, W - chair.width - PAD, D - chair.length - 0.8, 0, 3)] : []),
+        ...(lamp ? [makeFurn(lamp, W - lamp.width - PAD, PAD, 0, 4)] : []),
+      ]},
+      { id: 'layout_2', score: 81, safety_warnings: warnings, furniture: [
+        makeFurn(sofa, PAD, (D - sofa.length) / 2, 0, 0),
+        makeFurn(tv, W - tv.width - PAD, (D - tv.length) / 2, 0, 1),
+        ...(coffee ? [makeFurn(coffee, (W - coffee.width) / 2, (D - coffee.length) / 2, 0, 2)] : []),
+        ...(chair ? [makeFurn(chair, PAD, PAD, 0, 3)] : []),
+        ...(lamp ? [makeFurn(lamp, W - lamp.width - PAD, D - lamp.length - PAD, 0, 4)] : []),
+      ]},
+      { id: 'layout_3', score: 75, safety_warnings: warnings, furniture: [
+        makeFurn(sofa, PAD, PAD, 0, 1),
+        makeFurn(tv, W - tv.width - PAD, PAD, 0, 0),
+        ...(coffee ? [makeFurn(coffee, (W - coffee.width) / 2, PAD + sofa.length + 0.3, 0, 2)] : []),
+        ...(chair ? [makeFurn(chair, (W - chair.width) / 2, D - chair.length - PAD, 0, 3)] : []),
+      ]},
+    ];
+  }
+
+  function buildBedroom() {
+    const bed = catalog.find(i => i.type === 'bed');
+    const night = catalog.find(i => i.type === 'nightstand');
+    const dresser = catalog.find(i => i.type === 'dresser');
+    const wardrobe = catalog.find(i => i.type === 'wardrobe');
+    const desk = catalog.find(i => i.type === 'desk');
+    return [
+      { id: 'layout_1', score: 90, safety_warnings: warnings, furniture: [
+        makeFurn(bed, (W - bed.width) / 2, PAD, 0, 0),
+        ...(night ? [makeFurn(night, (W - bed.width) / 2 - night.width - 0.1, PAD + 0.3, 0, 2)] : []),
+        ...(night ? [makeFurn(night, (W - bed.width) / 2 + bed.width + 0.1, PAD + 0.3, 0, 2)] : []),
+        ...(wardrobe ? [makeFurn(wardrobe, W - wardrobe.width - PAD, PAD, 0, 1)] : []),
+        ...(dresser ? [makeFurn(dresser, PAD, D - dresser.length - PAD, 0, 3)] : []),
+      ]},
+      { id: 'layout_2', score: 83, safety_warnings: warnings, furniture: [
+        makeFurn(bed, PAD, (D - bed.length) / 2, 0, 0),
+        ...(night ? [makeFurn(night, PAD + bed.width + 0.1, (D - bed.length) / 2 + 0.3, 0, 2)] : []),
+        ...(dresser ? [makeFurn(dresser, W - dresser.width - PAD, PAD, 0, 3)] : []),
+        ...(desk ? [makeFurn(desk, W - desk.width - PAD, D - desk.length - PAD, 0, 4)] : []),
+      ]},
+      { id: 'layout_3', score: 76, safety_warnings: warnings, furniture: [
+        makeFurn(bed, (W - bed.width) / 2, D - bed.length - PAD, 0, 0),
+        ...(wardrobe ? [makeFurn(wardrobe, PAD, PAD, 0, 1)] : []),
+        ...(dresser ? [makeFurn(dresser, W - dresser.width - PAD, PAD, 0, 3)] : []),
+        ...(desk ? [makeFurn(desk, PAD, D - desk.length - bed.length - 1, 0, 4)] : []),
+      ]},
+    ];
+  }
+
+  function buildDining() {
+    const table = catalog.find(i => i.type === 'dining-table');
+    const chair = catalog.find(i => i.type === 'dining-chair');
+    const buffet = catalog.find(i => i.type === 'buffet');
+    const cx = (W - table.width) / 2, cy = (D - table.length) / 2;
+    const chairs = (tx, ty) => chair ? [
+      makeFurn(chair, tx + (table.width - chair.width) / 2, ty - chair.length - 0.05, 180, 2),
+      makeFurn(chair, tx + (table.width - chair.width) / 2, ty + table.length + 0.05, 0, 2),
+      makeFurn(chair, tx - chair.width - 0.05, ty + (table.length - chair.length) / 2, 90, 2),
+      makeFurn(chair, tx + table.width + 0.05, ty + (table.length - chair.length) / 2, 270, 2),
+    ] : [];
+    return [
+      { id: 'layout_1', score: 87, safety_warnings: warnings, furniture: [makeFurn(table, cx, cy, 0, 0), ...chairs(cx, cy), ...(buffet ? [makeFurn(buffet, PAD, PAD, 0, 1)] : [])] },
+      { id: 'layout_2', score: 80, safety_warnings: warnings, furniture: [makeFurn(table, PAD + 0.5, cy, 0, 0), ...chairs(PAD + 0.5, cy), ...(buffet ? [makeFurn(buffet, W - buffet.width - PAD, PAD, 0, 1)] : [])] },
+      { id: 'layout_3', score: 74, safety_warnings: warnings, furniture: [makeFurn(table, cx, PAD + 0.5, 0, 0), ...chairs(cx, PAD + 0.5), ...(buffet ? [makeFurn(buffet, PAD, D - buffet.length - PAD, 0, 1)] : [])] },
+    ];
+  }
+
+  function buildOffice() {
+    const desk = catalog.find(i => i.type === 'desk');
+    const chair = catalog.find(i => i.type === 'office-chair');
+    const shelf = catalog.find(i => i.type === 'bookshelf');
+    const cabinet = catalog.find(i => i.type === 'filing-cabinet');
+    const guest = catalog.find(i => i.type === 'guest-chair');
+    return [
+      { id: 'layout_1', score: 91, safety_warnings: warnings, furniture: [
+        makeFurn(desk, PAD, PAD, 0, 0),
+        ...(chair ? [makeFurn(chair, PAD + (desk.width - chair.width) / 2, PAD + desk.length + 0.3, 0, 2)] : []),
+        ...(shelf ? [makeFurn(shelf, W - shelf.width - PAD, PAD, 0, 1)] : []),
+        ...(cabinet ? [makeFurn(cabinet, W - cabinet.width - PAD, D - cabinet.length - PAD, 0, 3)] : []),
+        ...(guest ? [makeFurn(guest, PAD + desk.width + 0.8, PAD + 0.5, 0, 4)] : []),
+      ]},
+      { id: 'layout_2', score: 84, safety_warnings: warnings, furniture: [
+        makeFurn(desk, (W - desk.width) / 2, PAD, 0, 0),
+        ...(chair ? [makeFurn(chair, (W - chair.width) / 2, PAD + desk.length + 0.3, 0, 2)] : []),
+        ...(shelf ? [makeFurn(shelf, PAD, PAD, 0, 1)] : []),
+        ...(cabinet ? [makeFurn(cabinet, W - cabinet.width - PAD, PAD, 0, 3)] : []),
+      ]},
+      { id: 'layout_3', score: 77, safety_warnings: warnings, furniture: [
+        makeFurn(desk, W - desk.width - PAD, PAD, 0, 0),
+        ...(chair ? [makeFurn(chair, W - chair.width - PAD - 0.05, PAD + desk.length + 0.3, 0, 2)] : []),
+        ...(shelf ? [makeFurn(shelf, PAD, PAD, 0, 1)] : []),
+        ...(guest ? [makeFurn(guest, PAD + 0.3, D - guest.length - PAD, 0, 4)] : []),
+      ]},
+    ];
+  }
+
+  switch (catalogKey) {
+    case 'Bedroom':     return buildBedroom();
+    case 'Dining Room': return buildDining();
+    case 'Office':      return buildOffice();
+    default:            return buildLivingRoom();
+  }
+}
 
 // ============================================================================
 // COST ESTIMATION
@@ -554,9 +716,150 @@ export async function estimateFurnitureCost(req, res) {
   res.json(cost);
 }
 
+export async function generateLayout(req, res, next) {
+  try {
+    const { roomDimensions, detectedObstacles, availableFloorSpace, roomType, style } = req.body;
+
+    if (!roomDimensions || !roomType || !style) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ error: 'GEMINI_API_KEY is not set on the server' });
+    }
+
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+    const systemPrompt = `You are an expert interior designer AI. Generate exactly 3 furniture layout variations for a room. You MUST respond with ONLY a valid JSON object. No markdown, no code blocks, no explanation. Just raw JSON.
+
+The JSON must follow this exact structure:
+{
+  "layouts": [
+    {
+      "id": "layout_1",
+      "furniture": [
+        {
+          "name": "Sofa",
+          "x": 0.5,
+          "y": 0.5,
+          "width": 2.2,
+          "depth": 0.9,
+          "rotation": 0,
+          "color": "#a0c4ff"
+        }
+      ],
+      "safety_warnings": [],
+      "score": 85
+    },
+    {
+      "id": "layout_2",
+      "furniture": [],
+      "safety_warnings": [],
+      "score": 78
+    },
+    {
+      "id": "layout_3",
+      "furniture": [],
+      "safety_warnings": [],
+      "score": 72
+    }
+  ]
+}
+
+Rules:
+- Always include exactly 3 layout objects in the layouts array
+- x and y are positions in meters from the top-left corner of the room
+- x must be between 0 and roomWidth, y must be between 0 and roomDepth
+- width and depth are furniture dimensions in meters
+- rotation is 0, 90, 180, or 270 degrees
+- color is a valid hex color string
+- score is 0-100 integer
+- safety_warnings is an array of strings (can be empty array [])
+- Place furniture realistically, avoid overlaps, leave walkway gaps of at least 0.7m`;
+
+    const userPrompt = `Room Width: ${roomDimensions.width}m
+Room Depth: ${roomDimensions.depth}m
+Room Height: ${roomDimensions.height}m
+Available Floor Space: ${availableFloorSpace} sq meters
+Detected Obstacles: ${detectedObstacles?.length > 0 ? detectedObstacles.join(', ') : 'None'}
+Room Type: ${roomType}
+Style: ${style}
+
+Generate 3 different optimized furniture layout variations for this room.`;
+
+    let finalJson = null;
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        console.log(`[generateLayout] Attempt ${attempt} - calling Gemini...`);
+
+        const result = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+          systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.5,
+            maxOutputTokens: 4096,
+          },
+        });
+
+        const responseText = result.response.text();
+        console.log(`[generateLayout] Raw response (first 200 chars):`, responseText.substring(0, 200));
+
+        const parsed = JSON.parse(responseText);
+
+        if (parsed && parsed.layouts && Array.isArray(parsed.layouts) && parsed.layouts.length >= 1) {
+          // Pad to 3 layouts if Gemini returned fewer
+          while (parsed.layouts.length < 3) {
+            const base = parsed.layouts[0];
+            parsed.layouts.push({
+              ...base,
+              id: `layout_${parsed.layouts.length + 1}`,
+              score: Math.max(50, (base.score || 70) - 10),
+            });
+          }
+          finalJson = parsed;
+          console.log(`[generateLayout] Success on attempt ${attempt} — ${finalJson.layouts.length} layouts`);
+          break;
+        } else {
+          throw new Error(`layouts array missing or empty. Got: ${JSON.stringify(parsed).substring(0, 100)}`);
+        }
+      } catch (parseError) {
+        console.error(`[generateLayout] Attempt ${attempt} failed:`, parseError.message);
+        if (attempt === 2) {
+          // ── SMART FALLBACK: AI failed, use rule-based generator ──
+          console.warn('[generateLayout] Gemini unavailable, using rule-based fallback layouts');
+          finalJson = { layouts: generateFallbackLayouts(roomDimensions, roomType, style, detectedObstacles || []) };
+        }
+      }
+    }
+
+    // Save to DB (non-blocking)
+    try {
+      const session = new DesignSession({
+        userId: req.user?.userId || null,
+        roomDimensions,
+        detectedObstacles: detectedObstacles || [],
+        preferences: { roomType, style, availableFloorSpace },
+        generatedLayouts: finalJson.layouts,
+      });
+      await session.save();
+    } catch (dbError) {
+      console.error('[generateLayout] Failed to save DesignSession to MongoDB:', dbError.message);
+    }
+
+    return res.json(finalJson.layouts);
+  } catch (error) {
+    console.error('[generateLayout] Unexpected error:', error);
+    next(error);
+  }
+}
+
 export default {
   generateDesign,
   getFurnitureCatalog,
   estimateFurnitureCost,
+  generateLayout,
 };
 

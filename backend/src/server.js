@@ -24,6 +24,8 @@ import userRoutes from './routes/users.js';
 import themeRoutes from './routes/themes.js';
 import imageRoutes from './routes/images.js';
 import designRoutes from './routes/designs.js';
+import { authenticate } from './middleware/auth.js';
+import aiDesignController from './controllers/aiDesignController.js';
 import ideaRoutes from './routes/ideas.js';
 import trainingRoutes from './routes/training.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
@@ -109,6 +111,9 @@ app.use('/api/v1/images', imageRoutes);
 app.use('/api/v1/designs', designRoutes);
 app.use('/api/v1/ideas', ideaRoutes);
 app.use('/api/v1/training', trainingRoutes);
+
+// Strict new route requested by user
+app.post('/api/v1/design/generate', authenticate, aiDesignController.generateLayout);
 
 // Root endpoint - serve web view
 app.get('/', (req, res) => {

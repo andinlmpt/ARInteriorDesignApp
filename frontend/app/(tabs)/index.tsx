@@ -98,7 +98,7 @@ export default function HomeScreen() {
 
   const actions = [
     { icon: 'sparkles', label: 'AI Design', route: '/ai-design' as Href, color: t.purple },
-    { icon: 'color-wand', label: 'Themes', route: '/theme-recommend' as Href, color: t.pink },
+    { icon: 'color-wand', label: 'Themes', route: '/explore' as Href, color: t.pink },
     { icon: 'scan', label: 'AR View', route: '/ar-furniture' as Href, color: t.accent },
     { icon: 'grid', label: '3D Layout', route: '/layout-3d' as Href, color: t.orange },
   ];
