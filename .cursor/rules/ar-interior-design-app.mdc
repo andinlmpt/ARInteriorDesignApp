@@ -1,0 +1,302 @@
+---
+description: AR Interior Design App — full project context, architecture, conventions, and gotchas
+alwaysApply: true
+---
+
+# AR Interior Design App — Cursor Rules
+
+You are an expert full-stack developer working on **AR Interior Design App**, a comprehensive augmented reality mobile application for interior design visualization. You must deeply understand the entire codebase before making changes.
+
+---
+
+## Project Overview
+
+This is a **monorepo** with two main packages:
+
+| Package       | Path         | Stack                                          |
+|---------------|--------------|-------------------------------------------------|
+| **Frontend**  | `frontend/`  | React Native (Expo SDK 54), TypeScript, Expo Router |
+| **Backend**   | `backend/`   | Node.js, Express.js, MongoDB/Mongoose, ES Modules  |
+
+### What the App Does
+- **AR Visualization**: Place and visualize 3D furniture in real-world spaces (ARKit / ARCore)
+- **AI-Powered Design**: Generate intelligent design recommendations via Google Gemini API
+- **Spatial Mapping**: Room scanning, measurement, and depth estimation
+- **Theme Recommendations**: AI-generated interior design theme suggestions
+- **3D Layout Editor**: Create and edit 3D room layouts
+- **Image Analysis**: Analyze room photos for design suggestions
+- **Project Management**: Save and manage multiple design projects
+
+---
+
+## Architecture & Directory Structure
+
+### Frontend (`frontend/`)
+
+```
+frontend/
+├── app/                    # Expo Router file-based pages
+│   ├── (tabs)/             # Bottom tab navigator (Home, Explore, Camera/AR, Saved, Profile)
+│   │   ├── _layout.tsx     # Tab navigator config
+│   │   ├── index.tsx       # Home tab
+│   │   ├── explore.tsx     # Explore/discover tab
+│   │   ├── camera.tsx      # AR camera tab
+│   │   ├── saved.tsx       # Saved items tab
+│   │   └── profile.tsx     # User profile tab
+│   ├── _layout.tsx         # Root Stack navigator with ThemeProvider
+│   ├── login.tsx           # Authentication screens
+│   ├── signup.tsx
+│   ├── ar-view.tsx         # Main AR visualization screen (largest file)
+│   ├── ai-design.tsx       # AI design generation
+│   ├── theme-recommend.tsx # Theme recommendation engine
+│   ├── spatial-mapping.tsx # Room scanning & mapping
+│   ├── layout-3d.tsx       # 3D layout editor
+│   ├── live-scan.tsx       # Real-time camera scanning
+│   └── ...
+├── components/             # Reusable UI components
+│   ├── ui/                 # Design system primitives (theme, buttons, etc.)
+│   ├── ar-view/            # AR-specific components
+│   ├── spatial-mapping/    # Spatial mapping components
+│   ├── theme-recommend/    # Theme recommendation components
+│   └── interactive/        # Interactive UI components
+├── services/               # Business logic & API integration (27 service files)
+│   ├── apiClient.ts        # Central HTTP client (connects to backend)
+│   ├── AuthService.ts      # Authentication logic
+│   ├── ARCoreManager.ts    # AR core management
+│   ├── ARPlacementService.ts
+│   ├── FurnitureModelLoader.ts
+│   ├── SpatialMappingService.ts
+│   ├── ThemeRecommendationService.ts
+│   ├── ImageAnalysisService.ts
+│   ├── GenerativeAIDesignService.ts
+│   └── ...
+├── hooks/                  # Custom React hooks (37 hook files)
+│   ├── useARRenderer.ts    # AR rendering pipeline
+│   ├── useARFurniturePlacement.ts
+│   ├── useThemeRecommendations.ts
+│   ├── useSpatialMapping*.ts
+│   └── ...
+├── types/                  # TypeScript type definitions
+├── contexts/               # React contexts (ThemeContext)
+├── config/                 # App & navigation configuration
+├── constants/              # App constants
+├── utils/                  # Utility functions
+├── styles/                 # Shared style definitions
+├── data/                   # Static data files
+├── assets/                 # Images, fonts, 3D models
+└── native/                 # Native module bridges
+```
+
+### Backend (`backend/`)
+
+```
+backend/
+├── src/
+│   ├── server.js           # Express server entry point
+│   ├── controllers/        # Request handlers
+│   │   ├── aiDesignController.js
+│   │   ├── themeController.js
+│   │   ├── layoutController.js
+│   │   ├── imageGenerationController.js
+│   │   ├── ideaAssistantController.js
+│   │   └── aiTrainingController.js
+│   ├── routes/             # Express route definitions
+│   │   ├── users.js        # Auth & user management
+│   │   ├── projects.js     # Project CRUD
+│   │   ├── designs.js      # AI design endpoints
+│   │   ├── themes.js       # Theme recommendations
+│   │   ├── layouts.js      # 3D layout endpoints
+│   │   ├── images.js       # Image generation
+│   │   ├── ideas.js        # Idea assistant
+│   │   └── training.js     # AI training data
+│   ├── models/             # Mongoose schemas
+│   │   ├── User.js
+│   │   └── DesignSession.js
+│   ├── middleware/          # Express middleware
+│   │   ├── auth.js         # JWT authentication
+│   │   ├── validation.js   # Request validation
+│   │   ├── errorHandler.js
+│   │   ├── logger.js
+│   │   └── sentry.js       # Error tracking
+│   ├── services/           # Business logic
+│   │   └── geminiService.js  # Google Gemini AI integration
+│   ├── db/                 # Database connection config
+│   └── data/               # Seed/static data
+└── tests/                  # Backend tests (Jest + Supertest)
+```
+
+---
+
+## Tech Stack & Key Dependencies
+
+### Frontend
+- **Framework**: React Native 0.81.5 with Expo SDK 54
+- **Routing**: Expo Router v6 (file-based routing)
+- **Language**: TypeScript 5.9
+- **Navigation**: Bottom Tabs (`@react-navigation/bottom-tabs`) + Stack
+- **State Management**: React Context (ThemeContext) + local state via hooks
+- **AR/3D**: `expo-gl`, `expo-camera`, `three.js` (v0.166)
+- **AI/ML**: `@tensorflow/tfjs`, `@tensorflow-models/coco-ssd`
+- **UI**: Custom design system in `components/ui/theme.ts`
+- **Networking**: Custom `apiClient.ts` service
+- **Storage**: `@react-native-async-storage/async-storage`
+
+### Backend
+- **Runtime**: Node.js with ES Modules (`"type": "module"`)
+- **Framework**: Express.js 4
+- **Database**: MongoDB via Mongoose 8
+- **AI**: Google Generative AI SDK (`@google/generative-ai`)
+- **Auth**: JWT (`jsonwebtoken`) + bcryptjs
+- **Security**: Helmet, CORS, express-rate-limit
+- **Monitoring**: Sentry (`@sentry/node`), Morgan logger
+- **Testing**: Jest + Supertest
+
+---
+
+## Coding Conventions & Patterns
+
+### General Rules
+1. **Never modify** existing comments or docstrings unrelated to your change.
+2. **Preserve** the established file/folder structure — don't reorganize without asking.
+3. **Check for existing patterns** before introducing new ones (e.g., there are 37 hooks — follow their conventions).
+4. Keep files focused — this codebase uses heavy decomposition into hooks and services.
+
+### Frontend (TypeScript / React Native)
+
+#### File Naming
+- Pages: `kebab-case.tsx` (e.g., `ar-view.tsx`, `ai-design.tsx`)
+- Components: `PascalCase.tsx` (e.g., `ARFurniturePlacement.tsx`, `SaveButton.tsx`)
+- Hooks: `camelCase.ts` prefixed with `use` (e.g., `useARRenderer.ts`)
+- Services: `PascalCase.ts` (e.g., `SpatialMappingService.ts`)
+- Types: `kebab-case.ts` (e.g., `ar-view.ts`, `spatial-mapping.ts`)
+
+#### Patterns
+- **Hooks-heavy architecture**: Complex screens are decomposed into multiple hooks (e.g., AR view uses `useARRenderer`, `useARFurniturePlacement`, `useARGestures`, `useARHistory`, `useARUIState`, etc.)
+- **Service layer**: All backend communication goes through dedicated service classes in `services/`
+- **Path aliases**: Use `@/` for imports (maps to `frontend/` root). Example: `import { useTheme } from '@/contexts/ThemeContext'`
+- **Theme system**: Use the `useTheme()` hook from `@/contexts/ThemeContext` for colors. Access via `colors.accent`, `colors.surfacePrimary`, `colors.textMuted`, etc.
+- **Design tokens**: Import spacing, radii, etc. from `@/components/ui/theme`
+- **Platform checks**: Use `Platform.OS === 'web' | 'ios' | 'android'` for platform-specific code — the app targets all three
+- **Expo Router navigation**: Use `useRouter()` and `router.push()` / `router.replace()` — never use React Navigation directly
+- **StyleSheet**: Always use `StyleSheet.create()` for styles, defined at the bottom of the file
+
+#### Type Definitions
+- All shared types live in `frontend/types/`
+- Feature-specific types are in corresponding files (e.g., `types/ar-view.ts` for AR types)
+- Use strict TypeScript — avoid `any` where possible
+
+### Backend (JavaScript / ES Modules)
+
+#### File Naming
+- Controllers: `camelCaseController.js` (e.g., `aiDesignController.js`)
+- Routes: `camelCase.js` (e.g., `users.js`, `projects.js`)
+- Models: `PascalCase.js` (e.g., `User.js`)
+- Middleware: `camelCase.js` (e.g., `auth.js`, `validation.js`)
+
+#### Patterns
+- **ES Modules**: All files use `import`/`export` (NOT `require`). The backend is configured with `"type": "module"` in package.json.
+- **MVC pattern**: Routes → Controllers → Services → Models
+- **JWT auth middleware**: Protected routes use the `auth.js` middleware
+- **Validation middleware**: Request validation via `validation.js`
+- **Error handling**: Centralized via `errorHandler.js` middleware
+- **Environment variables**: Loaded via `dotenv` — config in `backend/.env`
+
+---
+
+## Environment & Configuration
+
+### Backend `.env` Variables
+```
+MONGODB_URI=<connection-string>
+MONGODB_DB_NAME=ARINTERIORDESIGNAPP
+PORT=3000
+NODE_ENV=development
+ALLOWED_ORIGINS=http://localhost:8081,http://localhost:19006
+JWT_SECRET=<secret>
+JWT_EXPIRES_IN=7d
+```
+
+### Frontend Configuration
+- `app.config.js` — Expo app config
+- `metro.config.js` — Metro bundler config (has custom asset extensions for 3D models)
+- `tsconfig.json` — TypeScript config with `@/` path alias
+- `babel.config.js` — Babel with `babel-preset-expo`
+
+---
+
+## API Communication
+
+The frontend communicates with the backend via `services/apiClient.ts`. Key API route groups:
+
+| Route Group    | Base Path      | Purpose                        |
+|----------------|----------------|--------------------------------|
+| Users          | `/api/users`   | Auth, profile, preferences     |
+| Projects       | `/api/projects`| Project CRUD                   |
+| Designs        | `/api/designs` | AI design generation           |
+| Themes         | `/api/themes`  | Theme recommendations          |
+| Layouts        | `/api/layouts` | 3D room layouts                |
+| Images         | `/api/images`  | Image generation               |
+| Ideas          | `/api/ideas`   | Idea assistant                 |
+| Training       | `/api/training`| AI training data               |
+
+---
+
+## Running the Project
+
+```bash
+# Install all dependencies
+npm run install:all
+
+# Run both frontend + backend concurrently
+npm run dev
+
+# Run frontend only (Expo dev server)
+npm run start:frontend
+
+# Run backend only (Node.js with --watch)
+npm run start:backend
+
+# Run frontend tests
+cd frontend && npm test
+
+# Run backend tests
+cd backend && npm test
+```
+
+---
+
+## Important Gotchas & Known Issues
+
+1. **Large files**: `ar-view.tsx` is ~230KB — avoid loading it entirely; work on specific sections.
+2. **3D/AR dependencies**: `expo-gl` and `three.js` have specific version compatibility — don't upgrade without testing.
+3. **Web compatibility**: The app runs on web too (via `react-native-web`). Always check `Platform.OS` for platform-specific code and ensure web fallbacks exist.
+4. **MongoDB Atlas**: The database is hosted on MongoDB Atlas — connection strings are in `.env`.
+5. **Google Gemini API**: The backend uses `@google/generative-ai` for AI features — API keys must be configured.
+6. **ES Modules in backend**: The backend uses ESM (`"type": "module"`). Use `import`/`export`, not `require`. File extensions are needed in local imports.
+7. **expo-three not installed**: If you encounter `expo-three` errors, note it is NOT in the dependencies — use `three` directly with `expo-gl`.
+8. **Safe Area**: The app uses `react-native-safe-area-context` — always wrap content appropriately and respect insets.
+
+---
+
+## When Making Changes
+
+1. **Before editing a file**, understand its relationship to other files (hooks it uses, services it calls, types it imports).
+2. **Follow the decomposition pattern** — if a screen is getting complex, extract logic into a custom hook in `hooks/`.
+3. **Add types** for any new data structures in `types/`.
+4. **Test changes** — run `npm test` in the appropriate package.
+5. **Never hardcode API URLs** — use the `apiClient.ts` service.
+6. **Never hardcode colors** — use the theme system via `useTheme()`.
+7. **Keep .env secrets out of code** — use environment variables.
+
+---
+
+## Documentation
+
+Extensive docs are in `docs/`:
+- `HOW_THE_SYSTEM_WORKS.md` — Full system architecture
+- `SYSTEM_FLOW_DIAGRAM.md` — Process flows
+- `MONGODB_DOCUMENT_MODEL.md` — Database schema docs
+- `3D_MODELS_GUIDE.md` — 3D model integration guide
+- `UNITY_INTEGRATION.md` — Unity3D integration docs
+- `COMPLETE_PROCESS_FLOWCHART.md` — End-to-end process flow
+- `ERD_DATABASE_DIAGRAM.md` — Entity relationship diagrams
