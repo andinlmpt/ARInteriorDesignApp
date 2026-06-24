@@ -13,6 +13,7 @@ import { RoomData, SpatialPoint } from '../types/spatial-mapping';
 import { arAnchorManager } from '../services/ARAnchorManager';
 import { FURNITURE_LIBRARY } from '../constants/furniture-library';
 import { alignToFloor, smoothPositionWithRef } from '../utils/three-utils';
+import { FurnitureModelLoader } from '../services/FurnitureModelLoader';
 
 /**
  * Error classification and recovery strategy mapping
@@ -223,6 +224,60 @@ export const useARRenderer = ({
     const lastReticleUpdateRef = useRef<number>(0);
     const tempVectorRef = useRef<THREE.Vector3>(new THREE.Vector3());
     const lastSelectedItemIdRef = useRef<string | null>(null);
+    const furnitureModelLoaderRef = useRef<FurnitureModelLoader>(new FurnitureModelLoader());
+
+    // Effect for preview ghost
+    useEffect(() => {
+        if (!rendererReady || !isPlacingFurniture) return;
+
+        const loader = furnitureModelLoaderRef.current;
+        const ghostGroup = previewGhostRef.current;
+
+        if (ghostGroup && selectedLibraryItemId !== lastSelectedItemIdRef.current) {
+            lastSelectedItemIdRef.current = selectedLibraryItemId;
+
+            // Clear current ghost
+            while (ghostGroup.children.length > 0) {
+                const child = ghostGroup.children[0];
+                ghostGroup.remove(child);
+                if (child instanceof THREE.Mesh) {
+                    child.geometry?.dispose();
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(m => m.dispose());
+                    } else if (child.material) {
+                        child.material.dispose();
+                    }
+                }
+            }
+
+            if (selectedLibraryItemId) {
+                const item = FURNITURE_LIBRARY.find(i => i.id === selectedLibraryItemId);
+                if (item) {
+                    loader.createDetailedFurnitureModel(item).then(modelGroup => {
+                        // Make all materials semi-transparent
+                        modelGroup.traverse((child) => {
+                            if (child instanceof THREE.Mesh) {
+                                if (child.material) {
+                                    if (Array.isArray(child.material)) {
+                                        child.material.forEach(m => {
+                                            m.transparent = true;
+                                            m.opacity = 0.6;
+                                        });
+                                    } else {
+                                        child.material.transparent = true;
+                                        child.material.opacity = 0.6;
+                                    }
+                                }
+                            }
+                        });
+                        ghostGroup.add(modelGroup);
+                    }).catch(err => {
+                        console.error('[useARRenderer] Error creating preview ghost:', err);
+                    });
+                }
+            }
+        }
+    }, [selectedLibraryItemId, rendererReady, isPlacingFurniture]);
 
     // State
     const [rendererReady, setRendererReady] = useState(false);

@@ -23,6 +23,15 @@ export const FURNITURE_LIBRARY: FurnitureLibraryItem[] = [
         color: '#2563EB',
         category: 'seating',
         dimensions: { width: 2.1, length: 0.95, height: 0.85 },
+        description: 'A comfortable modern sofa with clean lines and plush cushions.',
+        material: 'fabric',
+        styles: ['Modern', 'Contemporary'],
+        roomTypes: ['Living Room', 'Lounge'],
+        model3D: {
+            url: '', // Ready for local require('@/assets/models/furniture/sofa-modern.glb') or remote URL
+            format: 'glb',
+            scale: 1.0,
+        },
     },
     {
         id: 'accent-chair',
@@ -32,6 +41,15 @@ export const FURNITURE_LIBRARY: FurnitureLibraryItem[] = [
         color: '#DB2777',
         category: 'seating',
         dimensions: { width: 0.8, length: 0.8, height: 0.95 },
+        description: 'Stylish accent chair perfect for reading nooks or adding a pop of color.',
+        material: 'velvet',
+        styles: ['Modern', 'Eclectic'],
+        roomTypes: ['Living Room', 'Bedroom', 'Office'],
+        model3D: {
+            url: '',
+            format: 'glb',
+            scale: 1.0,
+        },
     },
     {
         id: 'dining-chair',
@@ -51,6 +69,15 @@ export const FURNITURE_LIBRARY: FurnitureLibraryItem[] = [
         color: '#14B8A6',
         category: 'tables',
         dimensions: { width: 1.0, length: 0.6, height: 0.42 },
+        description: 'Sleek coffee table with a durable surface, ideal for centerpieces.',
+        material: 'wood',
+        styles: ['Modern', 'Minimalist'],
+        roomTypes: ['Living Room'],
+        model3D: {
+            url: '',
+            format: 'glb',
+            scale: 1.0,
+        },
     },
     {
         id: 'dining-table',
@@ -79,6 +106,15 @@ export const FURNITURE_LIBRARY: FurnitureLibraryItem[] = [
         color: '#7C3AED',
         category: 'storage',
         dimensions: { width: 1.0, length: 0.4, height: 2.1 },
+        description: 'Tall wooden bookshelf with ample space for books and decor items.',
+        material: 'wood',
+        styles: ['Classic', 'Modern'],
+        roomTypes: ['Office', 'Living Room', 'Library'],
+        model3D: {
+            url: '',
+            format: 'glb',
+            scale: 1.0,
+        },
     },
     {
         id: 'tv-stand',
@@ -107,6 +143,15 @@ export const FURNITURE_LIBRARY: FurnitureLibraryItem[] = [
         color: '#F97316',
         category: 'lighting',
         dimensions: { width: 0.3, length: 0.3, height: 1.8 },
+        description: 'Elegant floor lamp providing warm ambient lighting.',
+        material: 'metal',
+        styles: ['Modern', 'Industrial'],
+        roomTypes: ['Living Room', 'Bedroom', 'Office'],
+        model3D: {
+            url: '',
+            format: 'glb',
+            scale: 1.0,
+        },
     },
     {
         id: 'table-lamp',
@@ -126,6 +171,15 @@ export const FURNITURE_LIBRARY: FurnitureLibraryItem[] = [
         color: '#10B981',
         category: 'decor',
         dimensions: { width: 0.4, length: 0.4, height: 0.8 },
+        description: 'Modern tall planter to bring greenery into your space.',
+        material: 'ceramic',
+        styles: ['Bohemian', 'Modern'],
+        roomTypes: ['Living Room', 'Balcony', 'Entryway'],
+        model3D: {
+            url: '',
+            format: 'glb',
+            scale: 1.0,
+        },
     },
     {
         id: 'mirror',

@@ -49,5 +49,10 @@ if (!config.resolver.sourceExts.includes('mjs')) {
   config.resolver.sourceExts.push('mjs');
 }
 
+// Add support for 3D model files
+if (!config.resolver.assetExts.includes('glb')) {
+  config.resolver.assetExts.push('glb', 'gltf', 'mtl', 'obj');
+}
+
 module.exports = config;
 

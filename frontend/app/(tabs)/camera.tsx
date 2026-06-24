@@ -45,7 +45,7 @@ export default function CameraScreen() {
   };
 
   const goToARView = () => {
-    router.push('/ar-furniture');
+    router.push('/ar-view');
   };
 
   if (!permission) {

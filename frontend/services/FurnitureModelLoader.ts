@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import * as FileSystem from 'expo-file-system';
+import { Asset } from 'expo-asset';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { FurnitureLibraryItem } from '@/types/ar-view';
 
@@ -35,12 +36,12 @@ const FURNITURE_MODEL_URLS: Record<string, string> = {
   // Option 2: Use free model hosting services
   // Option 3: Use models from Poly Haven or other free sources
   
-  'sofa-modern': 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/sofa.glb',
-  'coffee-table': 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/table.glb',
-  'floor-lamp': 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/lamp.glb',
-  'bookshelf': 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/bookshelf.glb',
-  'accent-chair': 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/chair.glb',
-  'planter': 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/planter.glb',
+  'sofa-modern': '',
+  'coffee-table': '',
+  'floor-lamp': '',
+  'bookshelf': '',
+  'accent-chair': '',
+  'planter': '',
 };
 
 // Default model configurations
@@ -104,7 +105,7 @@ export class FurnitureModelLoader {
    * Uses expo-file-system for React Native compatibility
    */
   async loadGLBModel(
-    modelUrl: string,
+    modelUrl: string | number,
     scale: number = 1.0
   ): Promise<THREE.Group | null> {
     try {
@@ -112,8 +113,13 @@ export class FurnitureModelLoader {
       
       let modelUri: string;
       
-      // Check if it's a remote URL or local asset
-      if (modelUrl.startsWith('http://') || modelUrl.startsWith('https://')) {
+      if (typeof modelUrl === 'number') {
+        // Bundled asset via require()
+        const asset = Asset.fromModule(modelUrl);
+        await asset.downloadAsync();
+        modelUri = asset.localUri || asset.uri;
+        console.log('[FurnitureModelLoader] Resolved bundled asset to:', modelUri);
+      } else if (modelUrl.startsWith('http://') || modelUrl.startsWith('https://')) {
         // Remote URL - download to local file first (required for React Native)
         const fileName = `model_${Date.now()}.glb`;
         const localPath = FileSystem.documentDirectory + fileName;
