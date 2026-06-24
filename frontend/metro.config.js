@@ -20,14 +20,9 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     }
 
     // Handle internal imports from react-native-webview package
-    // Check if the origin module is from react-native-webview
     const originPath = context.originModulePath || '';
     if (originPath.includes('react-native-webview')) {
-      // This is an internal import from react-native-webview package
-      // Return empty module to prevent bundling errors
-      return {
-        type: 'empty',
-      };
+      return { type: 'empty' };
     }
   }
 
@@ -59,4 +54,3 @@ if (!config.resolver.sourceExts.includes('mjs')) {
 }
 
 module.exports = config;
-
