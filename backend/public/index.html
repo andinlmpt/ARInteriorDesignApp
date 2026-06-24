@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Interior Design - Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <div class="logo-icon">🏠</div>
+                <span>AR Interior</span>
+            </div>
+            
+            <nav class="nav">
+                <a href="#" class="nav-item active" data-section="dashboard">
+                    <span class="nav-icon">📊</span>
+                    Dashboard
+                </a>
+                <a href="#" class="nav-item" data-section="design">
+                    <span class="nav-icon">🎨</span>
+                    AI Design
+                </a>
+                <a href="#" class="nav-item" data-section="themes">
+                    <span class="nav-icon">🎭</span>
+                    Themes
+                </a>
+                <a href="#" class="nav-item" data-section="ideas">
+                    <span class="nav-icon">💡</span>
+                    Ideas
+                </a>
+                <a href="#" class="nav-item" data-section="api">
+                    <span class="nav-icon">🔌</span>
+                    API
+                </a>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="status-indicator">
+                    <span class="status-dot"></span>
+                    <span id="server-status">Checking...</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Header -->
+            <header class="header">
+                <div class="header-left">
+                    <h1 id="page-title">Dashboard</h1>
+                    <p class="header-subtitle" id="page-subtitle">Welcome to AR Interior Design Studio</p>
+                </div>
+                <div class="header-right">
+                    <div class="search-box">
+                        <span class="search-icon">🔍</span>
+                        <input type="text" placeholder="Search designs...">
+                    </div>
+                    <div class="user-menu">
+                        <div class="avatar">👤</div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Content Area -->
+            <div class="content">
+                <!-- Dashboard Section -->
+                <section class="section active" id="dashboard">
+                    <div class="stats-grid">
+                        <div class="stat-card" style="--accent: #6366F1">
+                            <div class="stat-icon">🎨</div>
+                            <div class="stat-info">
+                                <span class="stat-value" id="total-designs">--</span>
+                                <span class="stat-label">Designs Generated</span>
+                            </div>
+                        </div>
+                        <div class="stat-card" style="--accent: #EC4899">
+                            <div class="stat-icon">🎭</div>
+                            <div class="stat-info">
+                                <span class="stat-value" id="total-themes">12</span>
+                                <span class="stat-label">Theme Templates</span>
+                            </div>
+                        </div>
+                        <div class="stat-card" style="--accent: #10B981">
+                            <div class="stat-icon">💡</div>
+                            <div class="stat-info">
+                                <span class="stat-value" id="total-ideas">--</span>
+                                <span class="stat-label">Ideas Generated</span>
+                            </div>
+                        </div>
+                        <div class="stat-card" style="--accent: #F59E0B">
+                            <div class="stat-icon">⚡</div>
+                            <div class="stat-info">
+                                <span class="stat-value" id="api-uptime">--</span>
+                                <span class="stat-label">API Uptime</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-grid">
+                        <div class="card feature-card">
+                            <div class="card-header">
+                                <h3>🚀 Quick Actions</h3>
+                            </div>
+                            <div class="quick-actions">
+                                <button class="action-btn primary" onclick="switchSection('design')">
+                                    <span>✨</span> Generate Design
+                                </button>
+                                <button class="action-btn secondary" onclick="switchSection('themes')">
+                                    <span>🎨</span> Browse Themes
+                                </button>
+                                <button class="action-btn secondary" onclick="switchSection('ideas')">
+                                    <span>💡</span> Get Ideas
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>🎯 AI Capabilities</h3>
+                            </div>
+                            <div class="capabilities-list">
+                                <div class="capability">
+                                    <span class="cap-icon">🧠</span>
+                                    <div class="cap-info">
+                                        <strong>ML Theme Recommendations</strong>
+                                        <p>Personalized themes based on preferences</p>
+                                    </div>
+                                    <span class="cap-status active">Active</span>
+                                </div>
+                                <div class="capability">
+                                    <span class="cap-icon">🖼️</span>
+                                    <div class="cap-info">
+                                        <strong>DALL-E Image Generation</strong>
+                                        <p>AI-powered design visualization</p>
+                                    </div>
+                                    <span class="cap-status" id="dalle-status">Checking...</span>
+                                </div>
+                                <div class="capability">
+                                    <span class="cap-icon">📐</span>
+                                    <div class="cap-info">
+                                        <strong>Genetic Algorithm Layouts</strong>
+                                        <p>Optimized furniture placement</p>
+                                    </div>
+                                    <span class="cap-status active">Active</span>
+                                </div>
+                                <div class="capability">
+                                    <span class="cap-icon">💬</span>
+                                    <div class="cap-info">
+                                        <strong>Prompt Analysis</strong>
+                                        <p>Natural language understanding</p>
+                                    </div>
+                                    <span class="cap-status" id="gpt-status">Checking...</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card full-width">
+                            <div class="card-header">
+                                <h3>🏛️ System Architecture</h3>
+                            </div>
+                            <div class="architecture">
+                                <div class="arch-layer frontend">
+                                    <div class="arch-title">📱 Frontend (React Native)</div>
+                                    <div class="arch-items">
+                                        <span>Expo Router</span>
+                                        <span>THREE.js AR</span>
+                                        <span>Custom Hooks</span>
+                                    </div>
+                                </div>
+                                <div class="arch-arrow">↓</div>
+                                <div class="arch-layer backend">
+                                    <div class="arch-title">🖥️ Backend (Express.js)</div>
+                                    <div class="arch-items">
+                                        <span>REST API</span>
+                                        <span>Controllers</span>
+                                        <span>SQLite DB</span>
+                                    </div>
+                                </div>
+                                <div class="arch-arrow">↓</div>
+                                <div class="arch-layer ai">
+                                    <div class="arch-title">🤖 AI Services</div>
+                                    <div class="arch-items">
+                                        <span>OpenAI GPT-4</span>
+                                        <span>DALL-E 3</span>
+                                        <span>ML Training</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- AI Design Section -->
+                <section class="section" id="design">
+                    <div class="design-studio">
+                        <div class="card design-form">
+                            <div class="card-header">
+                                <h3>✨ AI Design Generator</h3>
+                            </div>
+                            <form id="design-form">
+                                <div class="form-group">
+                                    <label>Room Type</label>
+                                    <select id="room-type">
+                                        <option value="Living Room">Living Room</option>
+                                        <option value="Bedroom">Bedroom</option>
+                                        <option value="Kitchen">Kitchen</option>
+                                        <option value="Office">Office</option>
+                                        <option value="Dining Room">Dining Room</option>
+                                        <option value="Bathroom">Bathroom</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Design Style</label>
+                                    <select id="design-style">
+                                        <option value="Modern">Modern</option>
+                                        <option value="Minimalist">Minimalist</option>
+                                        <option value="Scandinavian">Scandinavian</option>
+                                        <option value="Industrial">Industrial</option>
+                                        <option value="Bohemian">Bohemian</option>
+                                        <option value="Traditional">Traditional</option>
+                                    </select>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Width (m)</label>
+                                        <input type="number" id="room-width" value="5" min="2" max="20" step="0.5">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Length (m)</label>
+                                        <input type="number" id="room-length" value="6" min="2" max="20" step="0.5">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Height (m)</label>
+                                        <input type="number" id="room-height" value="2.7" min="2" max="5" step="0.1">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label>Budget</label>
+                                    <div class="budget-selector">
+                                        <button type="button" class="budget-btn" data-value="low">💰 Budget</button>
+                                        <button type="button" class="budget-btn active" data-value="medium">💰💰 Medium</button>
+                                        <button type="button" class="budget-btn" data-value="high">💰💰💰 Premium</button>
+                                        <button type="button" class="budget-btn" data-value="luxury">👑 Luxury</button>
+                                    </div>
+                                    <input type="hidden" id="budget" value="medium">
+                                </div>
+                                <div class="form-group">
+                                    <label>Additional Notes (Optional)</label>
+                                    <textarea id="design-prompt" placeholder="Describe any specific requirements or preferences..."></textarea>
+                                </div>
+                                <button type="submit" class="submit-btn">
+                                    <span>🎨</span> Generate Design
+                                </button>
+                            </form>
+                        </div>
+
+                        <div class="card design-preview">
+                            <div class="card-header">
+                                <h3>🖼️ Design Preview</h3>
+                            </div>
+                            <div id="design-result" class="design-result">
+                                <div class="empty-state">
+                                    <span class="empty-icon">🎨</span>
+                                    <p>Configure your room and click "Generate Design"</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Themes Section -->
+                <section class="section" id="themes">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>🎭 Theme Recommendations</h3>
+                            <p>Get personalized theme suggestions based on your preferences</p>
+                        </div>
+                        <div class="theme-filters">
+                            <div class="filter-group">
+                                <label>Room Type</label>
+                                <select id="theme-room">
+                                    <option value="Living Room">Living Room</option>
+                                    <option value="Bedroom">Bedroom</option>
+                                    <option value="Kitchen">Kitchen</option>
+                                    <option value="Office">Office</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label>Mood</label>
+                                <select id="theme-mood">
+                                    <option value="Cozy">Cozy</option>
+                                    <option value="Energetic">Energetic</option>
+                                    <option value="Calm">Calm</option>
+                                    <option value="Professional">Professional</option>
+                                    <option value="Playful">Playful</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label>Style</label>
+                                <select id="theme-style">
+                                    <option value="Modern">Modern</option>
+                                    <option value="Minimalist">Minimalist</option>
+                                    <option value="Scandinavian">Scandinavian</option>
+                                    <option value="Industrial">Industrial</option>
+                                </select>
+                            </div>
+                            <button class="submit-btn" onclick="getThemeRecommendations()">
+                                <span>✨</span> Get Recommendations
+                            </button>
+                        </div>
+                        <div id="themes-result" class="themes-grid">
+                            <div class="theme-placeholder">
+                                <span>🎨</span>
+                                <p>Select your preferences and get AI-powered theme recommendations</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Ideas Section -->
+                <section class="section" id="ideas">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>💡 Design Ideas Assistant</h3>
+                            <p>Describe your vision and get AI-powered design suggestions</p>
+                        </div>
+                        <div class="ideas-input">
+                            <textarea id="idea-prompt" placeholder="Describe your ideal room... e.g., 'I want a cozy modern living room with natural light and plants'"></textarea>
+                            <button class="submit-btn" onclick="analyzePrompt()">
+                                <span>🔍</span> Analyze & Suggest
+                            </button>
+                        </div>
+                        <div id="ideas-result" class="ideas-result">
+                            <div class="empty-state">
+                                <span class="empty-icon">💡</span>
+                                <p>Describe your vision and our AI will analyze it</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- API Section -->
+                <section class="section" id="api">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>🔌 API Endpoints</h3>
+                            <p>Available REST API endpoints for the AR Interior Design backend</p>
+                        </div>
+                        <div class="api-list" id="api-endpoints">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>📡 API Tester</h3>
+                        </div>
+                        <div class="api-tester">
+                            <div class="api-test-form">
+                                <select id="api-method">
+                                    <option value="GET">GET</option>
+                                    <option value="POST">POST</option>
+                                </select>
+                                <input type="text" id="api-url" placeholder="/api/v1/health" value="/health">
+                                <button onclick="testApi()">Send Request</button>
+                            </div>
+                            <div class="api-response">
+                                <pre id="api-response-body">// Response will appear here</pre>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

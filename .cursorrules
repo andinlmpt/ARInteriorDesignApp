@@ -1,0 +1,5 @@
+# Moved to Cursor Project Rules
+
+Project context is now in `.cursor/rules/ar-interior-design-app.mdc` with `alwaysApply: true`.
+
+Edit that file to update project rules. Cursor includes it automatically in every chat.

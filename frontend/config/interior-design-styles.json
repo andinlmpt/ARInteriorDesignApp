@@ -1,0 +1,106 @@
+{
+  "styles": [
+    {
+      "id": "modern",
+      "name": "Modern",
+      "description": "Clean lines, minimal decoration, neutral colors",
+      "keywords": ["modern", "contemporary", "minimalist", "sleek"]
+    },
+    {
+      "id": "contemporary",
+      "name": "Contemporary",
+      "description": "Current trends with eclectic mix",
+      "keywords": ["contemporary", "trendy", "eclectic", "current"]
+    },
+    {
+      "id": "minimalist",
+      "name": "Minimalist",
+      "description": "Simplicity and functionality",
+      "keywords": ["minimalist", "simple", "clean", "functional"]
+    },
+    {
+      "id": "scandinavian",
+      "name": "Scandinavian",
+      "description": "Light colors, natural materials, hygge",
+      "keywords": ["scandinavian", "hygge", "cozy", "natural"]
+    },
+    {
+      "id": "industrial",
+      "name": "Industrial",
+      "description": "Raw materials, exposed elements",
+      "keywords": ["industrial", "raw", "urban", "loft"]
+    },
+    {
+      "id": "bohemian",
+      "name": "Bohemian",
+      "description": "Eclectic, colorful, artistic",
+      "keywords": ["bohemian", "boho", "eclectic", "artistic"]
+    },
+    {
+      "id": "traditional",
+      "name": "Traditional",
+      "description": "Classic elegance and comfort",
+      "keywords": ["traditional", "classic", "elegant", "comfortable"]
+    },
+    {
+      "id": "rustic",
+      "name": "Rustic",
+      "description": "Natural, weathered, cozy",
+      "keywords": ["rustic", "country", "farmhouse", "natural"]
+    },
+    {
+      "id": "mid-century",
+      "name": "Mid-Century",
+      "description": "1950s-60s design with clean lines",
+      "keywords": ["mid-century", "retro", "vintage", "modern"]
+    },
+    {
+      "id": "eclectic",
+      "name": "Eclectic",
+      "description": "Mix of styles and periods",
+      "keywords": ["eclectic", "mixed", "diverse", "unique"]
+    }
+  ],
+  "roomTypes": [
+    {
+      "id": "living-room",
+      "name": "Living Room",
+      "emoji": "🛋️"
+    },
+    {
+      "id": "bedroom",
+      "name": "Bedroom",
+      "emoji": "🛏️"
+    },
+    {
+      "id": "kitchen",
+      "name": "Kitchen",
+      "emoji": "🍳"
+    },
+    {
+      "id": "bathroom",
+      "name": "Bathroom",
+      "emoji": "🚿"
+    },
+    {
+      "id": "office",
+      "name": "Office",
+      "emoji": "💼"
+    },
+    {
+      "id": "dining-room",
+      "name": "Dining Room",
+      "emoji": "🍽️"
+    },
+    {
+      "id": "kids-room",
+      "name": "Kids Room",
+      "emoji": "🧸"
+    },
+    {
+      "id": "outdoor",
+      "name": "Outdoor",
+      "emoji": "🌳"
+    }
+  ]
+}
