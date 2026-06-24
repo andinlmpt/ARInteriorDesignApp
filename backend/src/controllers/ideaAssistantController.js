@@ -8,7 +8,7 @@
  */
 
 import dotenv from 'dotenv';
-import geminiService from '../services/geminiService.js';
+import groqService from '../services/groqService.js';
 
 dotenv.config();
 
@@ -17,7 +17,7 @@ dotenv.config();
 // ============================================================================
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const DEFAULT_TIMEOUT = 15000; // 15 seconds
 
 // ============================================================================
@@ -283,20 +283,20 @@ export async function analyzePrompt(req, res, next) {
 
     console.log('[IdeaAssistant] Analyzing prompt:', prompt.substring(0, 50) + '...');
 
-    // Try Gemini AI analysis first
+    // Try Groq AI analysis first
     let suggestions = null;
-    if (GEMINI_API_KEY) {
+    if (GROQ_API_KEY) {
       try {
-        suggestions = await geminiService.analyzeDesignPrompt(prompt, userPreferences);
+        suggestions = await groqService.analyzeDesignPrompt(prompt, userPreferences);
         if (suggestions) {
-          console.log('[IdeaAssistant] Used Gemini for analysis');
+          console.log('[IdeaAssistant] Used Groq for analysis');
         }
       } catch (error) {
-        console.warn('[IdeaAssistant] Gemini analysis failed:', error.message);
+        console.warn('[IdeaAssistant] Groq analysis failed:', error.message);
       }
     }
 
-    // Fall back to OpenAI if Gemini fails
+    // Fall back to OpenAI if Groq fails
     if (!suggestions && OPENAI_API_KEY) {
       suggestions = await analyzePromptWithAI(prompt, userPreferences);
       if (suggestions) {
@@ -354,22 +354,22 @@ export async function generateIdeas(req, res, next) {
 
     console.log('[IdeaAssistant] Generating ideas for:', roomType, designStyle);
 
-    // Try Gemini AI generation first
+    // Try Groq AI generation first
     let ideas = null;
-    if (GEMINI_API_KEY) {
+    if (GROQ_API_KEY) {
       try {
-        ideas = await geminiService.generateDesignIdeas(input);
+        ideas = await groqService.generateDesignIdeas(input);
         if (ideas && Array.isArray(ideas) && ideas.length > 0) {
-          console.log('[IdeaAssistant] Used Gemini for idea generation');
+          console.log('[IdeaAssistant] Used Groq for idea generation');
         } else {
           ideas = null;
         }
       } catch (error) {
-        console.warn('[IdeaAssistant] Gemini idea generation failed:', error.message);
+        console.warn('[IdeaAssistant] Groq idea generation failed:', error.message);
       }
     }
 
-    // Fall back to OpenAI if Gemini fails
+    // Fall back to OpenAI if Groq fails
     if ((!ideas || ideas.length === 0) && OPENAI_API_KEY) {
       ideas = await generateIdeasWithAI(input);
       if (ideas && ideas.length > 0) {

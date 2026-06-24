@@ -8,7 +8,7 @@
  */
 
 import dotenv from 'dotenv';
-import geminiService from '../services/geminiService.js';
+import groqService from '../services/groqService.js';
 dotenv.config();
 
 // ============================================================================
@@ -139,28 +139,28 @@ export async function generateDesignImage(req, res, next) {
     let resultImage = null;
 
     // 1. Attempt Gemini Image Generation if configured
-    if (process.env.GEMINI_API_KEY) {
+    if (process.env.GROQ_API_KEY) {
       try {
-        console.log('[ImageGeneration] Attempting Gemini image flow...');
-        const geminiResult = await geminiService.generateImage(proposal, preferences);
+        console.log('[ImageGeneration] Attempting Groq+HF image flow...');
+        const groqResult = await groqService.generateImage(proposal, preferences);
 
-        if (geminiResult && geminiResult.type === 'generated') {
-          console.log('[ImageGeneration] ✅ Gemini generated image successfully');
+        if (groqResult && groqResult.type === 'generated') {
+          console.log('[ImageGeneration] ✅ Hugging Face generated image successfully');
           return res.json({
             success: true,
-            imageUrl: geminiResult.data,
-            thumbnailUrl: geminiResult.data,
-            prompt: geminiResult.prompt,
+            imageUrl: groqResult.data,
+            thumbnailUrl: groqResult.data,
+            prompt: groqResult.prompt,
             generatedAt: Date.now(),
             attribution: {
-              source: 'Gemini AI (Imagen 4)',
+              source: 'Hugging Face (FLUX.1-schnell)',
             },
           });
         }
 
-        if (geminiResult && geminiResult.type === 'prompt-only') {
-          console.log('[ImageGeneration] 🔄 Using Gemini-enhanced prompt for search fallback');
-          const enhancedSearchQuery = geminiResult.prompt.substring(0, 150);
+        if (groqResult && groqResult.type === 'prompt-only') {
+          console.log('[ImageGeneration] 🔄 Using Groq-enhanced prompt for search fallback');
+          const enhancedSearchQuery = groqResult.prompt.substring(0, 150);
           return await performPexelsSearch(enhancedSearchQuery, proposal, res);
         }
       } catch (geminiError) {

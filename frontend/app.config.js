@@ -35,14 +35,6 @@ const existingConfig = {
             'Allow $(PRODUCT_NAME) to access your camera for room scanning and AR features.',
         },
       ],
-      [
-        'expo-notifications',
-        {
-          icon: './assets/images/splash.png',
-          color: '#3B82F6',
-          sounds: [],
-        },
-      ],
     ],
     experiments: {
       typedRoutes: true,
