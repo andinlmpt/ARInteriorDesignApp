@@ -10,6 +10,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -22,6 +23,7 @@ import Animated, {
   withSequence,
 } from 'react-native-reanimated';
 import { callApi } from '@/services/apiClient';
+import { DesignImageGenerationService } from '@/services/DesignImageGenerationService';
 import FloorPlan2D, { FurnitureItem } from '@/components/FloorPlan2D';
 import { useTheme } from '@/contexts/ThemeContext';
 
@@ -72,6 +74,8 @@ export default function AIDesignModule() {
   // ── Step 4: Results ──
   const [layouts, setLayouts] = useState<GeneratedLayout[]>([]);
   const [activeLayoutIndex, setActiveLayoutIndex] = useState(0);
+  const [generatedImages, setGeneratedImages] = useState<Record<string, string>>({});
+  const [isGeneratingImage, setIsGeneratingImage] = useState<Record<string, boolean>>({});
 
   // ── Shimmer animation ──
   const opacity = useSharedValue(0.3);
@@ -130,10 +134,57 @@ export default function AIDesignModule() {
       }
     } catch (error) {
       console.error('Failed to generate design:', error);
-      Alert.alert('Generation Failed', 'Could not connect to the AI. Make sure your backend is running and the Gemini API key is set.');
+      Alert.alert('Generation Failed', 'Could not connect to the AI. Make sure your backend is running and the API keys are set.');
       setStep(2);
     }
   };
+
+  // ── Generate Image for Layout ──
+  const handleGenerateImage = async (layout: GeneratedLayout) => {
+    setIsGeneratingImage(prev => ({ ...prev, [layout.id]: true }));
+    try {
+      const imageService = new DesignImageGenerationService();
+      
+      const proposal = {
+        id: layout.id,
+        title: `${style} ${roomType}`,
+        description: `A ${style} design for a ${roomWidth}x${roomDepth}m ${roomType}.`,
+        layout: layout
+      };
+
+      const preferences = {
+        roomType,
+        style,
+        colors: [],
+        budget: 'medium',
+        quality: 'standard' as const,
+        imageStyle: 'photorealistic' as const,
+      };
+
+      const result = await imageService.generateDesignImage(proposal, preferences);
+
+      if (result && result.imageUrl) {
+        setGeneratedImages(prev => ({ ...prev, [layout.id]: result.imageUrl! }));
+      } else {
+        throw new Error('Image generation failed or returned no URL');
+      }
+    } catch (error) {
+      console.error('Failed to generate image:', error);
+      Alert.alert('Image Generation Failed', 'Could not generate the 3D render at this time.');
+    } finally {
+      setIsGeneratingImage(prev => ({ ...prev, [layout.id]: false }));
+    }
+  };
+
+  // ── Automatically generate image when viewing a layout ──
+  useEffect(() => {
+    if (step === 4 && layouts.length > 0) {
+      const currentLayout = layouts[activeLayoutIndex];
+      if (currentLayout && !generatedImages[currentLayout.id] && !isGeneratingImage[currentLayout.id]) {
+        handleGenerateImage(currentLayout);
+      }
+    }
+  }, [step, activeLayoutIndex, layouts]);
 
   // ─── Render: Step 1 — Room Measurement Input ──────────────────────────────────
 
@@ -355,12 +406,48 @@ export default function AIDesignModule() {
         </ScrollView>
 
         {/* 2D Floor Plan */}
-        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Top-Down Floor Plan</Text>
+        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Top-Down Blueprint</Text>
         <FloorPlan2D
           roomDimensions={{ width: roomWidth, height: roomHeight, depth: roomDepth }}
           furniture={activeLayout.furniture}
           obstacles={selectedObstacles}
         />
+
+        {/* 3D Photorealistic Render */}
+        <View style={styles.renderContainer}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginLeft: 0 }]}>3D Photorealistic Render</Text>
+          
+          {generatedImages[activeLayout.id] ? (
+            <Image 
+              source={{ uri: generatedImages[activeLayout.id] }} 
+              style={styles.generatedImage} 
+              resizeMode="cover" 
+            />
+          ) : (
+            <View style={[styles.imagePlaceholder, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+              {isGeneratingImage[activeLayout.id] ? (
+                <>
+                  <ActivityIndicator size="large" color={colors.accent} />
+                  <Text style={[styles.placeholderText, { color: colors.textSecondary, marginTop: 12 }]}>
+                    Generating 3D Render with Hugging Face...
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={[styles.placeholderText, { color: colors.textSecondary, marginBottom: 16 }]}>
+                    Want to see what this layout looks like in real life?
+                  </Text>
+                  <TouchableOpacity 
+                    style={styles.secondaryButton}
+                    onPress={() => handleGenerateImage(activeLayout)}
+                  >
+                    <Text style={styles.secondaryButtonText}>🎨 Generate 3D Render</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          )}
+        </View>
 
         {/* Safety Warnings */}
         {activeLayout.safety_warnings && activeLayout.safety_warnings.length > 0 && (
@@ -371,20 +458,6 @@ export default function AIDesignModule() {
             ))}
           </View>
         )}
-
-        {/* Furniture Legend */}
-        <View style={[styles.card, { backgroundColor: colors.surfacePrimary, borderColor: colors.border }]}>
-          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Furniture List</Text>
-          {activeLayout.furniture.map((item, i) => (
-            <View key={i} style={styles.furnitureRow}>
-              <View style={[styles.furnitureColorDot, { backgroundColor: item.color }]} />
-              <Text style={[styles.furnitureName, { color: colors.textPrimary }]}>{item.name}</Text>
-              <Text style={[styles.furnitureDims, { color: colors.textSecondary }]}>
-                {item.width}m × {item.depth}m
-              </Text>
-            </View>
-          ))}
-        </View>
 
         {/* Regenerate */}
         <TouchableOpacity style={[styles.primaryButton, { margin: 16 }]} onPress={() => setStep(2)}>
@@ -539,8 +612,16 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
-  primaryButtonDisabled: { backgroundColor: '#94a3b8', shadowOpacity: 0, elevation: 0 },
-  primaryButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  primaryButtonDisabled: { opacity: 0.5 },
+  primaryButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+
+  // New Image Generation Styles
+  renderContainer: { marginHorizontal: 16, marginTop: 24, marginBottom: 8 },
+  generatedImage: { width: '100%', height: 250, borderRadius: 12, marginTop: 8 },
+  imagePlaceholder: { width: '100%', height: 200, borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center', marginTop: 8, padding: 16 },
+  placeholderText: { textAlign: 'center', fontSize: 14 },
+  secondaryButton: { backgroundColor: '#3b82f6', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 },
+  secondaryButtonText: { color: '#fff', fontWeight: '600', fontSize: 15 },
 
   // Shimmer
   shimmerContainer: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 32 },

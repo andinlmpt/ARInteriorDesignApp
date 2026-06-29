@@ -29,15 +29,22 @@ The Pexels API key is already configured and will be used for:
 - Explore tab image search
 - Custom design image generation
 
-### Gemini API Configuration
+### Groq API Configuration
 
-- **GEMINI_API_KEY** - Your Google Gemini API key for AI design generation
+- **GROQ_API_KEY** - Your Groq API key for AI design generation (get one at https://console.groq.com)
 
-The Gemini API key is already configured and will be used for:
+The Groq API key is used for:
 - AI design prompt analysis
 - Design idea generation
 - Enhanced design descriptions and titles
 - Color palette suggestions
+- Furniture layout generation (`/api/designs/generate-layout`)
+
+### Hugging Face API Configuration (optional)
+
+- **HF_API_KEY** - Hugging Face API key for AI image generation (FLUX.1-schnell)
+
+When configured alongside `GROQ_API_KEY`, the backend uses Groq to enhance prompts and Hugging Face to generate images. Without `HF_API_KEY`, Groq-enhanced prompts fall back to Pexels image search.
 
 ### Optional Variables
 

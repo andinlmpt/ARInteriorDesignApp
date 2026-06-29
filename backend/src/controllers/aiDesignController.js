@@ -7,9 +7,8 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
-import geminiService from '../services/geminiService.js';
+import groqService from '../services/groqService.js';
 import DesignSession from '../models/DesignSession.js';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
 
@@ -584,34 +583,34 @@ export async function generateDesign(req, res, next) {
     // Generate color palette
     let colorPalette = generateColorPalette(designStyle);
 
-    // Try to enhance color palette with Gemini if available
-    if (process.env.GEMINI_API_KEY) {
+    // Try to enhance color palette with Groq if available
+    if (process.env.GROQ_API_KEY) {
       try {
-        const geminiColors = await geminiService.suggestColorPalette(designStyle);
-        if (geminiColors && Array.isArray(geminiColors) && geminiColors.length > 0) {
-          colorPalette = geminiColors;
-          console.log('[AIDesign] Used Gemini for color palette');
+        const groqColors = await groqService.suggestColorPalette(designStyle);
+        if (groqColors && Array.isArray(groqColors) && groqColors.length > 0) {
+          colorPalette = groqColors;
+          console.log('[AIDesign] Used Groq for color palette');
         }
       } catch (error) {
-        console.warn('[AIDesign] Gemini color palette failed, using default:', error.message);
+        console.warn('[AIDesign] Groq color palette failed, using default:', error.message);
       }
     }
 
-    // Generate enhanced description and title with Gemini
+    // Generate enhanced description and title with Groq
     let designTitle = `${designStyle || 'Modern'} ${finalRoomType} Design`;
     let designDescription = userPrompt || `AI-optimized ${finalRoomType} layout with ${furniture.length} furniture pieces`;
 
-    // Generate title and description with Gemini (if available)
-    if (process.env.GEMINI_API_KEY) {
+    // Generate title and description with Groq (if available)
+    if (process.env.GROQ_API_KEY) {
       try {
         // Generate title and description in parallel for better performance
-        const [geminiTitle, geminiDescription] = await Promise.all([
-          geminiService.generateDesignTitle({
+        const [groqTitle, groqDescription] = await Promise.all([
+          groqService.generateDesignTitle({
             roomType: finalRoomType,
             designStyle,
             keyFeatures: [`${furniture.length} furniture pieces`, `Optimized layout`],
           }),
-          geminiService.generateDesignDescription({
+          groqService.generateDesignDescription({
             roomType: finalRoomType,
             designStyle,
             dimensions,
@@ -621,16 +620,16 @@ export async function generateDesign(req, res, next) {
           }),
         ]);
 
-        if (geminiTitle) {
-          designTitle = geminiTitle;
+        if (groqTitle) {
+          designTitle = groqTitle;
         }
-        if (geminiDescription) {
-          designDescription = geminiDescription;
+        if (groqDescription) {
+          designDescription = groqDescription;
         }
 
-        console.log('[AIDesign] Used Gemini for title and description');
+        console.log('[AIDesign] Used Groq for title and description');
       } catch (error) {
-        console.warn('[AIDesign] Gemini title/description failed, using default:', error.message);
+        console.warn('[AIDesign] Groq title/description failed, using default:', error.message);
       }
     }
 
@@ -724,12 +723,9 @@ export async function generateLayout(req, res, next) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY is not set on the server' });
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(500).json({ error: 'GROQ_API_KEY is not set on the server' });
     }
-
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
     const systemPrompt = `You are an expert interior designer AI. Generate exactly 3 furniture layout variations for a room. You MUST respond with ONLY a valid JSON object. No markdown, no code blocks, no explanation. Just raw JSON.
 
@@ -792,25 +788,40 @@ Generate 3 different optimized furniture layout variations for this room.`;
 
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        console.log(`[generateLayout] Attempt ${attempt} - calling Gemini...`);
+        console.log(`[generateLayout] Attempt ${attempt} - calling Groq...`);
 
-        const result = await model.generateContent({
-          contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-          systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.5,
-            maxOutputTokens: 4096,
+        const requestBody = {
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.5,
+          max_tokens: 4096,
+          response_format: { type: 'json_object' }
+        };
+
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+            'Content-Type': 'application/json',
           },
+          body: JSON.stringify(requestBody),
         });
 
-        const responseText = result.response.text();
+        if (!response.ok) {
+          throw new Error(`Groq API error: ${response.status} ${await response.text()}`);
+        }
+
+        const data = await response.json();
+        const responseText = data.choices[0].message.content;
         console.log(`[generateLayout] Raw response (first 200 chars):`, responseText.substring(0, 200));
 
         const parsed = JSON.parse(responseText);
 
         if (parsed && parsed.layouts && Array.isArray(parsed.layouts) && parsed.layouts.length >= 1) {
-          // Pad to 3 layouts if Gemini returned fewer
+          // Pad to 3 layouts if Groq returned fewer
           while (parsed.layouts.length < 3) {
             const base = parsed.layouts[0];
             parsed.layouts.push({
@@ -829,7 +840,7 @@ Generate 3 different optimized furniture layout variations for this room.`;
         console.error(`[generateLayout] Attempt ${attempt} failed:`, parseError.message);
         if (attempt === 2) {
           // ── SMART FALLBACK: AI failed, use rule-based generator ──
-          console.warn('[generateLayout] Gemini unavailable, using rule-based fallback layouts');
+          console.warn('[generateLayout] Groq unavailable, using rule-based fallback layouts');
           finalJson = { layouts: generateFallbackLayouts(roomDimensions, roomType, style, detectedObstacles || []) };
         }
       }
