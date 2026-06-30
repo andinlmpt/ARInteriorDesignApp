@@ -70,3 +70,35 @@ export const AIDesignChatInput = forwardRef<AIDesignChatInputRef, AIDesignChatIn
   }
 );
 export default AIDesignChatInput;
+
+const styles = StyleSheet.create({
+  container: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 24,
+    borderTopWidth: 1,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 24,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    minHeight: 48,
+  },
+  input: {
+    flex: 1,
+    fontSize: 15,
+    paddingRight: 10,
+    paddingVertical: 4,
+    maxHeight: 100,
+  },
+  sendButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
