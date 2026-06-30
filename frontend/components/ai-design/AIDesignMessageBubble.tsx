@@ -1,54 +1,27 @@
 import React from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
-import { ChatMessage, PromptAnalysis, ChatGeneratedLayout } from '../../types/ai-design-chat';
-import { AIDesignIntentCard } from './AIDesignIntentCard';
-import { AIDesignLayoutCard } from './AIDesignLayoutCard';
+import { ChatMessage } from '../../types/ai-design-chat';
+import { AIDesignImageCard } from './AIDesignImageCard';
 
 interface AIDesignMessageBubbleProps {
   message: ChatMessage;
-  onConfirmIntent: () => void;
-  onUpdateIntent: (updated: PromptAnalysis) => void;
-  onOpenARView: (layout: ChatGeneratedLayout) => void;
-  onSaveDesign: (layout: ChatGeneratedLayout) => void;
-  onGenerateImage: (layout: ChatGeneratedLayout) => void;
-  generatedImages: Record<string, string>;
-  isGeneratingImage: Record<string, boolean>;
+  onSaveImage: (imageUrl: string, prompt: string) => void;
 }
 
 export function AIDesignMessageBubble({
   message,
-  onConfirmIntent,
-  onUpdateIntent,
-  onOpenARView,
-  onSaveDesign,
-  onGenerateImage,
-  generatedImages,
-  isGeneratingImage,
+  onSaveImage,
 }: AIDesignMessageBubbleProps) {
   const { colors } = useTheme();
   const isUser = message.role === 'user';
 
-  if (message.type === 'intent') {
+  if (message.type === 'image') {
     return (
-      <AIDesignIntentCard
-        analysis={message.analysis}
-        onConfirm={onConfirmIntent}
-        onUpdate={onUpdateIntent}
-      />
-    );
-  }
-
-  if (message.type === 'layouts') {
-    return (
-      <AIDesignLayoutCard
-        layouts={message.layouts}
-        dimensions={message.dimensions}
-        generatedImages={generatedImages}
-        isGeneratingImage={isGeneratingImage}
-        onOpenARView={onOpenARView}
-        onSaveDesign={onSaveDesign}
-        onGenerateImage={onGenerateImage}
+      <AIDesignImageCard
+        imageUrl={message.imageUrl || ''}
+        prompt={message.prompt || ''}
+        onSave={() => onSaveImage(message.imageUrl || '', message.prompt || '')}
       />
     );
   }

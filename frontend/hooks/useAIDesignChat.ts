@@ -1,26 +1,19 @@
-import { useState, useCallback, useRef } from 'react';
-import { Alert } from 'react-native';
+import { useState, useCallback } from 'react';
 import * as Haptics from 'expo-haptics';
-import { ChatMessage, PromptAnalysis, ChatGeneratedLayout } from '../types/ai-design-chat';
-import { ideaAssistantService } from '../services/IdeaAssistantService';
+import { ChatMessage } from '../types/ai-design-chat';
 import { DesignImageGenerationService } from '../services/DesignImageGenerationService';
-import { callApi } from '../services/apiClient';
 
-const DEFAULT_DIMENSIONS: Record<string, { width: number; length: number; height: number }> = {
-  'Bedroom': { width: 4.5, length: 5.0, height: 2.7 },
-  'Living Room': { width: 5.0, length: 6.0, height: 2.7 },
-  'Kitchen': { width: 3.5, length: 4.0, height: 2.7 },
-  'Bathroom': { width: 2.5, length: 3.0, height: 2.4 },
-  'Office': { width: 3.0, length: 4.0, height: 2.7 },
-  'Dining Room': { width: 4.0, length: 5.0, height: 2.7 },
+const isRefinement = (text: string, currentPrompt: string): boolean => {
+  if (!currentPrompt) return false;
+  const lower = text.toLowerCase();
+  const roomKeywords = ['bedroom', 'living', 'kitchen', 'bathroom', 'office', 'dining', 'lounge', 'salon', 'room'];
+  return !roomKeywords.some(keyword => lower.includes(keyword));
 };
 
-export function useAIDesignChat(token: string | null) {
+export function useAIDesignChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isPending, setIsPending] = useState(false);
-  const [generatedImages, setGeneratedImages] = useState<Record<string, string>>({});
-  const [isGeneratingImage, setIsGeneratingImage] = useState<Record<string, boolean>>({});
-  const currentIntentRef = useRef<PromptAnalysis | null>(null);
+  const [accumulatedPrompt, setAccumulatedPrompt] = useState<string>('');
 
   const appendMessage = useCallback((msg: ChatMessage) => {
     setMessages(prev => [...prev, msg]);
@@ -29,140 +22,6 @@ export function useAIDesignChat(token: string | null) {
   const removeLoadingMessage = useCallback(() => {
     setMessages(prev => prev.filter(m => m.type !== 'loading'));
   }, []);
-
-  const handleGenerateImage = useCallback(async (layout: ChatGeneratedLayout, roomType: string, style: string, width: number, depth: number) => {
-    if (generatedImages[layout.id] || isGeneratingImage[layout.id]) return;
-
-    setIsGeneratingImage(prev => ({ ...prev, [layout.id]: true }));
-    try {
-      const imageService = new DesignImageGenerationService();
-      
-      const proposal = {
-        id: layout.id,
-        title: `${style} ${roomType}`,
-        description: `A ${style} design for a ${width}x${depth}m ${roomType}.`,
-        layout: {
-          id: layout.id,
-          version: 1,
-          furniture: layout.furniture.map((item, index) => ({
-            id: item.id || `f_${index}`,
-            type: item.type || 'other',
-            category: item.category || 'other',
-            name: item.name || 'Furniture Item',
-            dimensions: item.dimensions || { width: 1, length: 1, height: 1 },
-            position: item.position || { x: 0, y: 0, z: 0, rotation: 0 },
-            properties: item.properties || {},
-            zIndex: item.zIndex || 0
-          })),
-          metadata: {
-            generatedAt: Date.now(),
-            algorithm: 'genetic' as const,
-            iterationsCount: 100
-          }
-        }
-      };
-
-      const preferences = {
-        roomType: roomType.toLowerCase(),
-        style: style.toLowerCase(),
-        colors: [],
-        budget: 'medium' as const,
-        quality: 'standard' as const,
-        imageStyle: 'photorealistic' as const,
-      };
-
-      const result = await imageService.generateDesignImage(proposal, preferences);
-
-      if (result && result.imageUrl) {
-        setGeneratedImages(prev => ({ ...prev, [layout.id]: result.imageUrl! }));
-      } else {
-        throw new Error('Image generation failed');
-      }
-    } catch (error) {
-      console.warn('[Chat] Failed to generate 3D image render:', error);
-    } finally {
-      setIsGeneratingImage(prev => ({ ...prev, [layout.id]: false }));
-    }
-  }, [generatedImages, isGeneratingImage]);
-
-  const generateLayouts = useCallback(async (analysis: PromptAnalysis) => {
-    setIsPending(true);
-    const loadingId = Math.random().toString();
-    appendMessage({
-      id: loadingId,
-      role: 'assistant',
-      type: 'loading',
-      label: 'AI is generating layouts and 3D preview renders...',
-      createdAt: Date.now()
-    });
-
-    const roomType = analysis.roomType || 'Living Room';
-    const style = analysis.style || 'Modern';
-    const dims = analysis.dimensions || DEFAULT_DIMENSIONS[roomType] || DEFAULT_DIMENSIONS['Living Room'];
-
-    try {
-      const body = {
-        roomDimensions: {
-          width: dims.width,
-          height: dims.height,
-          depth: dims.length, // note: length maps to depth in backend
-        },
-        detectedObstacles: analysis.obstacles || [],
-        availableFloorSpace: dims.width * dims.length * 0.75,
-        roomType,
-        style,
-      };
-
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const layoutsResult = await callApi<ChatGeneratedLayout[]>('/design/generate', {
-        method: 'POST',
-        body,
-        headers
-      });
-
-      removeLoadingMessage();
-
-      if (layoutsResult && Array.isArray(layoutsResult) && layoutsResult.length > 0) {
-        appendMessage({
-          id: Math.random().toString(),
-          role: 'assistant',
-          type: 'layouts',
-          layouts: layoutsResult,
-          dimensions: {
-            width: dims.width,
-            depth: dims.length,
-            height: dims.height
-          },
-          createdAt: Date.now()
-        });
-
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-        // Pre-trigger image generations in background
-        layoutsResult.forEach(layout => {
-          void handleGenerateImage(layout, roomType, style, dims.width, dims.length);
-        });
-      } else {
-        throw new Error('No layouts returned from generator');
-      }
-    } catch (error: any) {
-      console.error('[Chat] Layout generation failed:', error);
-      removeLoadingMessage();
-      appendMessage({
-        id: Math.random().toString(),
-        role: 'assistant',
-        type: 'error',
-        message: error.message || 'Failed to generate layouts. Please try again.',
-        createdAt: Date.now()
-      });
-    } finally {
-      setIsPending(false);
-    }
-  }, [token, appendMessage, removeLoadingMessage, handleGenerateImage]);
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text || !text.trim() || isPending) return;
@@ -181,71 +40,96 @@ export function useAIDesignChat(token: string | null) {
       id: loadingId,
       role: 'assistant',
       type: 'loading',
-      label: 'Understanding your request...',
+      label: 'Generating your custom 3D design render...',
       createdAt: Date.now()
     });
 
     try {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      
-      const analysis = await ideaAssistantService.analyzePrompt(trimmed);
+
+      // Determine prompt combination (cumulative description)
+      let nextPrompt = trimmed;
+      if (isRefinement(trimmed, accumulatedPrompt)) {
+        nextPrompt = `${accumulatedPrompt}, ${trimmed}`;
+      }
+
+      const imageService = new DesignImageGenerationService();
+      const mockProposal = {
+        id: `img_${Math.random().toString()}`,
+        roomType: 'Room',
+        title: 'Custom AI Design',
+        description: nextPrompt,
+        layout: {
+          id: '',
+          version: 1,
+          furniture: [],
+          metadata: {
+            generatedAt: Date.now(),
+            algorithm: 'genetic' as const,
+            iterationsCount: 0
+          }
+        },
+        performanceScore: {
+          spaceEfficiency: 0,
+          comfort: 0,
+          symmetry: 0,
+          accessibility: 0,
+          aesthetics: 0,
+          functionalFlow: 0,
+          lighting: 0,
+          ergonomics: 0,
+          overall: 0
+        },
+        visualization: {},
+        colorPalette: [],
+        recommendedFurniture: [],
+        estimatedCost: { low: 0, mid: 0, high: 0 },
+        pros: [],
+        cons: [],
+        rank: 1
+      };
+
+      const preferences = {
+        roomType: 'room',
+        style: 'modern',
+        colors: [],
+        budget: 'medium',
+        customDesign: nextPrompt
+      };
+
+      const result = await imageService.generateDesignImage(mockProposal, preferences);
+
       removeLoadingMessage();
 
-      // Check if we parsed roomType or style. Fall back if completely empty
-      if (!analysis.roomType && !analysis.style) {
+      if (result && result.imageUrl) {
+        setAccumulatedPrompt(nextPrompt);
         appendMessage({
           id: Math.random().toString(),
           role: 'assistant',
-          type: 'text',
-          text: "I couldn't quite extract the room type or style from your prompt. Tell me a bit more, like: 'Modern living room' or 'Scandinavian bedroom 4x5m'.",
+          type: 'image',
+          imageUrl: result.imageUrl,
+          prompt: nextPrompt,
           createdAt: Date.now()
         });
-        setIsPending(false);
-        return;
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
+        throw new Error('Hugging Face FLUX service did not return an image URL.');
       }
-
-      // Populate default dimensions based on detected roomType
-      const detectedRoomType = analysis.roomType || 'Living Room';
-      if (!analysis.dimensions) {
-        analysis.dimensions = DEFAULT_DIMENSIONS[detectedRoomType] || DEFAULT_DIMENSIONS['Living Room'];
-      }
-
-      currentIntentRef.current = analysis;
-
-      // Automatically generate layouts and previews based on analysis context
-      await generateLayouts(analysis);
 
     } catch (error: any) {
-      console.warn('[Chat] Analysis error:', error);
+      console.warn('[Chat] Image generation error:', error);
       removeLoadingMessage();
       appendMessage({
         id: Math.random().toString(),
         role: 'assistant',
         type: 'error',
-        message: 'Could not understand that. Please try rephrasing or checking your connection.',
+        message: error.message || 'Failed to generate design image. Please verify server connection.',
         createdAt: Date.now()
       });
     } finally {
       setIsPending(false);
     }
-  }, [isPending, appendMessage, removeLoadingMessage, generateLayouts]);
-
-  const updateIntent = useCallback((updated: PromptAnalysis) => {
-    currentIntentRef.current = updated;
-    // Replace the last intent message with the updated one
-    setMessages(prev => {
-      const idx = prev.map(m => m.type).lastIndexOf('intent');
-      if (idx !== -1) {
-        const copy = [...prev];
-        copy[idx] = {
-          ...copy[idx],
-          analysis: updated
-        } as any;
-        return copy;
-      }
-      return prev;
-    });
-  }, []);
+  }, [isPending, accumulatedPrompt, appendMessage, removeLoadingMessage]);
 
   const resetChat = useCallback(() => {
     setMessages([
@@ -253,24 +137,17 @@ export function useAIDesignChat(token: string | null) {
         id: 'welcome',
         role: 'assistant',
         type: 'text',
-        text: '👋 Hi! I am your AI Design Assistant. Tell me about the room you would like to design (e.g. "Design a cozy Scandinavian bedroom 4x5m with a window on the left").',
+        text: '👋 Hi! I am your AI Design Assistant. Tell me what kind of room you want to design (e.g., "Cozy minimalist bedroom with warm lighting"). I will generate a photorealistic 3D render, and you can type edits to modify it!',
         createdAt: Date.now()
       }
     ]);
-    setGeneratedImages({});
-    setIsGeneratingImage({});
-    currentIntentRef.current = null;
+    setAccumulatedPrompt('');
   }, []);
 
   return {
     messages,
     isPending,
-    generatedImages,
-    isGeneratingImage,
     sendMessage,
-    generateLayouts,
-    updateIntent,
-    resetChat,
-    handleGenerateImage
+    resetChat
   };
 }
