@@ -1,11 +1,6 @@
 /**
  * Root Layout Component
  * Main app layout with navigation stack and initialization logic
- * 
- * Configuration files:
- * - Navigation: @/config/navigation.config.ts
- * - App Config: @/config/app.config.ts
- * - Initialization: @/utils/appInitialization.ts
  */
 
 import { Stack, useRouter } from 'expo-router';
@@ -13,6 +8,20 @@ import { useEffect, useState } from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
 import { View, StyleSheet, ActivityIndicator } from 'react-native';
+
+// Google Fonts imports - direct package resolution
+import {
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+} from '@expo-google-fonts/inter';
+import {
+  PlayfairDisplay_400Regular,
+  PlayfairDisplay_500Medium,
+  PlayfairDisplay_600SemiBold,
+  PlayfairDisplay_700Bold,
+} from '@expo-google-fonts/playfair-display';
 
 // Components
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -23,7 +32,7 @@ import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 
 // Configuration & Utils
 import { ALL_SCREENS } from '@/config/navigation.config';
-import { APP_CONFIG, CUSTOM_FONTS } from '@/config/app.config';
+import { APP_CONFIG } from '@/config/app.config';
 import { prepareApp, handleFontError } from '@/utils/appInitialization';
 import { NotificationService } from '@/services/NotificationService';
 import { initErrorTracking } from '@/services/ErrorTrackingService';
@@ -34,7 +43,18 @@ function RootLayoutContent() {
   const { colors } = useTheme();
   const router = useRouter();
   const [appReady, setAppReady] = useState(false);
-  const [fontsLoaded, fontsError] = useFonts(CUSTOM_FONTS);
+
+  // Load custom fonts using main package exports
+  const [fontsLoaded, fontsError] = useFonts({
+    'Inter-Regular': Inter_400Regular,
+    'Inter-Medium': Inter_500Medium,
+    'Inter-SemiBold': Inter_600SemiBold,
+    'Inter-Bold': Inter_700Bold,
+    'PlayfairDisplay-Regular': PlayfairDisplay_400Regular,
+    'PlayfairDisplay-Medium': PlayfairDisplay_500Medium,
+    'PlayfairDisplay-SemiBold': PlayfairDisplay_600SemiBold,
+    'PlayfairDisplay-Bold': PlayfairDisplay_700Bold,
+  });
 
   useEffect(() => {
     async function initializeApp() {
@@ -44,8 +64,6 @@ function RootLayoutContent() {
         
         // Load critical app data
         await prepareApp();
-        
-        // Authentication state is handled by the app routing
         
       } catch (error) {
         console.error('App initialization error:', error);
@@ -66,14 +84,10 @@ function RootLayoutContent() {
   useEffect(() => {
     const cleanup = NotificationService.setupListeners(
       (notification) => {
-        // Handle notification received while app is in foreground
-        // Notification received - can be used for analytics or UI updates
+        // Handle foreground notifications
       },
       (response) => {
-        // Handle notification tapped
         const data = response.notification.request.content.data;
-        
-        // Navigate based on notification type
         if (data?.type === 'design_recommendation') {
           router.push('/(tabs)');
         } else if (data?.type === 'project_update') {
@@ -106,7 +120,6 @@ function RootLayoutContent() {
             contentStyle: { backgroundColor: colors.surfacePrimary },
           }}
         >
-          {/* Dynamically render all screens from config */}
           {ALL_SCREENS.map((screen) => (
             <Stack.Screen 
               key={screen.name}

@@ -18,34 +18,6 @@ export const STORAGE_KEYS = {
   LAST_SYNC: '@last_sync',
 } as const;
 
-// ============================================================
-// Font Configuration — Interior Design Typography System
-//
-// Headings  : Playfair Display (editorial, premium feel)
-// Body/UI   : Inter (clean, legible sans-serif)
-// ============================================================
-export const CUSTOM_FONTS = {
-  // ── Inter weights ──────────────────────────────────────────
-  'Inter-Regular':
-    require('@expo-google-fonts/inter/400Regular/Inter_400Regular.ttf'),
-  'Inter-Medium':
-    require('@expo-google-fonts/inter/500Medium/Inter_500Medium.ttf'),
-  'Inter-SemiBold':
-    require('@expo-google-fonts/inter/600SemiBold/Inter_600SemiBold.ttf'),
-  'Inter-Bold':
-    require('@expo-google-fonts/inter/700Bold/Inter_700Bold.ttf'),
-
-  // ── Playfair Display weights ────────────────────────────────
-  'PlayfairDisplay-Regular':
-    require('@expo-google-fonts/playfair-display/400Regular/PlayfairDisplay_400Regular.ttf'),
-  'PlayfairDisplay-Medium':
-    require('@expo-google-fonts/playfair-display/500Medium/PlayfairDisplay_500Medium.ttf'),
-  'PlayfairDisplay-SemiBold':
-    require('@expo-google-fonts/playfair-display/600SemiBold/PlayfairDisplay_600SemiBold.ttf'),
-  'PlayfairDisplay-Bold':
-    require('@expo-google-fonts/playfair-display/700Bold/PlayfairDisplay_700Bold.ttf'),
-};
-
 // ── Font family name constants (use these everywhere) ─────────
 export const FONTS = {
   // Playfair Display — App Name & Screen Titles (34–40px, 28–32px)
