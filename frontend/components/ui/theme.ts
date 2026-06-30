@@ -24,57 +24,94 @@ export const radii = {
   pill: 999,
 };
 
+// ============================================================
+// Typography System
+// Spec (from design screenshot):
+//   App Name (34–40px)       → Playfair Display Bold
+//   Screen Title (28–32px)   → Playfair Display SemiBold
+//   Section Title (20–22px)  → Inter SemiBold
+//   Body Text (16px)         → Inter Regular
+//   Small Text (14px)        → Inter Regular
+//   Caption (12px)           → Inter Regular
+//   Button Text (16px)       → Inter Medium
+// ============================================================
 export const typography = {
   family: {
-    regular: 'System',
-    medium: 'System',
-    bold: 'System',
+    playfairBold:     'PlayfairDisplay-Bold',
+    playfairSemiBold: 'PlayfairDisplay-SemiBold',
+    playfairMedium:   'PlayfairDisplay-Medium',
+    playfairRegular:  'PlayfairDisplay-Regular',
+    interBold:        'Inter-Bold',
+    interSemiBold:    'Inter-SemiBold',
+    interMedium:      'Inter-Medium',
+    interRegular:     'Inter-Regular',
   },
+  // App Name — 34–40px, Playfair Display Bold
   heading1: {
-    fontSize: 34,
-    fontWeight: '800' as const,
-    lineHeight: 42,
+    fontFamily: 'PlayfairDisplay-Bold',
+    fontSize: 36,
+    fontWeight: '700' as const,
+    lineHeight: 44,
     letterSpacing: -0.5,
   },
+  // Screen Title — 28–32px, Playfair Display SemiBold
   heading2: {
-    fontSize: 28,
-    fontWeight: '700' as const,
-    lineHeight: 36,
+    fontFamily: 'PlayfairDisplay-SemiBold',
+    fontSize: 30,
+    fontWeight: '600' as const,
+    lineHeight: 38,
     letterSpacing: -0.3,
   },
+  // Section Title — 20–22px, Inter SemiBold
   heading3: {
-    fontSize: 22,
-    fontWeight: '700' as const,
+    fontFamily: 'Inter-SemiBold',
+    fontSize: 21,
+    fontWeight: '600' as const,
     lineHeight: 28,
-    letterSpacing: -0.2,
+    letterSpacing: -0.1,
   },
+  // Section subtitle / tab labels — Inter SemiBold
   subtitle: {
+    fontFamily: 'Inter-SemiBold',
     fontSize: 17,
     fontWeight: '600' as const,
     lineHeight: 24,
   },
+  // Body Text — 16px, Inter Regular
   body: {
+    fontFamily: 'Inter-Regular',
     fontSize: 16,
     fontWeight: '400' as const,
     lineHeight: 24,
   },
-  caption: {
-    fontSize: 13,
-    fontWeight: '500' as const,
-    lineHeight: 18,
-  },
-  label: {
+  // Small Text — 14px, Inter Regular
+  small: {
+    fontFamily: 'Inter-Regular',
     fontSize: 14,
-    fontWeight: '600' as const,
+    fontWeight: '400' as const,
+    lineHeight: 20,
+  },
+  // Caption — 12px, Inter Regular
+  caption: {
+    fontFamily: 'Inter-Regular',
+    fontSize: 12,
+    fontWeight: '400' as const,
+    lineHeight: 16,
+  },
+  // Button Text — 16px, Inter Medium
+  label: {
+    fontFamily: 'Inter-Medium',
+    fontSize: 16,
+    fontWeight: '500' as const,
     lineHeight: 20,
   },
 };
 
 // Cross-platform shadow helper
 const createShadow = (
-  offsetY: number, 
-  blur: number, 
-  opacity: number, 
+  offsetY: number,
+  blur: number,
+  opacity: number,
   elevation: number
 ) => {
   if (Platform.OS === 'web') {
