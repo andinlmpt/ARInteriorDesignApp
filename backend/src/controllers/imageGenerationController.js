@@ -9,6 +9,7 @@
 
 import dotenv from 'dotenv';
 import groqService from '../services/groqService.js';
+import { filterInteriorPhotos } from '../utils/interiorImageFilter.js';
 dotenv.config();
 
 // ============================================================================
@@ -35,10 +36,12 @@ const getPexelsApiKey = () => {
 // SEARCH QUERY BUILDER
 // ============================================================================
 
-const DESIGN_VIBES = [
-  'cinematic', 'lifestyle', 'cozy', 'luxurious', 'bright and airy',
-  'moody', 'hyper-realistic', 'wide angle', 'professional photography',
-  'high resolution', 'detailed interior', 'magazine style'
+const INTERIOR_SEARCH_MODIFIERS = [
+  'interior design',
+  'home interior',
+  'room decor',
+  'furniture',
+  'living space',
 ];
 
 /**
@@ -46,7 +49,7 @@ const DESIGN_VIBES = [
  */
 function buildSearchQuery(proposal, preferences) {
   const {
-    roomType = 'room',
+    roomType = 'living room',
     style = 'modern',
     colors = [],
     mood,
@@ -54,8 +57,8 @@ function buildSearchQuery(proposal, preferences) {
     customDesign, // Custom design text from user
   } = preferences;
 
-  // Select a random vibe to ensure variety even for identical prompts
-  const randomVibe = DESIGN_VIBES[Math.floor(Math.random() * DESIGN_VIBES.length)];
+  // Select a random modifier to ensure variety even for identical prompts
+  const randomModifier = INTERIOR_SEARCH_MODIFIERS[Math.floor(Math.random() * INTERIOR_SEARCH_MODIFIERS.length)];
 
   // If user provided custom design text, use it as the primary search query
   if (customDesign && customDesign.trim().length > 0) {
@@ -70,7 +73,17 @@ function buildSearchQuery(proposal, preferences) {
       .slice(0, 5)
       .join(' ');
 
-    return `${keywords || customText} ${randomVibe}`.substring(0, 100);
+    const coreQuery = keywords || customText;
+    
+    // Check if the query already has interior keywords
+    const hasInteriorContext = /\b(interior|room|bedroom|kitchen|living|bathroom|furniture|home|decor|house|apartment|office|studio|lobby|lounge)\b/i.test(coreQuery);
+
+    if (hasInteriorContext) {
+      return `${coreQuery} ${randomModifier}`.substring(0, 100);
+    } else {
+      // Missing context, map bare words by adding roomType + style
+      return `${roomType} ${style} interior design ${coreQuery}`.substring(0, 100);
+    }
   }
 
   // Build search query from preferences
@@ -84,7 +97,7 @@ function buildSearchQuery(proposal, preferences) {
     queryParts.push(style);
   }
 
-  queryParts.push(randomVibe);
+  queryParts.push(randomModifier);
 
   if (mood) {
     queryParts.push(mood);
@@ -100,8 +113,10 @@ function buildSearchQuery(proposal, preferences) {
     queryParts.push(materials[0]);
   }
 
-  // Add "interior design" to improve relevance
-  queryParts.push('interior design');
+  // Ensure "interior design" context is always there
+  if (!queryParts.some(p => p.includes('interior') || p.includes('room') || p.includes('home'))) {
+    queryParts.push('interior design');
+  }
 
   return queryParts.join(' ').substring(0, 100);
 }
@@ -138,8 +153,8 @@ export async function generateDesignImage(req, res, next) {
     // Track if we successfully used Groq+HF image flow
     let resultImage = null;
 
-    // 1. Attempt Groq+HF image generation if configured
-    if (process.env.GROQ_API_KEY) {
+    // 1. Attempt Groq+HF image generation if configured (skip for Pexels stock photo search)
+    if (process.env.GROQ_API_KEY && !preferences.forcePexels && proposal.id !== 'explore-search') {
       try {
         console.log('[ImageGeneration] Attempting Groq+HF image flow...');
         const groqResult = await groqService.generateImage(proposal, preferences);
@@ -190,25 +205,24 @@ async function performPexelsSearch(query, proposal, res) {
 
   console.log(`[ImageGeneration] Searching Pexels for: "${query}"`);
 
+  let currentQuery = query;
   let lastError = null;
+
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT);
 
       const url = new URL(PEXELS_API_URL);
-      url.searchParams.append('query', query);
-      url.searchParams.append('per_page', '20'); // Fetch more for better variety
+      url.searchParams.append('query', currentQuery);
+      url.searchParams.append('per_page', '40'); // Fetch more to allow filtering space
+      url.searchParams.append('orientation', 'landscape'); // Landscape aspect ratio room shots preferred
 
-      // Randomize orientation for even more variety (landscape or square)
-      const orientation = Math.random() > 0.5 ? 'landscape' : 'square';
-      url.searchParams.append('orientation', orientation);
-
-      // Use higher page numbers for more diverse results
-      const randomPage = Math.floor(Math.random() * 10) + 1;
+      // Keep page number between 1 and 3 for highly relevant top results
+      const randomPage = Math.floor(Math.random() * 3) + 1;
       url.searchParams.append('page', randomPage.toString());
 
-      console.log(`[ImageGeneration] Pexels Search Attempt ${attempt + 1}/${MAX_RETRIES + 1} (Page ${randomPage}) for: "${query}"`);
+      console.log(`[ImageGeneration] Pexels Search Attempt ${attempt + 1}/${MAX_RETRIES + 1} (Page ${randomPage}) for: "${currentQuery}"`);
 
       const response = await fetch(url.toString(), {
         method: 'GET',
@@ -222,42 +236,61 @@ async function performPexelsSearch(query, proposal, res) {
       if (response.ok) {
         const data = await response.json();
         if (data.photos && data.photos.length > 0) {
-          // Map Pexels photos to include cache-busting if needed, or just return them
-          const enhancedPhotos = data.photos.map(photo => {
-            const timestamp = Date.now();
-            let imageUrl = photo.src?.large || photo.src?.original;
-            let thumbnailUrl = photo.src?.medium || imageUrl;
+          // Post-filter to ensure only interior photos are processed
+          const filteredPhotos = filterInteriorPhotos(data.photos);
 
-            // Add cache-busting timestamp to URLs
-            imageUrl += imageUrl.includes('?') ? `&t=${timestamp}` : `?t=${timestamp}`;
-            thumbnailUrl += thumbnailUrl.includes('?') ? `&t=${timestamp}` : `?t=${timestamp}`;
+          console.log(`[ImageGeneration] Pexels fetched ${data.photos.length} photos, filtered down to ${filteredPhotos.length} interior-relevant photos`);
 
-            return {
-              ...photo,
-              src: {
-                ...photo.src,
-                large: imageUrl,
-                medium: thumbnailUrl,
-              }
-            };
-          });
+          // If we got too few interior design photos, try to retry with a stricter/enriched query
+          if (filteredPhotos.length < 6 && attempt < MAX_RETRIES) {
+            console.log(`[ImageGeneration] ⚠️ Only ${filteredPhotos.length} photos passed filter. Retrying with stricter interior query.`);
+            
+            // Enrich query by adding interior keywords if not already present
+            if (!currentQuery.toLowerCase().includes('interior') && !currentQuery.toLowerCase().includes('room')) {
+              currentQuery = `${currentQuery} living room interior design`;
+            } else {
+              // If context was already present, rotate page or search query
+              currentQuery = `living room interior design ${currentQuery}`;
+            }
+            continue;
+          }
 
-          // Pick the first one as the default for single-image use cases
-          const bestPhoto = enhancedPhotos[0];
+          if (filteredPhotos.length > 0) {
+            // Map Pexels photos to include cache-busting if needed, or just return them
+            const enhancedPhotos = filteredPhotos.map(photo => {
+              const timestamp = Date.now();
+              let imageUrl = photo.src?.large || photo.src?.original;
+              let thumbnailUrl = photo.src?.medium || imageUrl;
 
-          console.log(`[ImageGeneration] ✅ Returning ${enhancedPhotos.length} photos`);
-          return res.json({
-            success: true,
-            photos: enhancedPhotos, // Return all photos for Explore screen
-            imageUrl: bestPhoto.src.large,
-            thumbnailUrl: bestPhoto.src.medium,
-            prompt: query,
-            generatedAt: Date.now(),
-            attribution: {
-              photographer: bestPhoto.photographer,
-              source: `Pexels / ${bestPhoto.photographer}`,
-            },
-          });
+              imageUrl += imageUrl.includes('?') ? `&t=${timestamp}` : `?t=${timestamp}`;
+              thumbnailUrl += thumbnailUrl.includes('?') ? `&t=${timestamp}` : `?t=${timestamp}`;
+
+              return {
+                ...photo,
+                src: {
+                  ...photo.src,
+                  large: imageUrl,
+                  medium: thumbnailUrl,
+                }
+              };
+            });
+
+            const bestPhoto = enhancedPhotos[0];
+
+            console.log(`[ImageGeneration] ✅ Returning ${enhancedPhotos.length} filtered photos`);
+            return res.json({
+              success: true,
+              photos: enhancedPhotos,
+              imageUrl: bestPhoto.src.large,
+              thumbnailUrl: bestPhoto.src.medium,
+              prompt: currentQuery,
+              generatedAt: Date.now(),
+              attribution: {
+                photographer: bestPhoto.photographer,
+                source: `Pexels / ${bestPhoto.photographer}`,
+              },
+            });
+          }
         }
 
         console.warn(`[ImageGeneration] ⚠️ No photos found on random page ${randomPage}, retrying with another...`);

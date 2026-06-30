@@ -37,6 +37,14 @@ interface UsePexelsSearchReturn {
   clearResults: () => void;
 }
 
+function toInteriorSearchQuery(raw: string): string {
+  const q = raw.trim().toLowerCase();
+  if (/\b(interior|room|bedroom|kitchen|living|bathroom|furniture|home|decor|house|apartment|office|studio|lobby|lounge)\b/.test(q)) {
+    return q;
+  }
+  return `${q} living room interior design`;
+}
+
 export function usePexelsSearch(): UsePexelsSearchReturn {
   const isMountedRef = useRef(true);
   const [photos, setPhotos] = useState<PexelsPhoto[]>([]);
@@ -57,7 +65,8 @@ export function usePexelsSearch(): UsePexelsSearchReturn {
     }
 
     const trimmedQuery = query.trim();
-    console.log('[PexelsSearch] Searching for:', trimmedQuery);
+    const interiorQuery = toInteriorSearchQuery(trimmedQuery);
+    console.log('[PexelsSearch] Searching for (normalized):', interiorQuery);
 
     setIsLoading(true);
     setError(null);
@@ -82,17 +91,18 @@ export function usePexelsSearch(): UsePexelsSearchReturn {
         body: {
           proposal: {
             id: 'explore-search',
-            title: trimmedQuery,
-            description: trimmedQuery,
+            title: interiorQuery,
+            description: interiorQuery,
           },
           preferences: {
             roomType: 'interior',
             style: 'modern',
             colors: [],
             budget: 'medium',
-            customDesign: trimmedQuery,
+            customDesign: interiorQuery,
             imageSize: '1024x1024',
             quality: 'hd',
+            forcePexels: true,
           },
         },
       });
