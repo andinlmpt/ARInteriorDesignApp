@@ -44,8 +44,11 @@ export function AIDesignLayoutCard({
       {/* 2D Interactive floor plan */}
       <View style={[styles.floorplanWrapper, { borderColor: colors.border }]}>
         <FloorPlan2D
-          width={dimensions.width}
-          depth={dimensions.depth}
+          roomDimensions={{
+            width: dimensions.width,
+            depth: dimensions.depth,
+            height: dimensions.height,
+          }}
           furniture={activeLayout.furniture}
           obstacles={[]}
         />
