@@ -18,7 +18,16 @@ export function AIDesignImageCard({ imageUrl, prompt, onSave, onEdit }: AIDesign
     const checkSaved = async () => {
       try {
         const cleanPrompt = prompt.trim();
-        const designId = `design_${Buffer.from(cleanPrompt.substring(0, 60)).toString('base64').substring(0, 16)}`;
+        const hashString = (str: string): string => {
+          let hash = 0;
+          for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = (hash << 5) - hash + char;
+            hash |= 0;
+          }
+          return Math.abs(hash).toString(36);
+        };
+        const designId = `design_${hashString(cleanPrompt)}`;
         const saved = await savedItemsService.isItemSaved(designId);
         if (active) {
           setIsSaved(saved);

@@ -79,7 +79,16 @@ export default function AIDesignScreen() {
   const handleSaveImage = async (imageUrl: string, prompt: string) => {
     try {
       const cleanPrompt = prompt.trim();
-      const designId = `design_${Buffer.from(cleanPrompt.substring(0, 60)).toString('base64').substring(0, 16)}`;
+      const hashString = (str: string): string => {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+          const char = str.charCodeAt(i);
+          hash = (hash << 5) - hash + char;
+          hash |= 0;
+        }
+        return Math.abs(hash).toString(36);
+      };
+      const designId = `design_${hashString(cleanPrompt)}`;
       const isSaved = await savedItemsService.isItemSaved(designId);
       if (isSaved) {
         await savedItemsService.removeItem(designId);
