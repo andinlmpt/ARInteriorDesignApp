@@ -212,13 +212,8 @@ export function useAIDesignChat(token: string | null) {
 
       currentIntentRef.current = analysis;
 
-      appendMessage({
-        id: Math.random().toString(),
-        role: 'assistant',
-        type: 'intent',
-        analysis,
-        createdAt: Date.now()
-      });
+      // Automatically generate layouts and previews based on analysis context
+      await generateLayouts(analysis);
 
     } catch (error: any) {
       console.warn('[Chat] Analysis error:', error);
@@ -233,7 +228,7 @@ export function useAIDesignChat(token: string | null) {
     } finally {
       setIsPending(false);
     }
-  }, [isPending, appendMessage, removeLoadingMessage]);
+  }, [isPending, appendMessage, removeLoadingMessage, generateLayouts]);
 
   const updateIntent = useCallback((updated: PromptAnalysis) => {
     currentIntentRef.current = updated;
