@@ -73,9 +73,11 @@ function RootLayoutContent() {
       }
     }
 
-    // Wait for fonts to load (or fail) before initializing
-    if (fontsLoaded !== null) {
-      handleFontError(fontsError);
+    // Wait for fonts to finish loading (or fail) before initializing the app
+    if (fontsLoaded || fontsError) {
+      if (fontsError) {
+        handleFontError(fontsError);
+      }
       initializeApp();
     }
   }, [fontsLoaded, fontsError]);
@@ -99,8 +101,8 @@ function RootLayoutContent() {
     return cleanup;
   }, [router]);
 
-  // Show loading indicator during initialization
-  if (fontsLoaded === null || !appReady) {
+  // Guard: Show loading indicator while fonts are loading or app is initializing
+  if (!fontsLoaded && !fontsError || !appReady) {
     return (
       <View style={[styles.loadingContainer, { backgroundColor: colors.surfacePrimary }]}>
         <ActivityIndicator size="large" color={colors.accent} />

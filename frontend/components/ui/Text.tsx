@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, TextProps } from 'react-native';
+import { Text, TextProps, StyleSheet } from 'react-native';
 import { useTheme, ThemeColors } from '@/contexts/ThemeContext';
 import { typography } from './theme';
 
@@ -76,19 +76,31 @@ export const AppText: React.FC<AppTextProps> = ({
   const { colors } = useTheme();
   const variantStyle = variantMap[variant];
 
+  // Flatten styles to safely inspect custom style overrides
+  const flattenedStyle = StyleSheet.flatten(style) || {};
+
+  // If we have a custom font family, we MUST strip fontWeight on Android/iOS
+  // because the file loader registers specific files (e.g. PlayfairDisplay-Bold)
+  // and setting a fontWeight property forces the OS to look for weights inside that font file,
+  // failing validation and falling back to default system sans-serif.
+  const finalFontFamily = flattenedStyle.fontFamily || variantStyle.fontFamily;
+  const finalFontWeight = finalFontFamily ? undefined : (weight ?? flattenedStyle.fontWeight ?? variantStyle.fontWeight);
+
   return (
     <Text
       {...rest}
       style={[
         {
-          fontFamily: variantStyle.fontFamily,
           fontSize: variantStyle.fontSize,
-          fontWeight: weight ?? variantStyle.fontWeight,
           color: colors[color],
           lineHeight: variantStyle.lineHeight,
           letterSpacing: variantStyle.letterSpacing,
         },
-        style,
+        flattenedStyle,
+        {
+          fontFamily: finalFontFamily,
+          fontWeight: finalFontWeight,
+        }
       ]}
     >
       {children}
