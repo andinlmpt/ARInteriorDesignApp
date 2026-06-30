@@ -256,24 +256,15 @@ async function performPexelsSearch(query, proposal, res) {
           }
 
           if (filteredPhotos.length > 0) {
-            // Map Pexels photos to include cache-busting if needed, or just return them
-            const enhancedPhotos = filteredPhotos.map(photo => {
-              const timestamp = Date.now();
-              let imageUrl = photo.src?.large || photo.src?.original;
-              let thumbnailUrl = photo.src?.medium || imageUrl;
-
-              imageUrl += imageUrl.includes('?') ? `&t=${timestamp}` : `?t=${timestamp}`;
-              thumbnailUrl += thumbnailUrl.includes('?') ? `&t=${timestamp}` : `?t=${timestamp}`;
-
-              return {
-                ...photo,
-                src: {
-                  ...photo.src,
-                  large: imageUrl,
-                  medium: thumbnailUrl,
-                }
-              };
-            });
+            // Return photos as-is — Pexels CDN URLs are pre-signed; adding timestamps breaks them
+            const enhancedPhotos = filteredPhotos.map(photo => ({
+              ...photo,
+              src: {
+                ...photo.src,
+                large: photo.src?.large || photo.src?.original || '',
+                medium: photo.src?.medium || photo.src?.large || photo.src?.original || '',
+              }
+            }));
 
             const bestPhoto = enhancedPhotos[0];
 
@@ -291,6 +282,7 @@ async function performPexelsSearch(query, proposal, res) {
               },
             });
           }
+
         }
 
         console.warn(`[ImageGeneration] ⚠️ No photos found on random page ${randomPage}, retrying with another...`);

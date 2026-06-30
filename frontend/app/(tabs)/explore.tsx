@@ -142,10 +142,12 @@ export default function ExploreScreen() {
 
   const renderPhoto = ({ item }: { item: PexelsPhoto }) => {
     const isSaved = savedItemIds.has(item.id.toString());
+    // Use medium as primary fallback — large may be empty on some Pexels photos
+    const imageUri = item.src.medium || item.src.large || item.src.original;
     return (
-      <View style={styles.photoContainer}>
+      <View style={[styles.photoContainer, { backgroundColor: colors.surfaceSecondary }]}>
         <Image
-          source={{ uri: item.src.large || item.src.medium }}
+          source={{ uri: imageUri }}
           style={styles.photo}
           resizeMode="cover"
         />
