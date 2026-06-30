@@ -7,11 +7,13 @@ import { AIDesignImageCard } from './AIDesignImageCard';
 interface AIDesignMessageBubbleProps {
   message: ChatMessage;
   onSaveImage: (imageUrl: string, prompt: string) => void;
+  onEditImage: () => void;
 }
 
 export function AIDesignMessageBubble({
   message,
   onSaveImage,
+  onEditImage,
 }: AIDesignMessageBubbleProps) {
   const { colors } = useTheme();
   const isUser = message.role === 'user';
@@ -22,6 +24,7 @@ export function AIDesignMessageBubble({
         imageUrl={message.imageUrl || ''}
         prompt={message.prompt || ''}
         onSave={() => onSaveImage(message.imageUrl || '', message.prompt || '')}
+        onEdit={onEditImage}
       />
     );
   }
@@ -118,3 +121,4 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 });
+export default AIDesignMessageBubble;

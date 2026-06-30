@@ -14,7 +14,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAIDesignChat } from '@/hooks/useAIDesignChat';
-import { AIDesignChatInput } from '@/components/ai-design/AIDesignChatInput';
+import { AIDesignChatInput, AIDesignChatInputRef } from '@/components/ai-design/AIDesignChatInput';
 import { AIDesignMessageBubble } from '@/components/ai-design/AIDesignMessageBubble';
 import { AIDesignSuggestionChips } from '@/components/ai-design/AIDesignSuggestionChips';
 import { savedItemsService } from '@/services/SavedItemsService';
@@ -24,6 +24,7 @@ export default function AIDesignScreen() {
   const { colors, statusBarStyle } = useTheme();
   const params = useLocalSearchParams<{ themeName?: string; roomDataJson?: string }>();
   const flatListRef = useRef<FlatList>(null);
+  const chatInputRef = useRef<AIDesignChatInputRef>(null);
 
   const {
     messages,
@@ -77,7 +78,6 @@ export default function AIDesignScreen() {
 
   const handleSaveImage = async (imageUrl: string, prompt: string) => {
     try {
-      // Use clean deterministic design ID based on prompt hash
       const cleanPrompt = prompt.trim();
       const designId = `design_${Buffer.from(cleanPrompt.substring(0, 60)).toString('base64').substring(0, 16)}`;
       const isSaved = await savedItemsService.isItemSaved(designId);
@@ -101,6 +101,11 @@ export default function AIDesignScreen() {
     } catch (err) {
       console.error('Failed to toggle save on design image:', err);
     }
+  };
+
+  const handleEditImage = () => {
+    // Focus the chat text input when edit is clicked
+    chatInputRef.current?.focus();
   };
 
   const showSuggestionChips = messages.length <= 1 && !isPending;
@@ -133,6 +138,7 @@ export default function AIDesignScreen() {
             <AIDesignMessageBubble
               message={item}
               onSaveImage={handleSaveImage}
+              onEditImage={handleEditImage}
             />
           )}
           contentContainerStyle={[styles.threadContent, showSuggestionChips && { justifyContent: 'center', flexGrow: 1 }]}
@@ -142,7 +148,7 @@ export default function AIDesignScreen() {
         />
 
         {/* Input Bar */}
-        <AIDesignChatInput onSend={sendMessage} disabled={isPending} />
+        <AIDesignChatInput ref={chatInputRef} onSend={sendMessage} disabled={isPending} />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
