@@ -5,6 +5,7 @@
  */
 
 import React from 'react';
+import { Feather } from '@expo/vector-icons';
 import {
   View,
   Text,
@@ -32,9 +33,11 @@ import {
 
 // Configuration
 import { UI_CONSTANTS } from '@/config/liveScan.config';
+import { useTheme } from '@/contexts/ThemeContext';
 
 export default function LiveScanScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
 
   // Camera hook
   const camera = useLiveScanCamera();
@@ -67,7 +70,7 @@ export default function LiveScanScreen() {
       <View style={styles.container}>
         <StatusBar style="light" />
         <View style={styles.permissionContainer}>
-          <Text style={styles.permissionIcon}>📷</Text>
+          <Feather name="camera" size={48} color={colors.accent} style={{ marginBottom: 16 }} />
           <Text style={styles.permissionTitle}>Camera Permission Required</Text>
           <Text style={styles.permissionText}>
             We need camera access to scan your room in real-time
@@ -89,7 +92,7 @@ export default function LiveScanScreen() {
         style={styles.camera}
         facing="back"
         onCameraReady={() => camera.setIsCameraReady(true)}
-        onMountError={(error) => console.error('Camera mount error:', error)}
+        onMountError={(error: any) => console.error('Camera mount error:', error)}
       >
         {/* Top Controls - Modernized */}
         <View style={styles.topControls}>
@@ -285,12 +288,13 @@ function AccuracyIndicator() {
         styles.accuracyText,
         metrics.isStabilized ? styles.accuracyStabilized : styles.accuracyCalibrating
       ]}>
-        {metrics.isStabilized ? '✓ Stabilized' : `Stabilizing... ${metrics.stabilizationProgress}%`}
+        {metrics.isStabilized ? 'Stabilized' : `Stabilizing... ${metrics.stabilizationProgress}%`}
       </Text>
     </View>
   );
 }
 
+// Obstacle Status Badge
 function ObstacleStatusBadge() {
   const metrics = getAccuracyMetrics();
   return (
@@ -298,7 +302,7 @@ function ObstacleStatusBadge() {
       styles.obstacleStabilizedBadge,
       metrics.obstaclesStabilized ? styles.stabilizedBadge : styles.calibratingBadge
     ]}>
-      {metrics.obstaclesStabilized ? '✓ Locked' : 'Scanning...'}
+      {metrics.obstaclesStabilized ? 'Locked' : 'Scanning...'}
     </Text>
   );
 }
@@ -378,7 +382,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    backdropFilter: 'blur(10px)',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 24,

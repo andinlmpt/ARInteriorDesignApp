@@ -4,6 +4,7 @@
  */
 
 import * as THREE from 'three';
+import { arCoreManager } from './ARCoreManager';
 
 export interface MeasurementPoint {
   id: string;
@@ -32,17 +33,15 @@ class ARMeasurementServiceClass {
    */
   async tapToMeasure(screenX: number, screenY: number): Promise<MeasurementPoint | null> {
     try {
-      // In a real implementation, this would:
-      // 1. Perform AR hit test at (screenX, screenY)
-      // 2. Get the 3D world position from the hit result
-      // 3. Return the measurement point
-      
-      // For now, we'll simulate a hit test result
-      // In production, this should use ARCore/ARKit APIs
+      const hit = await arCoreManager.hitTest(screenX, screenY);
+      if (!hit) {
+        return null;
+      }
+
       const position = new THREE.Vector3(
-        (screenX / 1000) - 0.5, // Simulated X position
-        0, // Y position (floor level)
-        (screenY / 1000) - 0.5  // Simulated Z position
+        hit.position.x,
+        hit.position.y,
+        hit.position.z
       );
 
       const point: MeasurementPoint = {

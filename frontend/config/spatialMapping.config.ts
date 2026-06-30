@@ -7,19 +7,21 @@
 export interface ScanStage {
   name: string;
   emoji: string;
+  /** Feather icon name */
+  icon: string;
   progress: number;
   message: string;
 }
 
 export const SCAN_STAGES: ScanStage[] = [
-  { name: 'initializing', emoji: '🔄', progress: 0, message: 'Initializing scanner...' },
-  { name: 'detecting_walls', emoji: '🧱', progress: 20, message: 'Detecting walls and surfaces...' },
-  { name: 'measuring', emoji: '📏', progress: 40, message: 'Measuring room dimensions...' },
-  { name: 'identifying_obstacles', emoji: '🔍', progress: 60, message: 'Identifying obstacles and features...' },
-  { name: 'mapping_planes', emoji: '🗺️', progress: 75, message: 'Mapping spatial planes...' },
-  { name: 'calculating', emoji: '🧮', progress: 85, message: 'Calculating measurements...' },
-  { name: 'finalizing', emoji: '✨', progress: 95, message: 'Finalizing scan...' },
-  { name: 'complete', emoji: '✅', progress: 100, message: 'Scan complete!' },
+  { name: 'initializing', emoji: '🔄', icon: 'refresh-cw', progress: 0, message: 'Initializing scanner...' },
+  { name: 'detecting_walls', emoji: '🧱', icon: 'layers', progress: 20, message: 'Detecting walls and surfaces...' },
+  { name: 'measuring', emoji: '📏', icon: 'maximize-2', progress: 40, message: 'Measuring room dimensions...' },
+  { name: 'identifying_obstacles', emoji: '🔍', icon: 'search', progress: 60, message: 'Identifying obstacles and features...' },
+  { name: 'mapping_planes', emoji: '🗺️', icon: 'map', progress: 75, message: 'Mapping spatial planes...' },
+  { name: 'calculating', emoji: '🧮', icon: 'cpu', progress: 85, message: 'Calculating measurements...' },
+  { name: 'finalizing', emoji: '✨', icon: 'zap', progress: 95, message: 'Finalizing scan...' },
+  { name: 'complete', emoji: '✅', icon: 'check-circle', progress: 100, message: 'Scan complete!' },
 ] as const;
 
 // Tutorial stages (same as scan stages for consistency)
@@ -96,6 +98,18 @@ export const OBSTACLE_EMOJIS: Record<string, string> = {
   'Electrical Outlet': '🔌',
   'Air Conditioning Unit': '❄️',
   default: '📌',
+};
+
+/** Feather icon names for each obstacle type */
+export const OBSTACLE_ICONS: Record<string, string> = {
+  Window: 'maximize',
+  Door: 'log-out',
+  Radiator: 'thermometer',
+  'Electrical Outlet': 'zap',
+  'Air Conditioning Unit': 'wind',
+  Furniture: 'package',
+  Other: 'map-pin',
+  default: 'map-pin',
 };
 
 // Obstacle color mapping for floor plan

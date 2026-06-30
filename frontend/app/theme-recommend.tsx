@@ -224,7 +224,7 @@ function ThemeRecommendScreen() {
           <View style={styles.placeholder} />
         </View>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={colors.accent} />
           <Text style={styles.loadingText}>Analyzing your preferences...</Text>
           <Text style={styles.loadingSubtext}>Finding perfect themes for you</Text>
         </View>

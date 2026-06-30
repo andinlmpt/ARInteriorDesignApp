@@ -35,6 +35,7 @@ export interface WallBoundary {
   startPoint: SpatialPoint;
   endPoint: SpatialPoint;
   length: number;
+  thickness?: number;
 }
 
 export interface RoomData {
@@ -99,6 +100,7 @@ export interface SpatialMappingResult {
   timestamp: number;
   confidence: number;
   fps: number;
+  professionalReport?: any;
 }
 
 export interface ImageAnalysisConfig {

@@ -72,7 +72,7 @@ export interface FurnitureLibraryItem {
   styles?: string[];
   roomTypes?: string[];
   model3D?: {
-    url: string;
+    url: string | number;
     format: 'glb' | 'gltf';
     scale?: number;
   };

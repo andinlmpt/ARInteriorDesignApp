@@ -77,10 +77,12 @@ export function useSpatialMappingUI(): UseSpatialMappingUIReturn {
     setTutorialStep(prev => prev + 1);
   }, []);
 
+  // Prev tutorial step
   const prevTutorialStep = useCallback(() => {
     setTutorialStep(prev => Math.max(0, prev - 1));
   }, []);
 
+  // Close tutorial
   const closeTutorial = useCallback(() => {
     setShowTutorial(false);
     setTutorialStep(0);
@@ -110,4 +112,3 @@ export function useSpatialMappingUI(): UseSpatialMappingUIReturn {
     closeTutorial,
   };
 }
-

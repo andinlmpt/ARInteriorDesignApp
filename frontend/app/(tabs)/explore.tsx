@@ -39,16 +39,16 @@ const mainCategories: Category[] = [
 
 // Quick search categories (randomized, no navigation)
 const quickSearchCategories: Category[] = [
-  { id: 'modern', name: 'Modern', iconName: 'cube-outline', iconColor: '#10B981', count: 'Designs' },
-  { id: 'minimalist', name: 'Minimalist', iconName: 'apps-outline', iconColor: '#3B82F6', count: 'Designs' },
-  { id: 'cozy', name: 'Cozy', iconName: 'home-outline', iconColor: '#EF4444', count: 'Designs' },
-  { id: 'scandinavian', name: 'Scandinavian', iconName: 'snow-outline', iconColor: '#06B6D4', count: 'Designs' },
+  { id: 'modern', name: 'Modern', iconName: 'cube-outline', iconColor: '#7A8F7B', count: 'Designs' },
+  { id: 'minimalist', name: 'Minimalist', iconName: 'apps-outline', iconColor: '#617364', count: 'Designs' },
+  { id: 'cozy', name: 'Cozy', iconName: 'home-outline', iconColor: '#C77A6A', count: 'Designs' },
+  { id: 'scandinavian', name: 'Scandinavian', iconName: 'snow-outline', iconColor: '#9A9A98', count: 'Designs' },
   { id: 'industrial', name: 'Industrial', iconName: 'construct-outline', iconColor: '#78716C', count: 'Designs' },
-  { id: 'bohemian', name: 'Bohemian', iconName: 'flower-outline', iconColor: '#EC4899', count: 'Designs' },
-  { id: 'rustic', name: 'Rustic', iconName: 'leaf-outline', iconColor: '#16A34A', count: 'Designs' },
-  { id: 'luxury', name: 'Luxury', iconName: 'diamond-outline', iconColor: '#F59E0B', count: 'Designs' },
+  { id: 'bohemian', name: 'Bohemian', iconName: 'flower-outline', iconColor: '#CDB9A6', count: 'Designs' },
+  { id: 'rustic', name: 'Rustic', iconName: 'leaf-outline', iconColor: '#6F8B62', count: 'Designs' },
+  { id: 'luxury', name: 'Luxury', iconName: 'diamond-outline', iconColor: '#D7B26A', count: 'Designs' },
   { id: 'vintage', name: 'Vintage', iconName: 'time-outline', iconColor: '#92400E', count: 'Designs' },
-  { id: 'contemporary', name: 'Contemporary', iconName: 'layers-outline', iconColor: '#6366F1', count: 'Designs' },
+  { id: 'contemporary', name: 'Contemporary', iconName: 'layers-outline', iconColor: '#7A8F7B', count: 'Designs' },
 ];
 
 // Helper function to shuffle array (Fisher-Yates shuffle)

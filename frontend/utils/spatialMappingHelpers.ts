@@ -16,6 +16,7 @@ import {
   COMPLIANCE_COLORS,
   PRIORITY_COLORS,
   OBSTACLE_EMOJIS,
+  OBSTACLE_ICONS,
 } from '@/config/spatialMapping.config';
 
 // ============================================================================
@@ -104,6 +105,13 @@ export function getPriorityColor(priority: string): { color: string } {
  */
 export function getObstacleEmoji(type: string): string {
   return OBSTACLE_EMOJIS[type] || OBSTACLE_EMOJIS.default;
+}
+
+/**
+ * Get Feather icon name for obstacle type
+ */
+export function getObstacleIcon(type: string): string {
+  return OBSTACLE_ICONS[type] || OBSTACLE_ICONS.default;
 }
 
 // ============================================================================

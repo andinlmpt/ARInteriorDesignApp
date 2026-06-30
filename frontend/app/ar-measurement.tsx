@@ -17,18 +17,23 @@ import {
   ScrollView,
   TextInput,
   Modal,
+  Platform,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
+import { Feather } from '@expo/vector-icons';
 import { arMeasurementService, type Measurement, type MeasurementPoint } from '@/services/ARMeasurementService';
 import { arCoreManager } from '@/services/ARCoreManager';
+import { isARSessionAvailable } from '@/native/ARSessionNative';
 import { colors, spacing, radii, shadows } from '@/components/ui/theme';
 import { BackIcon } from '@/components/ui/Icons';
+import { useTheme } from '@/contexts/ThemeContext';
 
 export default function ARMeasurementScreen() {
   const router = useRouter();
+  const { colors: themeColors } = useTheme();
   const [permission, requestPermission] = useCameraPermissions();
   const [isARActive, setIsARActive] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
@@ -166,7 +171,7 @@ export default function ARMeasurementScreen() {
       
       {!permission?.granted ? (
         <View style={styles.permissionContainer}>
-          <Text style={styles.permissionEmoji}>📷</Text>
+          <Feather name="camera" size={48} color={themeColors.accent} style={{ marginBottom: 16 }} />
           <Text style={styles.permissionTitle}>Camera Access Needed</Text>
           <Text style={styles.permissionText}>
             Allow camera access to measure distances with AR.
@@ -181,7 +186,15 @@ export default function ARMeasurementScreen() {
           <View style={styles.cameraContainer}>
             {isARActive ? (
               <>
-                <CameraView style={StyleSheet.absoluteFill} facing="back" />
+                {isARSessionAvailable() ? (
+                  <View style={styles.nativeArViewport}>
+                    <Text style={styles.nativeArHint}>
+                      {Platform.OS === 'android' ? 'ARCore' : 'ARKit'} session active — move device to scan surfaces
+                    </Text>
+                  </View>
+                ) : (
+                  <CameraView style={StyleSheet.absoluteFill} facing="back" />
+                )}
                 <TouchableOpacity
                   style={StyleSheet.absoluteFill}
                   activeOpacity={1}
@@ -216,7 +229,7 @@ export default function ARMeasurementScreen() {
               </>
             ) : (
               <View style={styles.placeholderView}>
-                <Text style={styles.placeholderEmoji}>📏</Text>
+                <Feather name="maximize-2" size={48} color={themeColors.accent} style={{ marginBottom: 16 }} />
                 <Text style={styles.placeholderTitle}>AR Measurement</Text>
                 <Text style={styles.placeholderText}>
                   Activate AR to start measuring
@@ -326,7 +339,10 @@ export default function ARMeasurementScreen() {
 
               {/* Instructions Card */}
               <View style={styles.instructionsCard}>
-                <Text style={styles.instructionsTitle}>📋 Instructions</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <Feather name="clipboard" size={16} color="#1E293B" />
+                  <Text style={styles.instructionsTitle}>Instructions</Text>
+                </View>
                 <Text style={styles.instructionsText}>
                   • Ensure good lighting and texture on surfaces{'\n'}
                   • Keep the phone steady when tapping points{'\n'}
@@ -421,6 +437,19 @@ const styles = StyleSheet.create({
   cameraContainer: {
     flex: 1,
     position: 'relative',
+  },
+  nativeArViewport: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#0f172a',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  nativeArHint: {
+    color: '#e2e8f0',
+    fontSize: 16,
+    textAlign: 'center',
+    lineHeight: 24,
   },
   placeholderView: {
     flex: 1,

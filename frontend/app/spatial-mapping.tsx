@@ -1,10 +1,12 @@
 /**
  * Spatial Mapping Screen
- * Room scanning with calibration and professional reports
- * Refactored to use modular hooks and components
+ * Room scanning with calibration and professional reports.
+ * Now powered by ARCore (Android) / ARKit (iOS) for live plane detection,
+ * real-time tracking quality, and accurate tap-to-measure.
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useCallback, useRef } from 'react';
+import { Feather } from '@expo/vector-icons';
 import {
   View,
   Text,
@@ -16,9 +18,11 @@ import {
   ActivityIndicator,
   Modal,
   TextInput,
+  Platform,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { depthEstimationService } from '@/services/DepthEstimationService';
 
 // Configuration
@@ -29,6 +33,8 @@ import { useSpatialMappingScan } from '@/hooks/useSpatialMappingScan';
 import { useSpatialMappingCalibration } from '@/hooks/useSpatialMappingCalibration';
 import { useSpatialMappingMeasurement } from '@/hooks/useSpatialMappingMeasurement';
 import { useSpatialMappingUI } from '@/hooks/useSpatialMappingUI';
+import { useARCoreSpatialScan } from '@/hooks/useARCoreSpatialScan';
+import type { ARTrackingQuality } from '@/hooks/useARCoreSpatialScan';
 
 // Utilities
 import {
@@ -41,22 +47,52 @@ import {
   getQualityLabel,
   exportScanData,
   generateSummaryText,
-  getObstacleEmoji,
+  getObstacleIcon,
   getRatingColor,
 } from '@/utils/spatialMappingHelpers';
 
 // Components
 import { FloorPlanVisualization, ScanProgressView, CalibrationModal } from '@/components/spatial-mapping';
 
+// ─── Tracking quality helpers ────────────────────────────────────────────────
+
+const TRACKING_LABELS: Record<ARTrackingQuality, string> = {
+  notAvailable: 'Not Available',
+  initializing: 'Initializing…',
+  limited: 'Limited',
+  normal: 'Tracking',
+};
+
+const TRACKING_COLORS: Record<ARTrackingQuality, string> = {
+  notAvailable: '#8E8E93',
+  initializing: '#FF9500',
+  limited: '#FF9500',
+  normal: '#34C759',
+};
+
+function trackingDot(quality: ARTrackingQuality) {
+  return TRACKING_COLORS[quality];
+}
+
+// ─── Main screen ─────────────────────────────────────────────────────────────
+
 export default function SpatialMappingScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
-  // Initialize hooks
+  // ARCore / ARKit session for this screen
+  const arCore = useARCoreSpatialScan();
+  const cameraRef = useRef<CameraView>(null);
+
+  // Core hooks
   const scan = useSpatialMappingScan();
   const calibration = useSpatialMappingCalibration();
   const ui = useSpatialMappingUI();
-  const measurement = useSpatialMappingMeasurement({ useMetric: ui.useMetric });
+  const measurement = useSpatialMappingMeasurement({
+    useMetric: ui.useMetric,
+    onHitTest: arCore.isARActive ? arCore.performHitTest : undefined,
+  });
 
   // Auto-start scan if image URI is provided
   useEffect(() => {
@@ -65,7 +101,56 @@ export default function SpatialMappingScreen() {
     }
   }, [params.imageUri, scan.isScanning, scan.scanComplete, scan.startScan]);
 
-  // Export data handler
+  // Start ARCore when we start scanning; stop it when scan finishes
+  useEffect(() => {
+    if (scan.isScanning && arCore.isARAvailable && !arCore.isARActive) {
+      arCore.startAR();
+    }
+    if (!scan.isScanning && arCore.isARActive) {
+      arCore.stopAR();
+    }
+  }, [scan.isScanning, arCore.isARAvailable, arCore.isARActive, arCore.startAR, arCore.stopAR]);
+
+  // Ensure camera permission before any AR/camera usage
+  const ensureCameraPermission = useCallback(async (): Promise<boolean> => {
+    if (cameraPermission?.granted) return true;
+    const result = await requestCameraPermission();
+    return result.granted;
+  }, [cameraPermission, requestCameraPermission]);
+
+  // ── Start scan with permission gate + real photo capture ────────────────
+  const handleStartScan = useCallback(async () => {
+    const granted = await ensureCameraPermission();
+    if (!granted) {
+      Alert.alert('Camera Required', 'Camera access is needed for spatial scanning.');
+      return;
+    }
+
+    // If a photo URI was passed as a navigation param, use it directly.
+    if (params.imageUri && typeof params.imageUri === 'string') {
+      scan.startScan(params.imageUri as string);
+      return;
+    }
+
+    // Otherwise capture a photo from the live camera view for Vision / ML analysis.
+    let capturedUri: string | undefined;
+    try {
+      if (cameraRef.current) {
+        const photo = await cameraRef.current.takePictureAsync({
+          quality: 0.7,
+          skipProcessing: false,
+          exif: false,
+        });
+        capturedUri = photo?.uri;
+      }
+    } catch {
+      // If capture fails, proceed with placeholder – Vision API will be skipped.
+    }
+
+    scan.startScan(capturedUri);
+  }, [ensureCameraPermission, scan, params.imageUri]);
+
+  // ── Export ───────────────────────────────────────────────────────────────
   const handleExport = async (format: 'json' | 'csv') => {
     if (!scan.roomData || !scan.scanResult) {
       Alert.alert('Error', 'No scan data available to export');
@@ -73,27 +158,39 @@ export default function SpatialMappingScreen() {
     }
     const result = await exportScanData(format, scan.roomData, scan.scanResult, scan.scanStats, ui.useMetric);
     if (result.success) {
-      Alert.alert('✅ Export Successful', `Room scan data exported as ${format.toUpperCase()}!`);
+      Alert.alert('Export Successful', `Room scan data exported as ${format.toUpperCase()}.`);
     } else {
       Alert.alert('Export Failed', result.error || 'Could not export room data.');
     }
   };
 
-  // Copy summary to share
   const handleCopySummary = async () => {
     if (!scan.roomData || !scan.scanResult) return;
     const summary = generateSummaryText(scan.roomData, scan.scanResult, ui.useMetric);
     await Share.share({ message: summary, title: 'Room Scan Summary' });
   };
 
+  // Live plane count: prefer real ARCore data over simulated stats
+  const livePlaneCount = arCore.isARActive
+    ? arCore.detectedPlanes.length
+    : scan.scanStats.planesDetected;
+
+  // Whether to show the live camera feed (scanning or in measurement mode with AR)
+  const showCamera =
+    (scan.isScanning || measurement.measurementMode) &&
+    (cameraPermission?.granted ?? false);
+
   return (
     <View style={styles.container}>
       <StatusBar style="dark" />
 
-      {/* Header */}
+      {/* ── Header ─────────────────────────────────────────────────────── */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backButton}>← Back</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Feather name="arrow-left" size={16} color="#94A3B8" />
+            <Text style={styles.backButton}>Back</Text>
+          </View>
         </TouchableOpacity>
         <Text style={styles.title}>Spatial Mapping</Text>
         <View style={styles.headerActions}>
@@ -101,92 +198,157 @@ export default function SpatialMappingScreen() {
             style={styles.headerButton}
             onPress={() => ui.setShowInteractiveHelp(!ui.showInteractiveHelp)}
           >
-            <Text style={styles.headerButtonText}>❓</Text>
+            <Feather name="help-circle" size={20} color="#94A3B8" />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.headerButton}
             onPress={() => ui.setShowTutorial(true)}
           >
-            <Text style={styles.headerButtonText}>📚</Text>
+            <Feather name="book-open" size={20} color="#94A3B8" />
           </TouchableOpacity>
         </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
-          {/* Scan View */}
+
+          {/* ── AR Platform badge ───────────────────────────────────────── */}
+          {arCore.isARAvailable && (
+            <View style={styles.arBadgeRow}>
+              <View style={styles.arPlatformBadge}>
+                <View style={[styles.trackingDot, { backgroundColor: trackingDot(arCore.trackingQuality) }]} />
+                <Text style={styles.arPlatformText}>{arCore.arPlatform ?? 'AR'}</Text>
+              </View>
+              {arCore.isARActive && (
+                <>
+                  <View style={styles.arStatChip}>
+                    <Text style={styles.arStatText}>
+                      {arCore.detectedPlanes.length} plane{arCore.detectedPlanes.length !== 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                  <View style={[styles.arStatChip, { backgroundColor: TRACKING_COLORS[arCore.trackingQuality] + '22' }]}>
+                    <Text style={[styles.arStatText, { color: TRACKING_COLORS[arCore.trackingQuality] }]}>
+                      {TRACKING_LABELS[arCore.trackingQuality]}
+                    </Text>
+                  </View>
+                </>
+              )}
+            </View>
+          )}
+
+          {/* ── Scan Viewport ───────────────────────────────────────────── */}
           <TouchableOpacity
             style={styles.scanView}
             onPress={measurement.measurementMode ? measurement.handleMeasurementTap : undefined}
-            activeOpacity={measurement.measurementMode ? 0.8 : 1}
+            activeOpacity={measurement.measurementMode ? 0.85 : 1}
             disabled={!measurement.measurementMode}
           >
-            {/* Placeholder state */}
+            {/* Live camera background */}
+            {showCamera && (
+              <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
+            )}
+
+            {/* Translucent scrim so overlays stay readable on the camera feed */}
+            {showCamera && <View style={styles.cameraScrim} />}
+
+            {/* ── Idle placeholder ── */}
             {!scan.isScanning && !scan.scanComplete && !measurement.measurementMode && (
               <View style={styles.scanPlaceholder}>
-                <Text style={styles.scanEmoji}>📐</Text>
+                <Feather name="maximize-2" size={48} color="#7A8F7B" style={{ marginBottom: 16 }} />
                 <Text style={styles.scanTitle}>Room Scanner</Text>
                 <Text style={styles.scanSubtitle}>
-                  Point your camera to scan room dimensions and detect obstacles
+                  {arCore.isARAvailable
+                    ? `Powered by ${arCore.arPlatform} — move device to detect surfaces`
+                    : 'Point your camera to scan room dimensions and detect obstacles'}
                 </Text>
               </View>
             )}
 
-            {/* Measurement mode */}
+            {/* ── Measurement mode ── */}
             {measurement.measurementMode && (
               <View style={styles.measurementView}>
-                <Text style={styles.measurementEmoji}>📏</Text>
-                <Text style={styles.measurementTitle}>Tap to Measure</Text>
+                <View style={styles.measurementCrosshair} />
+                <Text style={styles.measurementTitle}>
+                  {arCore.isARActive ? 'AR Measure' : 'Tap to Measure'}
+                </Text>
                 <Text style={styles.measurementSubtitle}>
                   {measurement.measurementPoints.length === 0
-                    ? 'Tap anywhere to set the first point'
+                    ? arCore.isARActive
+                      ? 'Tap a detected surface to set the first point'
+                      : 'Tap anywhere to set the first point'
                     : 'Tap to set the second point'}
                 </Text>
                 {measurement.measurementPoints.length > 0 && (
                   <View style={styles.activePoint}>
                     <View style={styles.pointDot} />
                     <Text style={styles.pointText}>
-                      Point 1: Depth {measurement.measurementPoints[0].depth.toFixed(2)}m
+                      Point 1 — depth {measurement.measurementPoints[0].depth.toFixed(2)} m
                     </Text>
                   </View>
                 )}
-                <View style={styles.depthGrid}>
-                  <Text style={styles.depthGridText}>Depth Estimation Active</Text>
-                  <View style={styles.depthBar}>
-                    <View style={[styles.depthBarFill, { width: `${measurement.depthConfidence * 100}%` }]} />
+                {!arCore.isARActive && (
+                  <View style={styles.depthGrid}>
+                    <Text style={styles.depthGridText}>Depth Estimation Active</Text>
+                    <View style={styles.depthBar}>
+                      <View style={[styles.depthBarFill, { width: `${measurement.depthConfidence * 100}%` }]} />
+                    </View>
+                    <Text style={styles.depthConfidenceText}>
+                      {Math.round(measurement.depthConfidence * 100)}% confidence
+                    </Text>
                   </View>
-                  <Text style={styles.depthConfidenceText}>
-                    {Math.round(measurement.depthConfidence * 100)}% confidence
-                  </Text>
-                </View>
+                )}
+                {arCore.isARActive && (
+                  <View style={styles.arMeasureInfo}>
+                    <Text style={styles.arMeasureInfoText}>
+                      {arCore.detectedPlanes.length > 0
+                        ? `${arCore.detectedPlanes.length} surface${arCore.detectedPlanes.length > 1 ? 's' : ''} detected — tap directly on a surface`
+                        : 'Move device slowly to detect surfaces…'}
+                    </Text>
+                  </View>
+                )}
               </View>
             )}
 
-            {/* Scanning progress */}
+            {/* ── Scanning progress ── */}
             {scan.isScanning && (
-              <ScanProgressView
-                currentStage={scan.currentStage}
-                scanProgress={scan.scanProgress}
-                scanStats={scan.scanStats}
-                showRealTimeStats={ui.showRealTimeStats}
-              />
+              <>
+                <ScanProgressView
+                  currentStage={scan.currentStage}
+                  scanProgress={scan.scanProgress}
+                  scanStats={{
+                    ...scan.scanStats,
+                    planesDetected: livePlaneCount,
+                  }}
+                  showRealTimeStats={ui.showRealTimeStats}
+                />
+                {arCore.isARActive && arCore.detectedPlanes.length > 0 && (
+                  <View style={styles.arLiveBanner}>
+                    <View style={[styles.trackingDot, { backgroundColor: TRACKING_COLORS[arCore.trackingQuality] }]} />
+                    <Text style={styles.arLiveBannerText}>
+                      {arCore.arPlatform} — {arCore.detectedPlanes.length} plane{arCore.detectedPlanes.length !== 1 ? 's' : ''} — {TRACKING_LABELS[arCore.trackingQuality]}
+                    </Text>
+                  </View>
+                )}
+              </>
             )}
 
-            {/* Scan complete */}
+            {/* ── Scan complete ── */}
             {scan.scanComplete && scan.roomData && (
               <View style={styles.completeView}>
-                <Text style={styles.completeEmoji}>✅</Text>
+                <Feather name="check-circle" size={48} color="#10B981" style={{ marginBottom: 16 }} />
                 <Text style={styles.completeText}>Scan Complete!</Text>
                 <Text style={styles.completeSubtext}>Room mapped successfully</Text>
               </View>
             )}
           </TouchableOpacity>
 
-          {/* Scan Button */}
+          {/* ── Pre-scan controls ────────────────────────────────────────── */}
           {!scan.isScanning && !scan.scanComplete && (
             <>
-              <TouchableOpacity style={styles.scanButton} onPress={() => scan.startScan()}>
-                <Text style={styles.scanButtonText}>📷 Start Room Scan</Text>
+              <TouchableOpacity style={styles.scanButton} onPress={handleStartScan}>
+                <Text style={styles.scanButtonText}>
+                  {arCore.isARAvailable ? `Start ${arCore.arPlatform} Scan` : 'Start Room Scan'}
+                </Text>
               </TouchableOpacity>
 
               {/* Tools Row */}
@@ -195,9 +357,9 @@ export default function SpatialMappingScreen() {
                   style={[styles.toolButton, calibration.isCalibrated && styles.toolButtonActive]}
                   onPress={calibration.startCalibration}
                 >
-                  <Text style={styles.toolIcon}>🎯</Text>
+                  <Feather name="target" size={20} color="#94A3B8" />
                   <Text style={styles.toolText}>
-                    {calibration.isCalibrated ? 'Calibrated ✓' : 'Calibrate'}
+                    {calibration.isCalibrated ? 'Calibrated' : 'Calibrate'}
                   </Text>
                 </TouchableOpacity>
 
@@ -207,10 +369,10 @@ export default function SpatialMappingScreen() {
                   disabled={measurement.isProcessingDepth}
                 >
                   {measurement.isProcessingDepth ? (
-                    <ActivityIndicator size="small" color="#007AFF" />
+                    <ActivityIndicator size="small" color="#7A8F7B" />
                   ) : (
                     <>
-                      <Text style={styles.toolIcon}>📏</Text>
+                      <Feather name={arCore.isARActive ? 'radio' : 'maximize-2'} size={20} color="#94A3B8" />
                       <Text style={styles.toolText}>
                         {measurement.measurementMode ? 'Exit Measure' : 'Measure'}
                       </Text>
@@ -222,16 +384,19 @@ export default function SpatialMappingScreen() {
                   style={styles.toolButton}
                   onPress={() => measurement.setShowMeasurementHistory(true)}
                 >
-                  <Text style={styles.toolIcon}>📋</Text>
+                  <Feather name="clipboard" size={20} color="#94A3B8" />
                   <Text style={styles.toolText}>History ({measurement.measurements.length})</Text>
                 </TouchableOpacity>
               </View>
 
-              {/* Calibration Status */}
+              {/* Calibration status */}
               {calibration.isCalibrated && (
                 <View style={styles.calibrationStatus}>
                   <View style={styles.calibrationHeader}>
-                    <Text style={styles.calibrationTitle}>✅ Calibration Active</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Feather name="check-circle" size={14} color="#10B981" />
+                      <Text style={styles.calibrationTitle}>Calibration Active</Text>
+                    </View>
                     <TouchableOpacity onPress={calibration.resetCalibration}>
                       <Text style={styles.calibrationReset}>Reset</Text>
                     </TouchableOpacity>
@@ -246,21 +411,29 @@ export default function SpatialMappingScreen() {
               {measurement.measurementMode && (
                 <View style={styles.measurementModeCard}>
                   <View style={styles.measurementModeHeader}>
-                    <Text style={styles.measurementModeTitle}>📏 Measurement Mode</Text>
+                    <Text style={styles.measurementModeTitle}>
+                      {arCore.isARActive ? 'AR Measurement Mode' : 'Measurement Mode'}
+                    </Text>
                     <TouchableOpacity onPress={measurement.toggleMeasurementMode}>
                       <Text style={styles.measurementModeExit}>Exit</Text>
                     </TouchableOpacity>
                   </View>
-                  <Text style={styles.measurementInstructions}>
-                    {measurement.measurementPoints.length === 0
-                      ? 'Tap the first point to start measuring'
-                      : 'Tap the second point to complete measurement'}
-                  </Text>
+                  {arCore.isARActive ? (
+                    <Text style={styles.measurementInstructions}>
+                      Tap directly on a detected surface to measure real-world distances via {arCore.arPlatform}.
+                    </Text>
+                  ) : (
+                    <Text style={styles.measurementInstructions}>
+                      {measurement.measurementPoints.length === 0
+                        ? 'Tap the first point to start measuring'
+                        : 'Tap the second point to complete measurement'}
+                    </Text>
+                  )}
                   {measurement.measurementPoints.length === 1 && (
                     <View style={styles.pointInfo}>
                       <Text style={styles.pointLabel}>First Point:</Text>
                       <Text style={styles.pointValue}>
-                        Depth: {measurement.measurementPoints[0].depth.toFixed(2)}m
+                        Depth: {measurement.measurementPoints[0].depth.toFixed(2)} m
                       </Text>
                       <TouchableOpacity
                         style={styles.cancelButton}
@@ -282,38 +455,60 @@ export default function SpatialMappingScreen() {
             </>
           )}
 
-          {/* Error */}
+          {/* ── Error ────────────────────────────────────────────────────── */}
           {scan.error && (
             <View style={styles.errorCard}>
-              <Text style={styles.errorText}>⚠️ {scan.error}</Text>
-              <TouchableOpacity style={styles.retryButton} onPress={() => scan.startScan()}>
-                <Text style={styles.retryText}>🔄 Retry Scan</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Feather name="alert-triangle" size={14} color="#EF4444" />
+                <Text style={styles.errorText}>{scan.error}</Text>
+              </View>
+              <TouchableOpacity style={styles.retryButton} onPress={handleStartScan}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Feather name="refresh-cw" size={14} color="#7A8F7B" />
+                  <Text style={styles.retryText}>Retry Scan</Text>
+                </View>
               </TouchableOpacity>
             </View>
           )}
 
-          {/* Results */}
+          {/* ── Results ──────────────────────────────────────────────────── */}
           {scan.scanComplete && scan.roomData && (
             <>
               {/* Statistics */}
               <View style={styles.statsCard}>
-                <Text style={styles.cardTitle}>📊 Scan Statistics</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <Feather name="bar-chart-2" size={16} color="#FFFFFF" />
+                  <Text style={styles.cardTitle}>Scan Statistics</Text>
+                </View>
+                {arCore.isARAvailable && (
+                  <View style={styles.arSourceRow}>
+                    <View style={styles.arSourceBadge}>
+                      <Text style={styles.arSourceText}>{arCore.arPlatform} assisted</Text>
+                    </View>
+                  </View>
+                )}
                 <View style={styles.statsGrid}>
                   <StatItem
                     label="Confidence"
                     value={`${Math.round(scan.scanStats.confidence * 100)}%`}
                     color={getConfidenceColor(scan.scanStats.confidence)}
                   />
-                  <StatItem label="Planes" value={scan.scanStats.planesDetected} />
+                  <StatItem label="Planes" value={livePlaneCount} />
                   <StatItem label="Obstacles" value={scan.scanStats.obstaclesFound} />
                   <StatItem label="Time" value={`${(scan.scanStats.processingTime / 1000).toFixed(1)}s`} />
                 </View>
+                {arCore.detectedPlanes.length > 0 && (
+                  <ARPlanesBreakdown planes={arCore.detectedPlanes} />
+                )}
               </View>
 
               {/* Dimensions */}
               <View style={styles.dataCard}>
                 <View style={styles.cardHeader}>
-                  <Text style={styles.cardTitle}>📏 Room Dimensions</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Feather name="maximize-2" size={16} color="#FFFFFF" />
+                    <Text style={styles.cardTitle}>Room Dimensions</Text>
+                  </View>
                   <TouchableOpacity onPress={ui.toggleUnit} style={styles.unitToggle}>
                     <Text style={styles.unitText}>{ui.useMetric ? 'm' : 'ft'}</Text>
                   </TouchableOpacity>
@@ -334,7 +529,10 @@ export default function SpatialMappingScreen() {
 
               {/* Room Properties */}
               <View style={styles.dataCard}>
-                <Text style={styles.cardTitle}>🏠 Room Properties</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <Feather name="home" size={16} color="#FFFFFF" />
+                  <Text style={styles.cardTitle}>Room Properties</Text>
+                </View>
                 <PropertyRow label="Floor Type" value={scan.roomData.floorType || 'Unknown'} />
                 <PropertyRow label="Natural Light" value={scan.roomData.naturalLight || 'Unknown'} />
                 <PropertyRow label="Walls Detected" value={`${scan.roomData.walls?.length || 0} walls`} />
@@ -363,9 +561,11 @@ export default function SpatialMappingScreen() {
               {/* Overview Tab */}
               {ui.selectedView === 'overview' && (
                 <>
-                  {/* Room Insights */}
                   <View style={styles.dataCard}>
-                    <Text style={styles.cardTitle}>💡 Room Insights</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <Feather name="zap" size={16} color="#FFFFFF" />
+                      <Text style={styles.cardTitle}>Room Insights</Text>
+                    </View>
                     {generateRoomInsights(scan.roomData).map((insight, index) => (
                       <View key={index} style={styles.insightItem}>
                         <Text style={styles.insightText}>{insight}</Text>
@@ -379,32 +579,36 @@ export default function SpatialMappingScreen() {
                     )}
                   </View>
 
-                  {/* Floor Plan Toggle */}
                   <View style={styles.dataCard}>
                     <TouchableOpacity
                       style={styles.floorPlanToggle}
                       onPress={() => ui.setShowFloorPlan(!ui.showFloorPlan)}
                     >
-                      <Text style={styles.cardTitle}>
-                        📐 {ui.showFloorPlan ? 'Hide' : 'Show'} Floor Plan
-                      </Text>
-                      <Text style={styles.toggleArrow}>{ui.showFloorPlan ? '▼' : '▶'}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Feather name="maximize-2" size={16} color="#FFFFFF" />
+                        <Text style={styles.cardTitle}>
+                          {ui.showFloorPlan ? 'Hide' : 'Show'} Floor Plan
+                        </Text>
+                      </View>
+                      <Feather name={ui.showFloorPlan ? 'chevron-down' : 'chevron-right'} size={16} color="#94A3B8" />
                     </TouchableOpacity>
                     {ui.showFloorPlan && (
                       <FloorPlanVisualization roomData={scan.roomData} useMetric={ui.useMetric} />
                     )}
                   </View>
 
-                  {/* Obstacles Preview */}
                   {scan.roomData.obstacles.length > 0 && (
                     <View style={styles.dataCard}>
-                      <Text style={styles.cardTitle}>
-                        🚧 Obstacles ({scan.roomData.obstacles.length})
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Feather name="alert-triangle" size={16} color="#FFFFFF" />
+                        <Text style={styles.cardTitle}>
+                          Obstacles ({scan.roomData.obstacles.length})
+                        </Text>
+                      </View>
                       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                         {scan.roomData.obstacles.slice(0, 5).map((obstacle) => (
                           <View key={obstacle.id} style={styles.obstaclePreviewItem}>
-                            <Text style={styles.obstacleEmoji}>{getObstacleEmoji(obstacle.type)}</Text>
+                            <Feather name={getObstacleIcon(obstacle.type) as any} size={18} color="#94A3B8" />
                             <Text style={styles.obstacleLabel} numberOfLines={2}>
                               {obstacle.label || obstacle.type}
                             </Text>
@@ -429,7 +633,10 @@ export default function SpatialMappingScreen() {
               {/* Walls Tab */}
               {ui.selectedView === 'walls' && scan.roomData.walls && scan.roomData.walls.length > 0 && (
                 <View style={styles.dataCard}>
-                  <Text style={styles.cardTitle}>🧱 Wall Measurements</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <Feather name="layers" size={16} color="#FFFFFF" />
+                    <Text style={styles.cardTitle}>Wall Measurements</Text>
+                  </View>
                   <View style={styles.wallsGrid}>
                     {scan.roomData.walls.map((wall, index) => (
                       <View key={wall.id || index} style={styles.wallItem}>
@@ -449,14 +656,17 @@ export default function SpatialMappingScreen() {
               {/* Obstacles Tab */}
               {ui.selectedView === 'obstacles' && (
                 <View style={styles.dataCard}>
-                  <Text style={styles.cardTitle}>🚧 Detected Obstacles ({scan.roomData.obstacles.length})</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <Feather name="alert-triangle" size={16} color="#FFFFFF" />
+                    <Text style={styles.cardTitle}>Detected Obstacles ({scan.roomData.obstacles.length})</Text>
+                  </View>
                   {scan.roomData.obstacles.length === 0 ? (
                     <Text style={styles.noObstacles}>No obstacles detected in this room</Text>
                   ) : (
                     scan.roomData.obstacles.map((obstacle) => (
                       <View key={obstacle.id} style={styles.obstacleItem}>
                         <View style={styles.obstacleIcon}>
-                          <Text style={styles.obstacleItemEmoji}>{getObstacleEmoji(obstacle.type)}</Text>
+                          <Feather name={getObstacleIcon(obstacle.type) as any} size={18} color="#94A3B8" />
                         </View>
                         <View style={styles.obstacleInfo}>
                           <Text style={styles.obstacleType}>{obstacle.label || obstacle.type}</Text>
@@ -480,34 +690,47 @@ export default function SpatialMappingScreen() {
               <View style={styles.actions}>
                 <TouchableOpacity
                   style={styles.actionButton}
-                  onPress={() => Alert.alert('Export Format', 'Choose format', [
-                    { text: 'JSON', onPress: () => handleExport('json') },
-                    { text: 'CSV', onPress: () => handleExport('csv') },
-                    { text: 'Cancel', style: 'cancel' },
-                  ])}
+                  onPress={() =>
+                    Alert.alert('Export Format', 'Choose format', [
+                      { text: 'JSON', onPress: () => handleExport('json') },
+                      { text: 'CSV', onPress: () => handleExport('csv') },
+                      { text: 'Cancel', style: 'cancel' },
+                    ])
+                  }
                 >
-                  <Text style={styles.actionButtonText}>💾 Export Data</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Feather name="save" size={14} color="#1E293B" />
+                    <Text style={styles.actionButtonText}>Export Data</Text>
+                  </View>
                 </TouchableOpacity>
 
                 <TouchableOpacity style={[styles.actionButton, styles.infoButton]} onPress={handleCopySummary}>
-                  <Text style={[styles.actionButtonText, styles.whiteText]}>📋 Copy Summary</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Feather name="clipboard" size={14} color="#FFFFFF" />
+                    <Text style={[styles.actionButtonText, styles.whiteText]}>Copy Summary</Text>
+                  </View>
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={[styles.actionButton, styles.secondaryButton]}
-                  onPress={() => router.push({
-                    pathname: '/ai-design',
-                    params: {
-                      roomDimensions: JSON.stringify({
-                        width: scan.roomData!.dimensions.width,
-                        length: scan.roomData!.dimensions.length,
-                        height: scan.roomData!.dimensions.height,
-                      }),
-                      fromSpatialMapping: 'true',
-                    },
-                  })}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/ai-design',
+                      params: {
+                        roomDimensions: JSON.stringify({
+                          width: scan.roomData!.dimensions.width,
+                          length: scan.roomData!.dimensions.length,
+                          height: scan.roomData!.dimensions.height,
+                        }),
+                        fromSpatialMapping: 'true',
+                      },
+                    })
+                  }
                 >
-                  <Text style={[styles.actionButtonText, styles.whiteText]}>✨ Use in AI Design</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Feather name="zap" size={14} color="#FFFFFF" />
+                    <Text style={[styles.actionButtonText, styles.whiteText]}>Use in AI Design</Text>
+                  </View>
                 </TouchableOpacity>
 
                 {scan.professionalReport && (
@@ -515,7 +738,10 @@ export default function SpatialMappingScreen() {
                     style={[styles.actionButton, styles.professionalButton]}
                     onPress={() => ui.setShowProfessionalReport(!ui.showProfessionalReport)}
                   >
-                    <Text style={[styles.actionButtonText, styles.whiteText]}>🏆 Professional Report</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Feather name="award" size={14} color="#FFFFFF" />
+                      <Text style={[styles.actionButtonText, styles.whiteText]}>Professional Report</Text>
+                    </View>
                   </TouchableOpacity>
                 )}
 
@@ -525,13 +751,16 @@ export default function SpatialMappingScreen() {
                     onPress={() => ui.setShowHistory(!ui.showHistory)}
                   >
                     <Text style={[styles.actionButtonText, styles.whiteText]}>
-                      📚 Scan History ({scan.scanHistory.length})
+                      Scan History ({scan.scanHistory.length})
                     </Text>
                   </TouchableOpacity>
                 )}
 
                 <TouchableOpacity style={[styles.actionButton, styles.resetButton]} onPress={scan.resetScan}>
-                  <Text style={[styles.actionButtonText, styles.resetText]}>🔄 New Scan</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Feather name="refresh-cw" size={14} color="#EF4444" />
+                    <Text style={[styles.actionButtonText, styles.resetText]}>New Scan</Text>
+                  </View>
                 </TouchableOpacity>
               </View>
 
@@ -543,7 +772,10 @@ export default function SpatialMappingScreen() {
               {/* Scan History */}
               {ui.showHistory && scan.scanHistory.length > 0 && (
                 <View style={styles.dataCard}>
-                  <Text style={styles.cardTitle}>📚 Recent Scans</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <Feather name="book-open" size={16} color="#FFFFFF" />
+                    <Text style={styles.cardTitle}>Recent Scans</Text>
+                  </View>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                     {scan.scanHistory.map((historyItem, index) => (
                       <TouchableOpacity
@@ -576,7 +808,7 @@ export default function SpatialMappingScreen() {
         </View>
       </ScrollView>
 
-      {/* Tutorial Modal */}
+      {/* ── Tutorial Modal ────────────────────────────────────────────────── */}
       {ui.showTutorial && (
         <TutorialModal
           step={ui.tutorialStep}
@@ -586,12 +818,15 @@ export default function SpatialMappingScreen() {
         />
       )}
 
-      {/* Interactive Help */}
+      {/* ── Interactive Help ──────────────────────────────────────────────── */}
       {ui.showInteractiveHelp && (
-        <HelpPanel onClose={() => ui.setShowInteractiveHelp(false)} />
+        <HelpPanel
+          arPlatform={arCore.arPlatform}
+          onClose={() => ui.setShowInteractiveHelp(false)}
+        />
       )}
 
-      {/* Calibration Modal */}
+      {/* ── Calibration Modal ─────────────────────────────────────────────── */}
       <CalibrationModal
         visible={calibration.showCalibrationModal}
         onClose={() => calibration.setShowCalibrationModal(false)}
@@ -612,7 +847,7 @@ export default function SpatialMappingScreen() {
         onBack={calibration.startCalibration}
       />
 
-      {/* Measurement History Modal */}
+      {/* ── Measurement History Modal ─────────────────────────────────────── */}
       <MeasurementHistoryModal
         visible={measurement.showMeasurementHistory}
         onClose={() => measurement.setShowMeasurementHistory(false)}
@@ -657,15 +892,45 @@ function PropertyRow({ label, value, valueColor }: { label: string; value: strin
   );
 }
 
+function ARPlanesBreakdown({ planes }: { planes: import('@/types/spatial-mapping').DetectedPlane[] }) {
+  const horizontal = planes.filter((p) => p.type === 'horizontal').length;
+  const vertical = planes.filter((p) => p.type === 'vertical').length;
+  const avgArea = planes.length > 0
+    ? (planes.reduce((s, p) => s + p.area, 0) / planes.length).toFixed(2)
+    : '—';
+  return (
+    <View style={styles.arPlanesBreakdown}>
+      <Text style={styles.arPlanesTitle}>ARCore Planes Detected</Text>
+      <View style={styles.arPlanesRow}>
+        <View style={styles.arPlaneChip}>
+          <Text style={styles.arPlaneChipValue}>{horizontal}</Text>
+          <Text style={styles.arPlaneChipLabel}>Horizontal</Text>
+        </View>
+        <View style={styles.arPlaneChip}>
+          <Text style={styles.arPlaneChipValue}>{vertical}</Text>
+          <Text style={styles.arPlaneChipLabel}>Vertical</Text>
+        </View>
+        <View style={styles.arPlaneChip}>
+          <Text style={styles.arPlaneChipValue}>{avgArea} m²</Text>
+          <Text style={styles.arPlaneChipLabel}>Avg Area</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function TutorialModal({ step, onNext, onPrev, onClose }: any) {
   const stage = TUTORIAL_STAGES[step];
   return (
     <View style={styles.tutorialOverlay}>
       <View style={styles.tutorialModal}>
         <View style={styles.tutorialHeader}>
-          <Text style={styles.tutorialTitle}>{stage?.emoji} {stage?.name?.replace('_', ' ').toUpperCase()}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+            <Feather name={(stage?.icon || 'zap') as any} size={16} color="#7A8F7B" />
+            <Text style={styles.tutorialTitle}>{stage?.name?.replace('_', ' ').toUpperCase()}</Text>
+          </View>
           <TouchableOpacity onPress={onClose} style={styles.tutorialClose}>
-            <Text style={styles.tutorialCloseText}>✕</Text>
+            <Feather name="x" size={22} color="#EF4444" />
           </TouchableOpacity>
         </View>
         <Text style={styles.tutorialDescription}>{stage?.message}</Text>
@@ -677,7 +942,10 @@ function TutorialModal({ step, onNext, onPrev, onClose }: any) {
         <View style={styles.tutorialButtons}>
           {step > 0 && (
             <TouchableOpacity style={styles.tutorialNavButton} onPress={onPrev}>
-              <Text style={styles.tutorialNavText}>← Previous</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Feather name="arrow-left" size={14} color="#94A3B8" />
+                <Text style={styles.tutorialNavText}>Previous</Text>
+              </View>
             </TouchableOpacity>
           )}
           <TouchableOpacity
@@ -685,7 +953,7 @@ function TutorialModal({ step, onNext, onPrev, onClose }: any) {
             onPress={step < TUTORIAL_STAGES.length - 1 ? onNext : onClose}
           >
             <Text style={styles.tutorialNavText}>
-              {step < TUTORIAL_STAGES.length - 1 ? 'Next →' : 'Got it! ✓'}
+              {step < TUTORIAL_STAGES.length - 1 ? 'Next' : 'Got it'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -694,21 +962,30 @@ function TutorialModal({ step, onNext, onPrev, onClose }: any) {
   );
 }
 
-function HelpPanel({ onClose }: { onClose: () => void }) {
+function HelpPanel({ arPlatform, onClose }: { arPlatform: string | null; onClose: () => void }) {
   return (
     <View style={styles.helpPanel}>
       <View style={styles.helpHeader}>
-        <Text style={styles.helpTitle}>💡 Interactive Help</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <Feather name="zap" size={18} color="#7A8F7B" />
+          <Text style={styles.helpTitle}>Interactive Help</Text>
+        </View>
         <TouchableOpacity onPress={onClose}>
-          <Text style={styles.helpClose}>✕</Text>
+          <Feather name="x" size={22} color="#94A3B8" />
         </TouchableOpacity>
       </View>
       <ScrollView style={styles.helpContent}>
-        <HelpItem title="📷 Start Scanning" text="Tap 'Start Room Scan' to begin. Move your device slowly around the room." />
-        <HelpItem title="📏 Understanding Results" text="View room dimensions, obstacles, and properties. Toggle between metric and imperial units." />
-        <HelpItem title="🗺️ Floor Plan" text="Toggle floor plan view to see a 2D visualization of your room layout." />
-        <HelpItem title="📊 Statistics" text="Monitor scan confidence, planes detected, obstacles found, and processing time." />
-        <HelpItem title="💾 Save & Share" text="Save scans to history and share results. Access previous scans from the history panel." />
+        {arPlatform && (
+          <HelpItem
+            title={`${arPlatform} Scanning`}
+            text={`This device supports ${arPlatform}. Tap "Start ${arPlatform} Scan" and move your device slowly — the platform will detect horizontal and vertical surfaces in real time.`}
+          />
+        )}
+        <HelpItem title="Start Scanning" text="Tap 'Start Room Scan' to begin. Move your device slowly around the room." />
+        <HelpItem title="AR Measurements" text={arPlatform ? `Tap the Measure tool then tap directly on a surface detected by ${arPlatform} for accurate 3-D distance.` : 'Use the Measure tool and tap two points to get depth-estimated distance.'} />
+        <HelpItem title="Floor Plan" text="Toggle floor plan view to see a 2D visualization of your room layout." />
+        <HelpItem title="Statistics" text="Monitor scan confidence, planes detected, obstacles found, and processing time." />
+        <HelpItem title="Save & Share" text="Save scans to history and share results. Access previous scans from the history panel." />
       </ScrollView>
     </View>
   );
@@ -726,24 +1003,29 @@ function HelpItem({ title, text }: { title: string; text: string }) {
 function ProfessionalReportCard({ report }: { report: any }) {
   return (
     <View style={styles.professionalCard}>
-      <Text style={styles.professionalTitle}>🏆 Professional Design Report</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <Feather name="award" size={20} color="#7A8F7B" />
+        <Text style={styles.professionalTitle}>Professional Design Report</Text>
+      </View>
       <Text style={styles.professionalSubtitle}>
         Accuracy: {report.dimensions.accuracy}% (±{100 - report.dimensions.accuracy}%)
       </Text>
-      
-      {/* Material Calculations */}
       <View style={styles.reportSection}>
-        <Text style={styles.reportSectionTitle}>📐 Material Calculations</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+          <Feather name="maximize-2" size={16} color="#7A8F7B" />
+          <Text style={styles.reportSectionTitle}>Material Calculations</Text>
+        </View>
         <View style={styles.materialGrid}>
           <MaterialItem label="Paint" value={`${report.materialCalculations.paint.paintLiters}L`} />
           <MaterialItem label="Flooring" value={`${report.materialCalculations.flooring.totalRequired.toFixed(1)}m²`} />
           <MaterialItem label="Baseboards" value={`${report.materialCalculations.baseboards.linearMeters.toFixed(1)}m`} />
         </View>
       </View>
-
-      {/* Design Analysis */}
       <View style={styles.reportSection}>
-        <Text style={styles.reportSectionTitle}>🔍 Design Analysis</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+          <Feather name="search" size={16} color="#7A8F7B" />
+          <Text style={styles.reportSectionTitle}>Design Analysis</Text>
+        </View>
         <View style={styles.analysisItem}>
           <Text style={styles.analysisLabel}>Traffic Flow:</Text>
           <Text style={[styles.analysisValue, getRatingColor(report.designAnalysis.trafficFlow.overallRating)]}>
@@ -774,15 +1056,17 @@ function MeasurementHistoryModal({ visible, onClose, measurements, useMetric, on
       <View style={styles.modalOverlay}>
         <View style={styles.measurementModal}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>📋 Measurement History</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Feather name="clipboard" size={18} color="#FFFFFF" />
+              <Text style={styles.modalTitle}>Measurement History</Text>
+            </View>
             <TouchableOpacity onPress={onClose} style={styles.modalClose}>
-              <Text style={styles.modalCloseText}>✕</Text>
+              <Feather name="x" size={22} color="#94A3B8" />
             </TouchableOpacity>
           </View>
-
           {measurements.length === 0 ? (
             <View style={styles.emptyMeasurements}>
-              <Text style={styles.emptyIcon}>📏</Text>
+              <Feather name="maximize-2" size={48} color="#94A3B8" style={{ marginBottom: 8 }} />
               <Text style={styles.emptyText}>No measurements yet</Text>
               <Text style={styles.emptyHint}>Use the Measure tool to tap two points and get the distance.</Text>
             </View>
@@ -795,7 +1079,7 @@ function MeasurementHistoryModal({ visible, onClose, measurements, useMetric, on
                       <Text style={styles.measurementNumber}>#{i + 1}</Text>
                       {m.label && <Text style={styles.measurementItemLabel}>{m.label}</Text>}
                       <TouchableOpacity onPress={() => onDelete(m.id)}>
-                        <Text style={styles.deleteIcon}>🗑️</Text>
+                        <Feather name="trash-2" size={16} color="#EF4444" />
                       </TouchableOpacity>
                     </View>
                     <Text style={styles.measurementDistance}>{formatDimension(m.distance, useMetric)}</Text>
@@ -807,10 +1091,16 @@ function MeasurementHistoryModal({ visible, onClose, measurements, useMetric, on
               </ScrollView>
               <View style={styles.measurementActions}>
                 <TouchableOpacity style={styles.clearButton} onPress={onClearAll}>
-                  <Text style={styles.clearText}>🗑️ Clear All</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Feather name="trash-2" size={14} color="#EF4444" />
+                    <Text style={styles.clearText}>Clear All</Text>
+                  </View>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.exportButton} onPress={onExport}>
-                  <Text style={styles.exportText}>📤 Export</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Feather name="upload" size={14} color="#7A8F7B" />
+                    <Text style={styles.exportText}>Export</Text>
+                  </View>
                 </TouchableOpacity>
               </View>
             </>
@@ -827,122 +1117,410 @@ function MeasurementHistoryModal({ visible, onClose, measurements, useMetric, on
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9F9F9' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 60, paddingBottom: 20, backgroundColor: '#FFFFFF' },
-  backButton: { fontSize: 16, color: '#007AFF', fontWeight: '600' },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 60,
+    paddingBottom: 20,
+    backgroundColor: '#FFFFFF',
+  },
+  backButton: { fontSize: 16, color: '#7A8F7B', fontWeight: '600' },
   title: { fontSize: 20, fontWeight: 'bold', color: '#1a1a1a' },
   headerActions: { flexDirection: 'row', gap: 8 },
-  headerButton: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0, 122, 255, 0.1)', justifyContent: 'center', alignItems: 'center' },
+  headerButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(122, 143, 123, 0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   headerButtonText: { fontSize: 18 },
+
   content: { padding: 20 },
-  scanView: { backgroundColor: '#1a1a1a', borderRadius: 20, minHeight: 300, alignItems: 'center', justifyContent: 'center', marginBottom: 20, padding: 40 },
-  scanPlaceholder: { alignItems: 'center' },
+
+  // ── AR badges ─────────────────────────────────────────────────────────────
+  arBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  arPlatformBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1a1a1a',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  trackingDot: { width: 8, height: 8, borderRadius: 4 },
+  arPlatformText: { fontSize: 12, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.5 },
+  arStatChip: {
+    backgroundColor: 'rgba(0,122,255,0.1)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  arStatText: { fontSize: 12, fontWeight: '600', color: '#7A8F7B' },
+
+  // ── Scan viewport ─────────────────────────────────────────────────────────
+  scanView: {
+    backgroundColor: '#0f172a',
+    borderRadius: 20,
+    minHeight: 320,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  cameraScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  scanPlaceholder: { alignItems: 'center', padding: 40 },
   scanEmoji: { fontSize: 80, marginBottom: 20 },
   scanTitle: { fontSize: 24, fontWeight: 'bold', color: '#FFFFFF', marginBottom: 12 },
-  scanSubtitle: { fontSize: 14, color: '#999', textAlign: 'center' },
-  measurementView: { alignItems: 'center' },
-  measurementEmoji: { fontSize: 60, marginBottom: 12 },
+  scanSubtitle: { fontSize: 14, color: '#94a3b8', textAlign: 'center', lineHeight: 22 },
+
+  // ── Measurement viewport ───────────────────────────────────────────────────
+  measurementView: { alignItems: 'center', paddingVertical: 32, paddingHorizontal: 24, width: '100%' },
+  measurementCrosshair: {
+    width: 36,
+    height: 36,
+    borderWidth: 2,
+    borderColor: '#00FF88',
+    borderRadius: 18,
+    marginBottom: 16,
+    borderStyle: 'dashed',
+  },
   measurementTitle: { fontSize: 20, fontWeight: 'bold', color: '#FFFFFF', marginBottom: 8 },
-  measurementSubtitle: { fontSize: 14, color: '#999', textAlign: 'center' },
-  activePoint: { flexDirection: 'row', alignItems: 'center', marginTop: 16 },
-  pointDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#00FF00', marginRight: 8 },
-  pointText: { color: '#00FF00', fontSize: 12 },
-  depthGrid: { marginTop: 20, padding: 16, backgroundColor: 'rgba(0, 255, 0, 0.1)', borderRadius: 12 },
-  depthGridText: { color: '#00FF00', fontSize: 12, fontWeight: '600', textAlign: 'center' },
-  depthBar: { height: 4, backgroundColor: 'rgba(0, 255, 0, 0.2)', borderRadius: 2, marginVertical: 8 },
-  depthBarFill: { height: '100%', backgroundColor: '#00FF00', borderRadius: 2 },
-  depthConfidenceText: { color: '#00FF00', fontSize: 11, textAlign: 'center' },
-  completeView: { alignItems: 'center' },
+  measurementSubtitle: { fontSize: 14, color: '#94a3b8', textAlign: 'center', marginBottom: 16 },
+  activePoint: { flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 16 },
+  pointDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#00FF88', marginRight: 8 },
+  pointText: { color: '#00FF88', fontSize: 13, fontWeight: '600' },
+  depthGrid: {
+    marginTop: 8,
+    padding: 16,
+    backgroundColor: 'rgba(0, 255, 136, 0.08)',
+    borderRadius: 12,
+    width: '100%',
+  },
+  depthGridText: { color: '#00FF88', fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  depthBar: { height: 4, backgroundColor: 'rgba(0, 255, 136, 0.2)', borderRadius: 2, marginVertical: 8 },
+  depthBarFill: { height: '100%', backgroundColor: '#00FF88', borderRadius: 2 },
+  depthConfidenceText: { color: '#00FF88', fontSize: 11, textAlign: 'center' },
+  arMeasureInfo: {
+    marginTop: 8,
+    padding: 12,
+    backgroundColor: 'rgba(0, 122, 255, 0.15)',
+    borderRadius: 10,
+    width: '100%',
+  },
+  arMeasureInfoText: { color: '#93c5fd', fontSize: 13, textAlign: 'center', lineHeight: 20 },
+
+  // ── AR live banner (during scan) ──────────────────────────────────────────
+  arLiveBanner: {
+    position: 'absolute',
+    bottom: 12,
+    left: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  arLiveBannerText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
+
+  // ── Scan complete ─────────────────────────────────────────────────────────
+  completeView: { alignItems: 'center', padding: 40 },
   completeEmoji: { fontSize: 60, marginBottom: 16 },
   completeText: { fontSize: 24, fontWeight: 'bold', color: '#FFFFFF', marginBottom: 8 },
-  completeSubtext: { fontSize: 14, color: '#999' },
-  scanButton: { backgroundColor: '#007AFF', paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginBottom: 16 },
+  completeSubtext: { fontSize: 14, color: '#94a3b8' },
+
+  // ── Scan button ───────────────────────────────────────────────────────────
+  scanButton: {
+    backgroundColor: '#7A8F7B',
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   scanButtonText: { color: '#FFFFFF', fontSize: 18, fontWeight: '700' },
+
+  // ── Tools row ─────────────────────────────────────────────────────────────
   toolsRow: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-  toolButton: { flex: 1, backgroundColor: '#F5F5F5', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
-  toolButtonActive: { backgroundColor: '#E0F2FE', borderWidth: 1, borderColor: '#007AFF' },
+  toolButton: {
+    flex: 1,
+    backgroundColor: '#F5F5F5',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  toolButtonActive: { backgroundColor: '#F0EBE4', borderWidth: 1, borderColor: '#7A8F7B' },
   toolIcon: { fontSize: 20, marginBottom: 4 },
   toolText: { fontSize: 12, color: '#666', fontWeight: '600' },
+
+  // ── Calibration ───────────────────────────────────────────────────────────
   calibrationStatus: { backgroundColor: '#D1FAE5', padding: 16, borderRadius: 12, marginBottom: 16 },
-  calibrationHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  calibrationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
   calibrationTitle: { fontSize: 14, fontWeight: '600', color: '#065F46' },
-  calibrationReset: { fontSize: 12, color: '#007AFF' },
+  calibrationReset: { fontSize: 12, color: '#7A8F7B' },
   calibrationText: { fontSize: 12, color: '#065F46' },
+
+  // ── Measurement mode card ─────────────────────────────────────────────────
   measurementModeCard: { backgroundColor: '#FEF3C7', padding: 16, borderRadius: 12, marginBottom: 16 },
-  measurementModeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  measurementModeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   measurementModeTitle: { fontSize: 16, fontWeight: '600', color: '#92400E' },
-  measurementModeExit: { fontSize: 14, color: '#007AFF' },
-  measurementInstructions: { fontSize: 14, color: '#92400E', marginBottom: 12 },
+  measurementModeExit: { fontSize: 14, color: '#7A8F7B' },
+  measurementInstructions: { fontSize: 14, color: '#92400E', marginBottom: 12, lineHeight: 20 },
   pointInfo: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
   pointLabel: { fontSize: 12, color: '#666' },
   pointValue: { fontSize: 12, fontWeight: '600', color: '#1a1a1a' },
   cancelButton: { marginLeft: 'auto' },
   cancelText: { fontSize: 12, color: '#EF4444' },
-  labelInput: { backgroundColor: '#FFFFFF', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#E5E5E5' },
+  labelInput: {
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+  },
+
+  // ── Error ─────────────────────────────────────────────────────────────────
   errorCard: { backgroundColor: '#FEE2E2', padding: 16, borderRadius: 12, marginBottom: 16 },
   errorText: { color: '#DC2626', fontSize: 14, marginBottom: 12 },
   retryButton: { backgroundColor: '#DC2626', paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
   retryText: { color: '#FFFFFF', fontWeight: '600' },
-  statsCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20, marginBottom: 16, borderWidth: 1, borderColor: '#E5E5E5' },
-  cardTitle: { fontSize: 16, fontWeight: 'bold', color: '#1a1a1a', marginBottom: 16 },
+
+  // ── Stats card ────────────────────────────────────────────────────────────
+  statsCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+  },
+  arSourceRow: { marginBottom: 12 },
+  arSourceBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  arSourceText: { fontSize: 11, fontWeight: '700', color: '#1D4ED8', letterSpacing: 0.3 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  statItem: { width: '47%', backgroundColor: '#F8F9FA', borderRadius: 12, padding: 16, alignItems: 'center' },
+  statItem: {
+    width: '47%',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+  },
   statLabel: { fontSize: 11, color: '#666', marginBottom: 6, textTransform: 'uppercase' },
-  statValue: { fontSize: 20, fontWeight: 'bold', color: '#007AFF' },
-  dataCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20, marginBottom: 16, borderWidth: 1, borderColor: '#E5E5E5' },
+  statValue: { fontSize: 20, fontWeight: 'bold', color: '#7A8F7B' },
+  cardTitle: { fontSize: 16, fontWeight: 'bold', color: '#1a1a1a', marginBottom: 16 },
+
+  // ── ARCore planes breakdown ───────────────────────────────────────────────
+  arPlanesBreakdown: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5E5',
+  },
+  arPlanesTitle: { fontSize: 13, fontWeight: '600', color: '#64748b', marginBottom: 10 },
+  arPlanesRow: { flexDirection: 'row', gap: 10 },
+  arPlaneChip: {
+    flex: 1,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 10,
+    padding: 10,
+    alignItems: 'center',
+  },
+  arPlaneChipValue: { fontSize: 16, fontWeight: 'bold', color: '#1D4ED8' },
+  arPlaneChipLabel: { fontSize: 10, color: '#64748b', marginTop: 2, textTransform: 'uppercase' },
+
+  // ── Data card / shared ────────────────────────────────────────────────────
+  dataCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+  },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   unitToggle: { backgroundColor: '#F5F5F5', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-  unitText: { fontSize: 14, fontWeight: '600', color: '#007AFF' },
+  unitText: { fontSize: 14, fontWeight: '600', color: '#7A8F7B' },
   dimensionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  dimensionItem: { width: '47%', backgroundColor: '#F8F9FA', borderRadius: 12, padding: 16, alignItems: 'center' },
+  dimensionItem: {
+    width: '47%',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+  },
   dimensionLabel: { fontSize: 11, color: '#666', marginBottom: 6, textTransform: 'uppercase' },
-  dimensionValue: { fontSize: 18, fontWeight: 'bold', color: '#007AFF' },
-  volumeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#E5E5E5' },
+  dimensionValue: { fontSize: 18, fontWeight: 'bold', color: '#7A8F7B' },
+  volumeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5E5',
+  },
   volumeLabel: { fontSize: 14, color: '#666', fontWeight: '600' },
-  volumeValue: { fontSize: 16, fontWeight: 'bold', color: '#007AFF' },
-  propertyRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
+  volumeValue: { fontSize: 16, fontWeight: 'bold', color: '#7A8F7B' },
+  propertyRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5F5F5',
+  },
   propertyLabel: { fontSize: 14, color: '#666' },
   propertyValue: { fontSize: 14, fontWeight: '600', color: '#1a1a1a' },
-  viewTabs: { flexDirection: 'row', backgroundColor: '#F5F5F5', borderRadius: 12, padding: 4, marginBottom: 16 },
+
+  // ── View tabs ─────────────────────────────────────────────────────────────
+  viewTabs: {
+    flexDirection: 'row',
+    backgroundColor: '#F5F5F5',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 16,
+  },
   viewTab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8 },
-  viewTabActive: { backgroundColor: '#FFFFFF', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
+  viewTabActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
   viewTabText: { fontSize: 14, fontWeight: '600', color: '#666' },
-  viewTabTextActive: { color: '#007AFF' },
-  insightItem: { paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#F0F9FF', borderRadius: 8, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: '#007AFF' },
+  viewTabTextActive: { color: '#7A8F7B' },
+
+  // ── Overview sub-cards ────────────────────────────────────────────────────
+  insightItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#F0F9FF',
+    borderRadius: 8,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#7A8F7B',
+  },
   insightText: { fontSize: 14, color: '#1a1a1a', lineHeight: 20 },
-  roomTypeSuggestion: { marginTop: 12, padding: 12, backgroundColor: '#FEF3C7', borderRadius: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  roomTypeSuggestion: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   roomTypeLabel: { fontSize: 13, color: '#666', fontWeight: '600' },
   roomTypeValue: { fontSize: 15, color: '#D97706', fontWeight: 'bold' },
   floorPlanToggle: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  toggleArrow: { fontSize: 16, color: '#007AFF' },
-  obstaclePreviewItem: { width: 80, alignItems: 'center', marginRight: 12, padding: 12, backgroundColor: '#F8F9FA', borderRadius: 12 },
+  toggleArrow: { fontSize: 16, color: '#7A8F7B' },
+  obstaclePreviewItem: {
+    width: 80,
+    alignItems: 'center',
+    marginRight: 12,
+    padding: 12,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+  },
   obstacleEmoji: { fontSize: 28, marginBottom: 8 },
   obstacleLabel: { fontSize: 11, color: '#666', textAlign: 'center' },
-  viewMoreButton: { width: 80, alignItems: 'center', justifyContent: 'center', padding: 12, backgroundColor: '#E0F2FE', borderRadius: 12 },
-  viewMoreText: { fontSize: 12, color: '#007AFF', fontWeight: '600' },
+  viewMoreButton: {
+    width: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    backgroundColor: '#F0EBE4',
+    borderRadius: 12,
+  },
+  viewMoreText: { fontSize: 12, color: '#7A8F7B', fontWeight: '600' },
+
+  // ── Walls tab ─────────────────────────────────────────────────────────────
   wallsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  wallItem: { width: '47%', backgroundColor: '#F8F9FA', borderRadius: 10, padding: 14, borderWidth: 1, borderColor: '#E5E7EB' },
+  wallItem: {
+    width: '47%',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
   wallOrientation: { fontSize: 11, color: '#666', fontWeight: '600', textTransform: 'uppercase', marginBottom: 6 },
-  wallLength: { fontSize: 18, fontWeight: 'bold', color: '#007AFF', marginBottom: 4 },
+  wallLength: { fontSize: 18, fontWeight: 'bold', color: '#7A8F7B', marginBottom: 4 },
   wallDetails: { fontSize: 10, color: '#999', marginTop: 4 },
+
+  // ── Obstacles tab ─────────────────────────────────────────────────────────
   noObstacles: { fontSize: 14, color: '#999', fontStyle: 'italic', textAlign: 'center', paddingVertical: 20 },
-  obstacleItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
-  obstacleIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#F8F9FA', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  obstacleItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5F5F5',
+  },
+  obstacleIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F8F9FA',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
   obstacleItemEmoji: { fontSize: 24 },
   obstacleInfo: { flex: 1 },
   obstacleType: { fontSize: 14, fontWeight: '600', color: '#1a1a1a', marginBottom: 4 },
   obstacleDetails: { fontSize: 12, color: '#666' },
   obstacleDistance: { fontSize: 11, color: '#999', marginTop: 2 },
+
+  // ── Action buttons ────────────────────────────────────────────────────────
   actions: { marginTop: 8, gap: 12 },
   actionButton: { backgroundColor: '#F5F5F5', paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
   actionButtonText: { fontSize: 16, fontWeight: '600', color: '#1a1a1a' },
   whiteText: { color: '#FFFFFF' },
   infoButton: { backgroundColor: '#5856D6' },
   secondaryButton: { backgroundColor: '#34C759' },
-  professionalButton: { backgroundColor: '#007AFF' },
+  professionalButton: { backgroundColor: '#7A8F7B' },
   historyButton: { backgroundColor: '#AF52DE' },
   resetButton: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E5E5E5' },
   resetText: { color: '#666' },
-  professionalCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20, marginTop: 16, borderWidth: 1, borderColor: '#007AFF' },
+
+  // ── Professional report ───────────────────────────────────────────────────
+  professionalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: '#7A8F7B',
+  },
   professionalTitle: { fontSize: 18, fontWeight: 'bold', color: '#1a1a1a', marginBottom: 8 },
   professionalSubtitle: { fontSize: 12, color: '#666', marginBottom: 16 },
   reportSection: { marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#E5E5E5' },
@@ -950,41 +1528,110 @@ const styles = StyleSheet.create({
   materialGrid: { flexDirection: 'row', gap: 12 },
   materialItem: { flex: 1, backgroundColor: '#F8F9FA', padding: 12, borderRadius: 8, alignItems: 'center' },
   materialLabel: { fontSize: 11, color: '#666', marginBottom: 4 },
-  materialValue: { fontSize: 16, fontWeight: 'bold', color: '#007AFF' },
+  materialValue: { fontSize: 16, fontWeight: 'bold', color: '#7A8F7B' },
   analysisItem: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 },
   analysisLabel: { fontSize: 13, color: '#666' },
   analysisValue: { fontSize: 13, fontWeight: '600' },
-  historyItem: { width: 140, backgroundColor: '#F8F9FA', borderRadius: 12, padding: 12, marginRight: 12, borderWidth: 1, borderColor: '#E5E7EB' },
+
+  // ── History ───────────────────────────────────────────────────────────────
+  historyItem: {
+    width: 140,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 12,
+    padding: 12,
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
   historyDate: { fontSize: 11, color: '#666', marginBottom: 4 },
   historyDimensions: { fontSize: 14, fontWeight: '600', color: '#1a1a1a', marginBottom: 4 },
-  historyConfidence: { fontSize: 11, color: '#007AFF' },
-  tutorialOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0, 0, 0, 0.7)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  historyConfidence: { fontSize: 11, color: '#7A8F7B' },
+
+  // ── Tutorial modal ────────────────────────────────────────────────────────
+  tutorialOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
   tutorialModal: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 24, width: '100%', maxWidth: 360 },
-  tutorialHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  tutorialHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   tutorialTitle: { fontSize: 18, fontWeight: 'bold', color: '#1a1a1a' },
-  tutorialClose: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#F5F5F5', alignItems: 'center', justifyContent: 'center' },
+  tutorialClose: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: '#F5F5F5',
+    alignItems: 'center', justifyContent: 'center',
+  },
   tutorialCloseText: { fontSize: 18, color: '#666' },
   tutorialDescription: { fontSize: 14, color: '#666', lineHeight: 22, marginBottom: 20 },
   tutorialDots: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 20 },
   tutorialDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#E5E5E5' },
-  tutorialDotActive: { backgroundColor: '#007AFF' },
+  tutorialDotActive: { backgroundColor: '#7A8F7B' },
   tutorialButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
-  tutorialNavButton: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8, backgroundColor: '#F5F5F5' },
-  tutorialNavPrimary: { backgroundColor: '#007AFF' },
+  tutorialNavButton: {
+    paddingVertical: 12, paddingHorizontal: 20,
+    borderRadius: 8, backgroundColor: '#F5F5F5',
+  },
+  tutorialNavPrimary: { backgroundColor: '#7A8F7B' },
   tutorialNavText: { fontSize: 14, fontWeight: '600', color: '#1a1a1a' },
-  helpPanel: { position: 'absolute', top: 100, left: 20, right: 20, backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20, maxHeight: 400, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 },
-  helpHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+
+  // ── Help panel ────────────────────────────────────────────────────────────
+  helpPanel: {
+    position: 'absolute',
+    top: 100, left: 20, right: 20,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    maxHeight: 420,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  helpHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   helpTitle: { fontSize: 18, fontWeight: 'bold', color: '#1a1a1a' },
   helpClose: { fontSize: 20, color: '#666' },
-  helpContent: { maxHeight: 300 },
+  helpContent: { maxHeight: 320 },
   helpItem: { marginBottom: 16 },
   helpItemTitle: { fontSize: 14, fontWeight: '600', color: '#1a1a1a', marginBottom: 4 },
   helpItemText: { fontSize: 13, color: '#666', lineHeight: 20 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'flex-end' },
-  measurementModal: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '70%', paddingBottom: 40 },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: '#E5E5E5' },
+
+  // ── Measurement history modal ─────────────────────────────────────────────
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  measurementModal: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '70%',
+    paddingBottom: 40,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E5E5',
+  },
   modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#1a1a1a' },
-  modalClose: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#F5F5F5', alignItems: 'center', justifyContent: 'center' },
+  modalClose: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: '#F5F5F5',
+    alignItems: 'center', justifyContent: 'center',
+  },
   modalCloseText: { fontSize: 18, color: '#666' },
   emptyMeasurements: { alignItems: 'center', padding: 40 },
   emptyIcon: { fontSize: 48, marginBottom: 16 },
@@ -993,7 +1640,7 @@ const styles = StyleSheet.create({
   measurementsList: { padding: 20 },
   measurementItem: { backgroundColor: '#F8F9FA', padding: 16, borderRadius: 12, marginBottom: 12 },
   measurementItemHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  measurementNumber: { fontSize: 12, fontWeight: '600', color: '#007AFF', marginRight: 8 },
+  measurementNumber: { fontSize: 12, fontWeight: '600', color: '#7A8F7B', marginRight: 8 },
   measurementItemLabel: { flex: 1, fontSize: 14, color: '#1a1a1a' },
   deleteIcon: { fontSize: 16 },
   measurementDistance: { fontSize: 24, fontWeight: 'bold', color: '#1a1a1a', marginBottom: 4 },
@@ -1001,6 +1648,6 @@ const styles = StyleSheet.create({
   measurementActions: { flexDirection: 'row', padding: 20, gap: 12 },
   clearButton: { flex: 1, backgroundColor: '#FEE2E2', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   clearText: { color: '#DC2626', fontWeight: '600' },
-  exportButton: { flex: 1, backgroundColor: '#007AFF', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  exportButton: { flex: 1, backgroundColor: '#7A8F7B', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   exportText: { color: '#FFFFFF', fontWeight: '600' },
 });

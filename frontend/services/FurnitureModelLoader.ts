@@ -144,11 +144,24 @@ export class FurnitureModelLoader {
       if (!modelUri) {
         throw new Error('Failed to resolve model URI');
       }
+
+      let loadUri = modelUri;
+      if (modelUri.startsWith('file://')) {
+        try {
+          console.log('[FurnitureModelLoader] Reading local file to Base64 to bypass RN fetch limitations...');
+          const base64 = await FileSystem.readAsStringAsync(modelUri, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          loadUri = `data:application/octet-stream;base64,${base64}`;
+        } catch (e) {
+          console.warn('[FurnitureModelLoader] Failed to read local file as base64:', e);
+        }
+      }
       
       // Load with GLTFLoader
       return new Promise((resolve, reject) => {
         this.loader.load(
-          modelUri,
+          loadUri,
           (gltf) => {
             console.log('[FurnitureModelLoader] GLB model loaded successfully');
             const model = gltf.scene;
@@ -386,6 +399,17 @@ export class FurnitureModelLoader {
         );
 
         if (loadedModel) {
+          // Enhance PBR and shadows
+          loadedModel.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+              if (child.material instanceof THREE.MeshStandardMaterial) {
+                child.material.needsUpdate = true;
+              }
+            }
+          });
+
           // Scale model to match dimensions if needed
           const modelBox = new THREE.Box3().setFromObject(loadedModel);
           const modelSize = modelBox.getSize(new THREE.Vector3());
@@ -416,8 +440,13 @@ export class FurnitureModelLoader {
         }
       } catch (error) {
         console.error(`[FurnitureModelLoader] Error loading GLB model for ${item.name}:`, error);
-        // Fall through to procedural generation
+        if (!__DEV__) {
+          throw new Error(`[FurnitureModelLoader] Failed to load required GLB model for ${item.name}`);
+        }
+        // Fall through to procedural generation in DEV
       }
+    } else if (!__DEV__) {
+      throw new Error(`[FurnitureModelLoader] Model URL missing for ${item.name}`);
     }
 
     // Fallback to procedural generation

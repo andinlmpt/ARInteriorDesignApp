@@ -17,6 +17,11 @@ import { formatDimension } from '@/utils/spatialMappingHelpers';
 
 interface UseSpatialMappingMeasurementProps {
   useMetric: boolean;
+  /**
+   * Optional ARCore/ARKit hit-test function.
+   * When provided, taps use the native 3-D position instead of depth estimation.
+   */
+  onHitTest?: (screenX: number, screenY: number) => Promise<{ x: number; y: number; z: number } | null>;
 }
 
 interface UseSpatialMappingMeasurementReturn {
@@ -44,6 +49,7 @@ interface UseSpatialMappingMeasurementReturn {
 
 export function useSpatialMappingMeasurement({
   useMetric,
+  onHitTest,
 }: UseSpatialMappingMeasurementProps): UseSpatialMappingMeasurementReturn {
   // Measurement state
   const [measurementMode, setMeasurementMode] = useState(false);
@@ -108,48 +114,75 @@ export function useSpatialMappingMeasurement({
     }
   }, [measurementMode]);
 
-  // Handle measurement tap
+  // Handle measurement tap — prefers ARCore hit test when available
   const handleMeasurementTap = useCallback((event: GestureResponderEvent) => {
-    if (!measurementMode || !currentDepthMap) return;
+    if (!measurementMode) return;
 
     const { locationX, locationY } = event.nativeEvent;
-    
-    // Create measurement point
-    const point = depthEstimationService.createMeasurementPoint(
-      locationX,
-      locationY,
-      currentDepthMap
-    );
 
-    const newPoints = [...measurementPoints, point];
-    setMeasurementPoints(newPoints);
+    const addPoint = (point: MeasurementPoint) => {
+      const newPoints = [...measurementPoints, point];
+      setMeasurementPoints(newPoints);
 
-    // If we have 2 points, create a measurement
-    if (newPoints.length === 2) {
-      const measurement = depthEstimationService.createMeasurement(
-        newPoints[0],
-        newPoints[1],
-        measurementLabel || undefined
+      if (newPoints.length === 2) {
+        const measurement = depthEstimationService.createMeasurement(
+          newPoints[0],
+          newPoints[1],
+          measurementLabel || undefined
+        );
+
+        const updatedMeasurements = [...measurements, measurement];
+        setMeasurements(updatedMeasurements);
+        setMeasurementPoints([]);
+        setMeasurementLabel('');
+        saveMeasurements(updatedMeasurements);
+
+        Alert.alert(
+          'Measurement Complete',
+          `Distance: ${formatDimension(measurement.distance, useMetric)}\n\n` +
+            `Start depth: ${measurement.startPoint.depth.toFixed(2)}m\n` +
+            `End depth: ${measurement.endPoint.depth.toFixed(2)}m`,
+          [{ text: 'OK' }]
+        );
+      }
+    };
+
+    if (onHitTest) {
+      // ARCore/ARKit path: resolve real 3-D world position
+      onHitTest(locationX, locationY).then((worldPos) => {
+        if (!worldPos) {
+          Alert.alert(
+            'No Surface Found',
+            'Move your device over a detected plane and try again.',
+            [{ text: 'OK' }]
+          );
+          return;
+        }
+        // Build a MeasurementPoint from the 3-D hit result
+        const depth = Math.sqrt(
+          worldPos.x * worldPos.x + worldPos.y * worldPos.y + worldPos.z * worldPos.z
+        );
+        const point: MeasurementPoint = {
+          id: `mp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          screenX: locationX,
+          screenY: locationY,
+          depth,
+          worldPosition: worldPos,
+          timestamp: Date.now(),
+        };
+        addPoint(point);
+      });
+    } else {
+      // Fallback: depth-estimation path
+      if (!currentDepthMap) return;
+      const point = depthEstimationService.createMeasurementPoint(
+        locationX,
+        locationY,
+        currentDepthMap
       );
-      
-      const updatedMeasurements = [...measurements, measurement];
-      setMeasurements(updatedMeasurements);
-      setMeasurementPoints([]);
-      setMeasurementLabel('');
-      
-      // Save measurements
-      saveMeasurements(updatedMeasurements);
-
-      // Show measurement result
-      Alert.alert(
-        '📏 Measurement Complete',
-        `Distance: ${formatDimension(measurement.distance, useMetric)}\n\n` +
-        `Start depth: ${measurement.startPoint.depth.toFixed(2)}m\n` +
-        `End depth: ${measurement.endPoint.depth.toFixed(2)}m`,
-        [{ text: 'OK' }]
-      );
+      addPoint(point);
     }
-  }, [measurementMode, currentDepthMap, measurementPoints, measurementLabel, measurements, saveMeasurements, useMetric]);
+  }, [measurementMode, currentDepthMap, measurementPoints, measurementLabel, measurements, saveMeasurements, useMetric, onHitTest]);
 
   // Delete measurement
   const deleteMeasurement = useCallback((id: string) => {
@@ -227,4 +260,3 @@ export function useSpatialMappingMeasurement({
     exportMeasurements,
   };
 }
-

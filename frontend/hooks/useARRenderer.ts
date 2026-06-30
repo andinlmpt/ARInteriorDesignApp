@@ -586,9 +586,13 @@ export const useARRenderer = ({
             rendererRef.current = renderer;
 
             // Lighting
-            const ambientLight = new THREE.AmbientLight(0xffffff, isARActive ? 0.4 : 0.6);
+            const ambientLight = new THREE.AmbientLight(0xffffff, isARActive ? 0.3 : 0.4);
             scene.add(ambientLight);
             ambientLightRef.current = ambientLight;
+
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+            hemiLight.position.set(0, 10, 0);
+            scene.add(hemiLight);
 
             const keyLight = new THREE.DirectionalLight(0xffffff, 0.8);
             keyLight.position.set(5, 10, 5);

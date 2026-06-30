@@ -1,76 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { lightPalette, darkPalette } from '@/theme/palette';
 
 // Storage key - unified across the app
 export const THEME_STORAGE_KEY = 'settings_darkMode';
 
-// Light theme colors
-export const lightColors = {
-  background: '#F2F2F7',
-  surfacePrimary: '#FFFFFF',
-  surfaceSecondary: '#F8FAFC',
-  surfaceTertiary: '#F1F5F9',
-  accent: '#3B82F6',
-  accentLight: '#60A5FA',
-  accentDark: '#2563EB',
-  accentSoft: '#DBEAFE',
-  success: '#10B981',
-  warning: '#F59E0B',
-  danger: '#EF4444',
-  textPrimary: '#0F172A',
-  textSecondary: '#475569',
-  textMuted: '#94A3B8',
-  border: '#E2E8F0',
-  outline: '#CBD5E1',
-  overlay: 'rgba(15, 23, 42, 0.85)',
-  gradientStart: '#667EEA',
-  gradientEnd: '#764BA2',
-  // Additional colors for home screen compatibility
-  card: '#FFFFFF',
-  hover: '#E5E5EA',
-  line: '#D1D1D6',
-  primary: '#000000',
-  secondary: '#6E6E73',
-  muted: '#AEAEB2',
-  green: '#34C759',
-  orange: '#FF9500',
-  pink: '#FF2D55',
-  purple: '#AF52DE',
-};
-
-// Dark theme colors
-export const darkColors = {
-  background: '#111113',
-  surfacePrimary: '#1C1C1F',
-  surfaceSecondary: '#111113',
-  surfaceTertiary: '#252528',
-  accent: '#0A84FF',
-  accentLight: '#409CFF',
-  accentDark: '#0066CC',
-  accentSoft: '#0A84FF20',
-  success: '#30D158',
-  warning: '#FF9F0A',
-  danger: '#FF453A',
-  textPrimary: '#FFFFFF',
-  textSecondary: '#EBEBF5',
-  textMuted: '#8E8E93',
-  border: '#38383A',
-  outline: '#48484A',
-  overlay: 'rgba(0, 0, 0, 0.85)',
-  gradientStart: '#667EEA',
-  gradientEnd: '#764BA2',
-  // Additional colors for home screen compatibility
-  card: '#1C1C1F',
-  hover: '#252528',
-  line: '#2E2E32',
-  primary: '#FFFFFF',
-  secondary: '#8E8E93',
-  muted: '#48484A',
-  green: '#30D158',
-  orange: '#FF9F0A',
-  pink: '#FF375F',
-  purple: '#BF5AF2',
-};
+export const lightColors = lightPalette;
+export const darkColors = darkPalette;
 
 export type ThemeColors = typeof lightColors;
 

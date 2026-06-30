@@ -11,14 +11,14 @@ const existingConfig = {
     newArchEnabled: true,
     splash: {
       resizeMode: 'contain',
-      backgroundColor: '#ffffff',
+      backgroundColor: '#FAF9F7',
     },
     ios: {
       supportsTablet: true,
     },
     android: {
       adaptiveIcon: {
-        backgroundColor: '#ffffff',
+        backgroundColor: '#FAF9F7',
       },
     },
     web: {

@@ -438,20 +438,25 @@ export class SpatialMappingService {
       }
     }
 
-    // Convert mesh to points and grid format
-    const points: SpatialPoint[] = mesh.vertices.map(v => ({
-      x: v[0],
-      y: v[1],
-      z: v[2],
-    }));
+    // Create voxel grid scaled to actual room dimensions
+    // Resolution is proportional to room size (1 cell per ~0.5m, clamped to 6–20)
+    const gridResolutionX = Math.max(6, Math.min(20, Math.round(width * 2)));
+    const gridResolutionY = Math.max(4, Math.min(10, Math.round(height * 2)));
+    const gridResolutionZ = Math.max(6, Math.min(20, Math.round(length * 2)));
 
-    // Create simple voxel grid (simplified for now)
-    const gridResolution = 10;
-    const grid: number[][][] = Array.from({ length: gridResolution }, () =>
-      Array.from({ length: gridResolution }, () =>
-        Array(gridResolution).fill(0)
+    const grid: number[][][] = Array.from({ length: gridResolutionX }, () =>
+      Array.from({ length: gridResolutionY }, () =>
+        Array(gridResolutionZ).fill(0)
       )
     );
+
+    // Mark voxels that contain vertices
+    for (const point of points) {
+      const xi = Math.max(0, Math.min(gridResolutionX - 1, Math.floor((point.x / width + 0.5) * gridResolutionX)));
+      const yi = Math.max(0, Math.min(gridResolutionY - 1, Math.floor((point.y / height) * gridResolutionY)));
+      const zi = Math.max(0, Math.min(gridResolutionZ - 1, Math.floor((point.z / length + 0.5) * gridResolutionZ)));
+      grid[xi][yi][zi] = 1;
+    }
 
     return {
       points,

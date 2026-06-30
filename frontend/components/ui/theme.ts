@@ -1,50 +1,9 @@
 import { Platform } from 'react-native';
+import { lightPalette, darkPalette } from '@/theme/palette';
 
 // Default light colors (for static imports - prefer useTheme() hook for dynamic theming)
-export const colors = {
-  background: '#F2F2F7',
-  surfacePrimary: '#FFFFFF',
-  surfaceSecondary: '#F8FAFC',
-  surfaceTertiary: '#F1F5F9',
-  accent: '#3B82F6',
-  accentLight: '#60A5FA',
-  accentDark: '#2563EB',
-  accentSoft: '#DBEAFE',
-  success: '#10B981',
-  warning: '#F59E0B',
-  danger: '#EF4444',
-  textPrimary: '#0F172A',
-  textSecondary: '#475569',
-  textMuted: '#94A3B8',
-  border: '#E2E8F0',
-  outline: '#CBD5E1',
-  overlay: 'rgba(15, 23, 42, 0.85)',
-  gradientStart: '#667EEA',
-  gradientEnd: '#764BA2',
-};
-
-// Dark mode colors
-export const darkColors = {
-  background: '#111113',
-  surfacePrimary: '#1C1C1F',
-  surfaceSecondary: '#111113',
-  surfaceTertiary: '#252528',
-  accent: '#0A84FF',
-  accentLight: '#409CFF',
-  accentDark: '#0066CC',
-  accentSoft: '#0A84FF20',
-  success: '#30D158',
-  warning: '#FF9F0A',
-  danger: '#FF453A',
-  textPrimary: '#FFFFFF',
-  textSecondary: '#EBEBF5',
-  textMuted: '#8E8E93',
-  border: '#38383A',
-  outline: '#48484A',
-  overlay: 'rgba(0, 0, 0, 0.85)',
-  gradientStart: '#667EEA',
-  gradientEnd: '#764BA2',
-};
+export const colors = { ...lightPalette };
+export const darkColors = { ...darkPalette };
 
 export const spacing = {
   xs: 4,
@@ -124,7 +83,7 @@ const createShadow = (
     };
   }
   return {
-    shadowColor: '#000',
+    shadowColor: '#1F1F1F',
     shadowOffset: { width: 0, height: offsetY },
     shadowOpacity: opacity,
     shadowRadius: blur,

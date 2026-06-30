@@ -97,7 +97,7 @@ const AbstractPattern = ({ style }: { style?: any }) => {
     <View style={[{ position: 'absolute', top: 0, left: 0, right: 0, height: '40%', overflow: 'hidden' }, style]}>
       {/* Base gradient */}
       <LinearGradient
-        colors={['#93C5FD', '#60A5FA', '#3B82F6', '#E0F2FE']}
+        colors={['#F0EBE4', '#F2F1EE', '#7A8F7B', '#FAF9F7']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.4 }}
@@ -116,7 +116,7 @@ const AbstractPattern = ({ style }: { style?: any }) => {
         }}
       >
         <LinearGradient
-          colors={['#93C5FD', 'transparent', '#60A5FA']}
+          colors={['#CDB9A6', 'transparent', '#F0EBE4']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{ flex: 1, borderRadius: width }}
@@ -135,7 +135,7 @@ const AbstractPattern = ({ style }: { style?: any }) => {
         }}
       >
         <LinearGradient
-          colors={['transparent', '#3B82F6', '#60A5FA', 'transparent']}
+          colors={['transparent', '#7A8F7B', '#9AAD9B', 'transparent']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{ flex: 1, borderRadius: width }}
@@ -154,7 +154,7 @@ const AbstractPattern = ({ style }: { style?: any }) => {
         }}
       >
         <LinearGradient
-          colors={['#E0F2FE', '#93C5FD', 'transparent']}
+          colors={['#F2F1EE', '#CDB9A6', 'transparent']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{ flex: 1, borderRadius: width }}
@@ -175,10 +175,10 @@ export default function SignUpScreen() {
   const router = useRouter();
   const { colors, statusBarStyle } = useTheme();
 
-  // Use blue accent colors matching the design
-  const accentColor = colors.accent || '#3B82F6';
-  const lightBlue = '#E0F2FE';
-  const patternBlue = '#93C5FD';
+  // Use sage accent colors matching the interior design palette
+  const accentColor = colors.accent;
+  const accentSoft = colors.accentSoft;
+  const accentLight = colors.accentLight;
 
   const handleSignUp = async () => {
     const trimmedName = name.trim();
@@ -420,7 +420,7 @@ export default function SignUpScreen() {
                 onPress={() => Alert.alert('Notice', 'Terms & Privacy flow to be implemented.')}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.termsLink, { color: '#3B82F6' }]}>Terms & Privacy →</Text>
+                <Text style={[styles.termsLink, { color: colors.accent }]}>Terms & Privacy →</Text>
               </TouchableOpacity>
             </View>
 
@@ -430,7 +430,7 @@ export default function SignUpScreen() {
                 Already have an account?{' '}
               </Text>
               <TouchableOpacity onPress={handleBackToLogin} activeOpacity={0.7}>
-                <Text style={[styles.signInLink, { color: '#3B82F6' }]}>Sign in</Text>
+                <Text style={[styles.signInLink, { color: colors.accent }]}>Sign in</Text>
               </TouchableOpacity>
             </View>
           </FadeInView>

@@ -59,7 +59,7 @@ export interface UseARViewSceneGesturesParams {
   reticleWorldPositionRef: React.MutableRefObject<THREE.Vector3 | null>;
   reticleSmoothedPositionRef: React.MutableRefObject<THREE.Vector3 | null>;
   previewGhostRef: React.MutableRefObject<THREE.Group | null>;
-  dragGhostRef: React.MutableRefObject<THREE.Mesh | null>;
+  dragGhostRef: React.MutableRefObject<THREE.Mesh | THREE.Group | null>;
   alignmentLinesRef: React.MutableRefObject<THREE.Line[]>;
   constraintLinesRef: React.MutableRefObject<THREE.Line[]>;
   dimensionLabelRef: React.MutableRefObject<THREE.Group | null>;
@@ -467,25 +467,28 @@ export function useARViewSceneGestures(params: UseARViewSceneGesturesParams) {
 
             // Create ghost preview
             if (showDragGuides) {
-              let ghostGeometry: THREE.BufferGeometry | null = null;
-              if (entry.mesh instanceof THREE.Mesh && entry.mesh.geometry) {
-                ghostGeometry = entry.mesh.geometry.clone();
-              } else if (entry.mesh instanceof THREE.Group) {
-                // Create bounding box geometry for groups
-                const box = new THREE.Box3().setFromObject(entry.mesh);
-                const size = box.getSize(new THREE.Vector3());
-                ghostGeometry = new THREE.BoxGeometry(size.x, size.y, size.z);
-              }
-
-              if (ghostGeometry && rootGroupRef.current) {
-                const ghostMaterial = new THREE.MeshStandardMaterial({
-                  color: entry.item.color,
-                  transparent: true,
-                  opacity: 0.3,
-                  wireframe: true,
-                  side: THREE.DoubleSide,
+              if (rootGroupRef.current) {
+                // Clone the entire mesh/group to use as the drag ghost
+                const ghost = entry.mesh.clone();
+                ghost.traverse((child) => {
+                  if (child instanceof THREE.Mesh) {
+                    if (child.material) {
+                      // Clone the material to avoid affecting the original
+                      if (Array.isArray(child.material)) {
+                        child.material = child.material.map((m: THREE.Material) => {
+                          const newMat = m.clone();
+                          newMat.transparent = true;
+                          newMat.opacity = 0.4;
+                          return newMat;
+                        });
+                      } else {
+                        child.material = (child.material as THREE.Material).clone();
+                        child.material.transparent = true;
+                        child.material.opacity = 0.4;
+                      }
+                    }
+                  }
                 });
-                const ghost = new THREE.Mesh(ghostGeometry, ghostMaterial);
                 ghost.position.copy(entry.mesh.position);
                 ghost.rotation.copy(entry.mesh.rotation);
                 ghost.scale.copy(entry.mesh.scale);

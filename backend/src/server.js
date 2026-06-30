@@ -1,3 +1,5 @@
+import './loadEnv.js';
+
 import dns from 'dns';
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
@@ -7,12 +9,8 @@ import helmet from 'helmet';
 import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-
-// Load environment variables
-dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -165,6 +163,7 @@ const db = initDatabase(); // In-memory database (for backward compatibility)
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📡 Environment: ${NODE_ENV}`);
+    console.log(`🤖 Groq API: ${process.env.GROQ_API_KEY ? 'configured' : 'NOT SET'}`);
     console.log(`🌐 Web View: http://localhost:${PORT}/`);
     console.log(`🔗 Health check: http://localhost:${PORT}/health`);
     console.log(`📚 API base: http://localhost:${PORT}/api/v1`);

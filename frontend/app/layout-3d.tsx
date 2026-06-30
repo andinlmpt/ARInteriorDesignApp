@@ -495,7 +495,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   viewModeButtonActive: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#7A8F7B',
   },
   viewModeText: {
     color: '#FFFFFF',

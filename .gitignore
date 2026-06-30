@@ -49,3 +49,6 @@ coverage/
 *.temp
 .cache/
 
+# Analysis Clone
+shi-ningning-analysis/
+

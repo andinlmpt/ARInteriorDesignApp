@@ -60,19 +60,19 @@ export function StyleSelector({
   }, [styles, searchQuery]);
 
   return (
-    <View style={styles.container}>
+    <View style={localStyles.container}>
       {showSearch && (
-        <View style={styles.searchContainer}>
-          <Ionicons name="search-outline" size={20} color={colors.textMuted} style={styles.searchIcon} />
+        <View style={localStyles.searchContainer}>
+          <Ionicons name="search-outline" size={20} color={colors.textMuted} style={localStyles.searchIcon} />
           <TextInput
-            style={styles.searchInput}
+            style={localStyles.searchInput}
             placeholder="Search styles..."
             placeholderTextColor={colors.textMuted}
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}>
+            <TouchableOpacity onPress={() => setSearchQuery('')} style={localStyles.clearButton}>
               <Ionicons name="close-circle" size={20} color={colors.textMuted} />
             </TouchableOpacity>
           )}
@@ -82,7 +82,7 @@ export function StyleSelector({
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={localStyles.scrollContent}
       >
         {filteredStyles.map((style) => {
           const isSelected = selectedStyleId === style.id;
@@ -90,21 +90,21 @@ export function StyleSelector({
             <TouchableOpacity
               key={style.id}
               style={[
-                styles.styleCard,
-                isSelected && styles.styleCardSelected,
+                localStyles.styleCard,
+                isSelected && localStyles.styleCardSelected,
               ]}
               onPress={() => onStyleSelect(style)}
               activeOpacity={0.7}
             >
-              <View style={[styles.styleIndicator, isSelected && styles.styleIndicatorSelected]}>
+              <View style={[localStyles.styleIndicator, isSelected && localStyles.styleIndicatorSelected]}>
                 {isSelected && <Ionicons name="checkmark" size={16} color="#FFFFFF" />}
               </View>
               <AppText
                 variant="subtitle"
                 weight={isSelected ? '700' : '500'}
                 style={[
-                  styles.styleName,
-                  isSelected && styles.styleNameSelected,
+                  localStyles.styleName,
+                  isSelected && localStyles.styleNameSelected,
                 ]}
               >
                 {style.name}
@@ -113,7 +113,7 @@ export function StyleSelector({
                 <AppText
                   variant="caption"
                   color="textMuted"
-                  style={styles.styleDescription}
+                  style={localStyles.styleDescription}
                   numberOfLines={2}
                 >
                   {style.description}
@@ -127,7 +127,7 @@ export function StyleSelector({
   );
 }
 
-const styles = StyleSheet.create({
+const localStyles = StyleSheet.create({
   container: {
     gap: spacing.md,
   },

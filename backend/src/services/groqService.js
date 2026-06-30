@@ -3,10 +3,8 @@
  * Groq API integration for lightning-fast AI-powered design generation using Llama 3
  */
 
-import dotenv from 'dotenv';
-dotenv.config();
+import '../loadEnv.js';
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -15,7 +13,8 @@ const DEFAULT_TIMEOUT = 30000; // 30 seconds
  * Call Groq API to generate content
  */
 async function callGroqAPI(prompt, systemPrompt = 'You are a helpful assistant.', temperature = 0.7, maxTokens = 1000, isJson = false) {
-  if (!GROQ_API_KEY) {
+  const groqApiKey = process.env.GROQ_API_KEY;
+  if (!groqApiKey) {
     console.warn('[Groq] API key not configured');
     return null;
   }
@@ -42,7 +41,7 @@ async function callGroqAPI(prompt, systemPrompt = 'You are a helpful assistant.'
     const response = await fetch(GROQ_API_URL, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Authorization': `Bearer ${groqApiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(requestBody),

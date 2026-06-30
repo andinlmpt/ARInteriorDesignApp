@@ -30,7 +30,8 @@
         {
           "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera for room scanning and AR features."
         }
-      ]
+      ],
+      "./plugins/withARSessionNative"
     ],
     "experiments": {
       "typedRoutes": true,

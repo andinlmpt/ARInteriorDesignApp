@@ -5,6 +5,7 @@
  */
 
 import { DepthMap, SpatialPoint } from '@/types/spatial-mapping';
+import { mlDepthEstimationService } from './MLDepthEstimationService';
 
 export interface DepthEstimationConfig {
   modelType: 'fast' | 'accurate' | 'hybrid';
@@ -140,13 +141,10 @@ export class DepthEstimationService {
    * Initialize the depth estimation model
    * In production, this would load TensorFlow.js with MiDaS model
    */
-  async initialize(): Promise<boolean> {
+   async initialize(): Promise<boolean> {
     try {
-      // Simulate model loading
-      // In production: await tf.loadLayersModel('path/to/midas-model')
-      await this.simulateModelLoading();
       this.isInitialized = true;
-      console.log('[DepthEstimation] Model initialized successfully');
+      console.log('[DepthEstimation] Initialised (ML depth via MLDepthEstimationService)');
       return true;
     } catch (error) {
       console.error('[DepthEstimation] Failed to initialize:', error);
@@ -165,6 +163,41 @@ export class DepthEstimationService {
       await this.initialize();
     }
 
+    const isRealImage =
+      imageUri !== 'placeholder-scan-image' &&
+      (imageUri.startsWith('file://') ||
+        imageUri.startsWith('content://') ||
+        imageUri.startsWith('http') ||
+        imageUri.startsWith('data:'));
+
+    // ── Option B: ML depth estimation ────────────────------------------------
+    if (isRealImage) {
+      try {
+        const mlResult = await mlDepthEstimationService.estimateDepth(imageUri);
+        console.log('[DepthEstimation] ML depth complete:', {
+          sources: mlResult.sources,
+          avgDepth: mlResult.averageDepth.toFixed(2),
+          confidence: mlResult.confidence.toFixed(2),
+        });
+        const depthMap = mlResult.depthMap;
+        const points = this.extractDepthPoints(depthMap);
+        const result: DepthEstimationResult = {
+          depthMap,
+          points,
+          averageDepth: mlResult.averageDepth,
+          depthRange: mlResult.depthRange,
+          confidence: mlResult.confidence,
+          processingTimeMs: Date.now() - startTime,
+        };
+        this.depthHistory.push(result);
+        if (this.depthHistory.length > this.MAX_HISTORY) this.depthHistory.shift();
+        return result;
+      } catch (mlErr) {
+        console.warn('[DepthEstimation] ML depth failed, falling back to simulation:', mlErr);
+      }
+    }
+
+    // ── Fallback: geometric simulation ───────────────────────────────────────
     try {
       // Get resolution based on config
       const resolution = this.getResolution();

@@ -143,7 +143,7 @@ export function useSpatialMappingCalibration(): UseSpatialMappingCalibrationRetu
       type: 'custom',
       realWidth: width / 100,
       realHeight: height / 100,
-      icon: '📐',
+      icon: 'maximize-2',
       description: `Custom object: ${width}cm × ${height}cm`,
     };
   }, [customReferenceWidth, customReferenceHeight]);
@@ -183,4 +183,3 @@ export function useSpatialMappingCalibration(): UseSpatialMappingCalibrationRetu
     resetCalibration,
   };
 }
-

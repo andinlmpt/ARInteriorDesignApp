@@ -7,17 +7,14 @@
  * SECURITY: OpenAI API calls are now server-side only
  */
 
-import dotenv from 'dotenv';
+import '../loadEnv.js';
 import groqService from '../services/groqService.js';
-
-dotenv.config();
 
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const DEFAULT_TIMEOUT = 15000; // 15 seconds
 
 // ============================================================================
@@ -285,7 +282,7 @@ export async function analyzePrompt(req, res, next) {
 
     // Try Groq AI analysis first
     let suggestions = null;
-    if (GROQ_API_KEY) {
+    if (process.env.GROQ_API_KEY) {
       try {
         suggestions = await groqService.analyzeDesignPrompt(prompt, userPreferences);
         if (suggestions) {
@@ -356,7 +353,7 @@ export async function generateIdeas(req, res, next) {
 
     // Try Groq AI generation first
     let ideas = null;
-    if (GROQ_API_KEY) {
+    if (process.env.GROQ_API_KEY) {
       try {
         ideas = await groqService.generateDesignIdeas(input);
         if (ideas && Array.isArray(ideas) && ideas.length > 0) {
