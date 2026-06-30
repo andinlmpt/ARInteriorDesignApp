@@ -44,11 +44,14 @@ export const STORAGE_KEYS = {
   TUTORIAL_SEEN: 'aiDesignTutorialSeen',
 } as const;
 
+/** Layout variations + preview renders per AI Design generation */
+export const LAYOUT_VARIATION_COUNT = 6;
+
 // Limits and constraints
 export const LIMITS = {
   MAX_HISTORY_SIZE: 20,
   MAX_RETRIES: 3,
-  MAX_IMAGES_IN_MEMORY: 10,
+  MAX_IMAGES_IN_MEMORY: 12,
   DESIGNS_PER_PAGE: 5,
   MAX_DESIGNS_HISTORY: 50,
   CACHE_EXPIRY_HOURS: 24,

@@ -26,6 +26,7 @@ import { callApi } from '@/services/apiClient';
 import { DesignImageGenerationService } from '@/services/DesignImageGenerationService';
 import FloorPlan2D, { FurnitureItem } from '@/components/FloorPlan2D';
 import { useTheme } from '@/contexts/ThemeContext';
+import { LAYOUT_VARIATION_COUNT } from '@/config/aiDesign.config';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -176,15 +177,16 @@ export default function AIDesignModule() {
     }
   };
 
-  // ── Automatically generate image when viewing a layout ──
+  // ── Generate preview images for all layouts when results load ──
   useEffect(() => {
-    if (step === 4 && layouts.length > 0) {
-      const currentLayout = layouts[activeLayoutIndex];
-      if (currentLayout && !generatedImages[currentLayout.id] && !isGeneratingImage[currentLayout.id]) {
-        handleGenerateImage(currentLayout);
+    if (step !== 4 || layouts.length === 0) return;
+
+    layouts.forEach((layout) => {
+      if (!generatedImages[layout.id] && !isGeneratingImage[layout.id]) {
+        handleGenerateImage(layout);
       }
-    }
-  }, [step, activeLayoutIndex, layouts]);
+    });
+  }, [step, layouts]);
 
   // ─── Render: Step 1 — Room Measurement Input ──────────────────────────────────
 
@@ -364,7 +366,7 @@ export default function AIDesignModule() {
       <ActivityIndicator size="large" color={colors.accent} style={{ marginTop: 24 }} />
       <Text style={[styles.shimmerTitle, { color: colors.textPrimary }]}>Designing your space…</Text>
       <Text style={[styles.shimmerSubtitle, { color: colors.textSecondary }]}>
-        Gemini is generating 3 optimized furniture layouts for your {roomWidth}m × {roomDepth}m room
+        AI is generating {LAYOUT_VARIATION_COUNT} optimized furniture layouts for your {roomWidth}m × {roomDepth}m room
       </Text>
     </Animated.View>
   );
@@ -412,6 +414,34 @@ export default function AIDesignModule() {
           furniture={activeLayout.furniture}
           obstacles={selectedObstacles}
         />
+
+        {/* Preview thumbnails for all layouts */}
+        {layouts.length > 1 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.previewScroll} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
+            {layouts.map((layout, idx) => (
+              <TouchableOpacity
+                key={`preview-${layout.id}`}
+                style={[
+                  styles.previewThumb,
+                  { borderColor: activeLayoutIndex === idx ? colors.accent : colors.border },
+                ]}
+                onPress={() => setActiveLayoutIndex(idx)}
+              >
+                {generatedImages[layout.id] ? (
+                  <Image source={{ uri: generatedImages[layout.id] }} style={styles.previewThumbImage} resizeMode="cover" />
+                ) : (
+                  <View style={[styles.previewThumbPlaceholder, { backgroundColor: colors.surfaceSecondary }]}>
+                    {isGeneratingImage[layout.id] ? (
+                      <ActivityIndicator size="small" color={colors.accent} />
+                    ) : (
+                      <Text style={{ color: colors.textMuted, fontSize: 11 }}>Layout {idx + 1}</Text>
+                    )}
+                  </View>
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
 
         {/* 3D Photorealistic Render */}
         <View style={styles.renderContainer}>
@@ -657,6 +687,24 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   scoreBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+
+  previewScroll: { marginTop: 8, marginBottom: 4 },
+  previewThumb: {
+    width: 72,
+    height: 72,
+    borderRadius: 10,
+    borderWidth: 2,
+    overflow: 'hidden',
+    marginRight: 8,
+  },
+  previewThumbImage: { width: '100%', height: '100%' },
+  previewThumbPlaceholder: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   sectionTitle: { fontSize: 17, fontWeight: '700', marginLeft: 16, marginTop: 8, marginBottom: 4 },
 

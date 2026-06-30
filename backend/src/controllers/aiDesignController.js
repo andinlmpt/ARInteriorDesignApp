@@ -24,6 +24,33 @@ const GA_CONFIG = {
   eliteCount: 3,
 };
 
+/** Number of layout variations (and preview images) returned per AI Design request */
+const LAYOUT_VARIATION_COUNT = 6;
+
+function padLayoutsToCount(layouts, count = LAYOUT_VARIATION_COUNT) {
+  if (!Array.isArray(layouts) || layouts.length === 0) return layouts;
+
+  const result = layouts.map((layout, index) => ({
+    ...layout,
+    id: layout.id || `layout_${index + 1}`,
+    furniture: Array.isArray(layout.furniture) ? layout.furniture : [],
+    safety_warnings: Array.isArray(layout.safety_warnings) ? layout.safety_warnings : [],
+  }));
+
+  while (result.length < count) {
+    const base = layouts[result.length % layouts.length];
+    result.push({
+      ...base,
+      id: `layout_${result.length + 1}`,
+      score: Math.max(50, (base.score || 70) - (result.length - layouts.length + 1) * 5),
+      furniture: (base.furniture || []).map((item) => ({ ...item })),
+      safety_warnings: [...(base.safety_warnings || [])],
+    });
+  }
+
+  return result.slice(0, count);
+}
+
 // ============================================================================
 // FURNITURE DATABASE
 // ============================================================================
@@ -220,12 +247,14 @@ function generateFallbackLayouts(roomDimensions, roomType, style, detectedObstac
     ];
   }
 
+  let layouts;
   switch (catalogKey) {
-    case 'Bedroom':     return buildBedroom();
-    case 'Dining Room': return buildDining();
-    case 'Office':      return buildOffice();
-    default:            return buildLivingRoom();
+    case 'Bedroom':     layouts = buildBedroom(); break;
+    case 'Dining Room': layouts = buildDining(); break;
+    case 'Office':      layouts = buildOffice(); break;
+    default:            layouts = buildLivingRoom();
   }
+  return padLayoutsToCount(layouts);
 }
 
 // ============================================================================
@@ -727,7 +756,7 @@ export async function generateLayout(req, res, next) {
       return res.status(500).json({ error: 'GROQ_API_KEY is not set on the server' });
     }
 
-    const systemPrompt = `You are an expert interior designer AI. Generate exactly 3 furniture layout variations for a room. You MUST respond with ONLY a valid JSON object. No markdown, no code blocks, no explanation. Just raw JSON.
+    const systemPrompt = `You are an expert interior designer AI. Generate exactly ${LAYOUT_VARIATION_COUNT} furniture layout variations for a room. You MUST respond with ONLY a valid JSON object. No markdown, no code blocks, no explanation. Just raw JSON.
 
 The JSON must follow this exact structure:
 {
@@ -747,24 +776,13 @@ The JSON must follow this exact structure:
       ],
       "safety_warnings": [],
       "score": 85
-    },
-    {
-      "id": "layout_2",
-      "furniture": [],
-      "safety_warnings": [],
-      "score": 78
-    },
-    {
-      "id": "layout_3",
-      "furniture": [],
-      "safety_warnings": [],
-      "score": 72
     }
   ]
 }
 
 Rules:
-- Always include exactly 3 layout objects in the layouts array
+- Always include exactly ${LAYOUT_VARIATION_COUNT} layout objects in the layouts array
+- Each layout must be meaningfully different (furniture placement, focal point, or flow)
 - x and y are positions in meters from the top-left corner of the room
 - x must be between 0 and roomWidth, y must be between 0 and roomDepth
 - width and depth are furniture dimensions in meters
@@ -782,7 +800,7 @@ Detected Obstacles: ${detectedObstacles?.length > 0 ? detectedObstacles.join(', 
 Room Type: ${roomType}
 Style: ${style}
 
-Generate 3 different optimized furniture layout variations for this room.`;
+Generate ${LAYOUT_VARIATION_COUNT} different optimized furniture layout variations for this room.`;
 
     let finalJson = null;
 
@@ -797,7 +815,7 @@ Generate 3 different optimized furniture layout variations for this room.`;
             { role: 'user', content: userPrompt }
           ],
           temperature: 0.5,
-          max_tokens: 4096,
+          max_tokens: 8192,
           response_format: { type: 'json_object' }
         };
 
@@ -821,15 +839,7 @@ Generate 3 different optimized furniture layout variations for this room.`;
         const parsed = JSON.parse(responseText);
 
         if (parsed && parsed.layouts && Array.isArray(parsed.layouts) && parsed.layouts.length >= 1) {
-          // Pad to 3 layouts if Groq returned fewer
-          while (parsed.layouts.length < 3) {
-            const base = parsed.layouts[0];
-            parsed.layouts.push({
-              ...base,
-              id: `layout_${parsed.layouts.length + 1}`,
-              score: Math.max(50, (base.score || 70) - 10),
-            });
-          }
+          parsed.layouts = padLayoutsToCount(parsed.layouts);
           finalJson = parsed;
           console.log(`[generateLayout] Success on attempt ${attempt} — ${finalJson.layouts.length} layouts`);
           break;
