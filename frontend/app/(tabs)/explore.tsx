@@ -149,11 +149,6 @@ export default function ExploreScreen() {
           style={styles.photo}
           resizeMode="cover"
         />
-        <View style={styles.photoOverlay}>
-          <AppText variant="caption" style={styles.photoAttribution}>
-            Photo by {item.photographer}
-          </AppText>
-        </View>
         <TouchableOpacity 
           style={styles.saveButton} 
           onPress={() => toggleSave(item)}
