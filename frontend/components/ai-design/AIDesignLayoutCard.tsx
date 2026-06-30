@@ -139,18 +139,11 @@ export function AIDesignLayoutCard({
       {/* Main Actions */}
       <View style={styles.actionsRow}>
         <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: colors.accent }]}
-          onPress={() => onOpenARView(activeLayout)}
-        >
-          <Ionicons name="cube-outline" size={16} color="#FFFFFF" />
-          <Text style={styles.actionButtonText}>Open in AR View</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.saveButton, { borderColor: colors.border }]}
+          style={[styles.saveButton, { backgroundColor: colors.accent, borderColor: colors.accent }]}
           onPress={() => onSaveDesign(activeLayout)}
         >
-          <Ionicons name="heart-outline" size={16} color={colors.textPrimary} />
-          <Text style={[styles.saveButtonText, { color: colors.textPrimary }]}>Save</Text>
+          <Ionicons name="heart-outline" size={16} color="#FFFFFF" />
+          <Text style={[styles.saveButtonText, { color: '#FFFFFF' }]}>Save Design</Text>
         </TouchableOpacity>
       </View>
     </View>
