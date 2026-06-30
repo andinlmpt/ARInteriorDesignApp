@@ -91,7 +91,7 @@ export default function AIDesignScreen() {
       const designId = `design_${hashString(cleanPrompt)}`;
       const isSaved = await savedItemsService.isItemSaved(designId);
       if (isSaved) {
-        await savedItemsService.removeItem(designId);
+        await savedItemsService.removeSavedItem(designId);
         Alert.alert('Removed', 'Design removed from your saved items.');
       } else {
         await savedItemsService.saveItem({
