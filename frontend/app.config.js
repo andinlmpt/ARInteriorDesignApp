@@ -63,6 +63,7 @@ export default () => {
   
   ensureExpoPublicVar('EXPO_PUBLIC_LAYOUT_API_KEY', process.env.LAYOUT_API_KEY);
   ensureExpoPublicVar('EXPO_PUBLIC_LAYOUT_BEARER_TOKEN', process.env.LAYOUT_BEARER_TOKEN);
+  ensureExpoPublicVar('EXPO_PUBLIC_UNITY_BUILD_URL', process.env.UNITY_BUILD_URL);
 
   return {
     ...existingConfig,
@@ -71,6 +72,7 @@ export default () => {
       OPENAI_API_KEY: process.env.OPENAI_API_KEY,
       REPLICATE_API_TOKEN: process.env.REPLICATE_API_TOKEN,
       API_BASE_URL: process.env.API_BASE_URL,
+      unityBuildUrl: process.env.EXPO_PUBLIC_UNITY_BUILD_URL,
     },
   };
 };

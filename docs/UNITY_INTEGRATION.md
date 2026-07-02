@@ -1,5 +1,8 @@
 # Unity Integration Guide for 3D Layout Visualization
 
+> **IKEA-style AR furniture (real room, AR Foundation):** see [UNITY_AR_IKEA_STYLE.md](./UNITY_AR_IKEA_STYLE.md).  
+> **Step-by-step in InteriorDesignViewer:** see [UNITY_AR_SETUP_INTERIORDESIGNVIEWER.md](./UNITY_AR_SETUP_INTERIORDESIGNVIEWER.md).
+
 This guide explains how to integrate Unity for professional-grade 3D visualization in your AR Interior Design App.
 
 ## Overview

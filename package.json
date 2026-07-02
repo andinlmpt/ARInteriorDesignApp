@@ -8,7 +8,9 @@
     "start:backend": "npm start --prefix backend",
     "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
     "dev": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"blue,green\" \"npm run start:backend\" \"npm run start:frontend\"",
-    "start:all": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"blue,green\" \"npm run start:backend\" \"npm run start:frontend\""
+    "start:all": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"blue,green\" \"npm run start:backend\" \"npm run start:frontend\"",
+    "serve:unity": "node scripts/serve-unity.mjs",
+    "unity:decompress": "node scripts/decompress-unity-build.mjs"
   },
   "dependencies": {
     "react-native-dotenv": "^3.4.11",

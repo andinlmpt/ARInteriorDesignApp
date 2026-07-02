@@ -7,20 +7,7 @@
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
-
-// Import WebView only on native platforms to avoid Metro bundling issues on web
-let WebView: any = null;
-if (Platform.OS !== 'web') {
-  try {
-    // Only require on native - this prevents Metro from trying to bundle it on web
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const webviewModule = require('react-native-webview');
-    WebView = webviewModule.WebView || webviewModule.default;
-  } catch {
-    // WebView not available - will show installation instructions
-    console.warn('react-native-webview not available');
-  }
-}
+import { WebView } from 'react-native-webview';
 
 interface Unity3DViewerProps {
   roomDimensions?: {
@@ -53,43 +40,21 @@ export const Unity3DViewer: React.FC<Unity3DViewerProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [unityReady, setUnityReady] = useState(false);
 
-  // Inject JavaScript for Unity communication
+  // Bridge for React Native WebView (do NOT override ReactNativeWebView — RN provides it)
   const injectedJavaScript = `
     (function() {
-      // Unity Bridge - receives messages from React Native
-      window.ReactNativeWebView = {
-        postMessage: function(data) {
-          window.ReactNative.postMessage(data);
+      var _alert = window.alert;
+      window.alert = function(msg) {
+        if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'error',
+            error: String(msg)
+          }));
+        } else {
+          _alert(msg);
         }
       };
-
-      // Wait for Unity to be ready
-      function waitForUnity() {
-        if (typeof window.SendMessageToUnity !== 'undefined') {
-          window.dispatchEvent(new Event('unityReady'));
-        } else {
-          setTimeout(waitForUnity, 100);
-        }
-      }
-      waitForUnity();
-
-      // Listen for Unity ready event
-      window.addEventListener('unityReady', function() {
-        window.ReactNative.postMessage(JSON.stringify({
-          type: 'unityReady',
-          ready: true
-        }));
-      });
-
-      // Handle messages from Unity
-      window.addEventListener('unityMessage', function(event) {
-        window.ReactNative.postMessage(JSON.stringify({
-          type: 'unityMessage',
-          data: event.detail
-        }));
-      });
-
-      true; // Required for iOS
+      true;
     })();
   `;
 
@@ -129,6 +94,11 @@ export const Unity3DViewer: React.FC<Unity3DViewerProps> = ({
         case 'unityMessage':
           // Handle messages from Unity
           console.log('Unity message:', message.data);
+          break;
+
+        case 'error':
+          setIsLoading(false);
+          onError?.(message.error || 'Unity failed to load');
           break;
 
         case 'error':
@@ -184,22 +154,7 @@ export const Unity3DViewer: React.FC<Unity3DViewerProps> = ({
     );
   }
 
-  // Native platforms: use WebView
-  // WebView is loaded at module level (will be null on web due to stub)
-  // Check if WebView is available
-  if (!WebView) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.placeholder}>
-          <UnitySetupInstructions 
-            missingWebView={true}
-            unityBuildUrl={unityBuildUrl}
-          />
-        </View>
-      </View>
-    );
-  }
-
+  // Native platforms: use WebView (web handled above)
   if (!unityBuildUrl || unityBuildUrl === 'https://your-cdn.com/unity-build/index.html') {
     return (
       <View style={styles.container}>
@@ -226,16 +181,26 @@ export const Unity3DViewer: React.FC<Unity3DViewerProps> = ({
         ref={webViewRef}
         source={{ uri: unityBuildUrl }}
         style={styles.webview}
-        injectedJavaScript={injectedJavaScript}
+        injectedJavaScriptBeforeContentLoaded={injectedJavaScript}
         onMessage={handleMessage}
         onError={handleError}
         onHttpError={handleError}
+        onConsoleMessage={(e) => {
+          if (e.nativeEvent.level === 'error') {
+            console.warn('[Unity WebView]', e.nativeEvent.message);
+          }
+        }}
         javaScriptEnabled={true}
         domStorageEnabled={true}
-        startInLoadingState={true}
-        scalesPageToFit={true}
+        cacheEnabled={false}
+        mixedContentMode="always"
+        originWhitelist={['*']}
+        androidLayerType="hardware"
         allowsInlineMediaPlayback={true}
         mediaPlaybackRequiresUserAction={false}
+        setSupportMultipleWindows={false}
+        startInLoadingState={true}
+        scalesPageToFit={true}
         renderLoading={() => (
           <View style={styles.loadingOverlay}>
             <ActivityIndicator size="large" color="#FFFFFF" />

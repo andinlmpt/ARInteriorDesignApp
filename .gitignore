@@ -52,3 +52,21 @@ coverage/
 # Analysis Clone
 shi-ningning-analysis/
 
+# Unity (InteriorDesignViewer)
+InteriorDesignViewer/[Ll]ibrary/
+InteriorDesignViewer/[Tt]emp/
+InteriorDesignViewer/[Oo]bj/
+InteriorDesignViewer/[Ll]ogs/
+InteriorDesignViewer/[Uu]ser[Ss]ettings/
+InteriorDesignViewer/[Mm]emoryCaptures/
+InteriorDesignViewer/[Rr]ecordings/
+InteriorDesignViewer_BurstDebugInformation_DoNotShip/
+*.csproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+

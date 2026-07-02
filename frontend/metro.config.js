@@ -14,29 +14,30 @@ config.resolver.nodeModulesPaths = [
 const originalResolveRequest = config.resolver.resolveRequest;
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
-  // Intercept react-native-webview and all its internal modules on web
-  if (platform === 'web') {
-    // Handle the main package
-    if (moduleName === 'react-native-webview') {
+  // react-native-webview: web stub vs native package
+  if (moduleName === 'react-native-webview') {
+    if (platform === 'web') {
       return {
         type: 'sourceFile',
         filePath: path.resolve(__dirname, 'react-native-webview.web.js'),
       };
     }
+    return {
+      type: 'sourceFile',
+      filePath: path.resolve(__dirname, 'node_modules/react-native-webview/index.js'),
+    };
+  }
 
-    // Handle internal imports from react-native-webview package
-    // Check if the origin module is from react-native-webview
+  // Intercept internal react-native-webview imports on web only
+  if (platform === 'web') {
     const originPath = context.originModulePath || '';
     if (originPath.includes('react-native-webview')) {
-      // This is an internal import from react-native-webview package
-      // Return empty module to prevent bundling errors
       return {
         type: 'empty',
       };
     }
   }
 
-  // Use default resolver for everything else
   if (originalResolveRequest) {
     return originalResolveRequest(context, moduleName, platform);
   }
