@@ -1,0 +1,8 @@
+# EAS upload rules — Unity export MUST be included for AR builds.
+# (Default: .gitignore is used when .easignore exists; negate important paths.)
+
+/android
+/ios
+
+# Keep Unity native export (do not exclude)
+!unity/builds/android/unityLibrary/**

@@ -9,7 +9,9 @@ const existingConfig = {
     scheme: 'arinteriordesinapp',
     userInterfaceStyle: 'automatic',
     newArchEnabled: true,
+    icon: './assets/images/splash.png',
     splash: {
+      image: './assets/images/splash.png',
       resizeMode: 'contain',
       backgroundColor: '#FAF9F7',
     },
@@ -17,7 +19,9 @@ const existingConfig = {
       supportsTablet: true,
     },
     android: {
+      package: 'com.arinteriordesign.app',
       adaptiveIcon: {
+        foregroundImage: './assets/images/splash.png',
         backgroundColor: '#FAF9F7',
       },
     },
@@ -28,6 +32,16 @@ const existingConfig = {
     plugins: [
       'expo-router',
       'expo-dev-client',
+      './plugins/withUnity.js',
+      [
+        'expo-build-properties',
+        {
+          android: {
+            minSdkVersion: 29,
+            ndkVersion: '27.2.12479018',
+          },
+        },
+      ],
       [
         'expo-camera',
         {
@@ -38,7 +52,7 @@ const existingConfig = {
     ],
     experiments: {
       typedRoutes: true,
-      reactCompiler: true,
+      reactCompiler: false,
     },
   },
 };
@@ -66,13 +80,18 @@ export default () => {
   ensureExpoPublicVar('EXPO_PUBLIC_UNITY_BUILD_URL', process.env.UNITY_BUILD_URL);
 
   return {
-    ...existingConfig,
-    extra: {
-      ...existingConfig.expo.extra,
-      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-      REPLICATE_API_TOKEN: process.env.REPLICATE_API_TOKEN,
-      API_BASE_URL: process.env.API_BASE_URL,
-      unityBuildUrl: process.env.EXPO_PUBLIC_UNITY_BUILD_URL,
+    expo: {
+      ...existingConfig.expo,
+      extra: {
+        router: {},
+        eas: {
+          projectId: '3193904b-282e-4dbe-94e5-4880f938778e',
+        },
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+        REPLICATE_API_TOKEN: process.env.REPLICATE_API_TOKEN,
+        API_BASE_URL: process.env.API_BASE_URL,
+        unityBuildUrl: process.env.EXPO_PUBLIC_UNITY_BUILD_URL,
+      },
     },
   };
 };

@@ -10,10 +10,51 @@
  */
 
 import * as THREE from 'three';
-import * as FileSystem from 'expo-file-system';
+import { File } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Asset } from 'expo-asset';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { FurnitureLibraryItem } from '@/types/ar-view';
+import { getBundledModelAsset } from '@/config/furniture-models';
+import {
+  enhanceModelMaterials,
+  fitModelToDimensions,
+} from '@/utils/arModelEnhancer';
+import {
+  applyGltfNativePolyfills,
+  ensureNavigatorUserAgent,
+} from '@/utils/gltfNativePolyfills';
+
+applyGltfNativePolyfills();
+
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+async function uriToArrayBuffer(uri: string): Promise<ArrayBuffer> {
+  if (uri.startsWith('file://')) {
+    try {
+      return await new File(uri).arrayBuffer();
+    } catch (fileError) {
+      console.warn('[FurnitureModelLoader] File.arrayBuffer failed, trying legacy base64:', fileError);
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      return base64ToArrayBuffer(base64);
+    }
+  }
+
+  const response = await fetch(uri);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} for ${uri}`);
+  }
+  return response.arrayBuffer();
+}
 
 export interface FurnitureModelConfig {
   id: string;
@@ -28,14 +69,8 @@ export interface FurnitureModelConfig {
 // Cache for loaded models
 const modelCache = new Map<string, THREE.Object3D>();
 
-// Free 3D Model URLs (using CDN or public repositories)
-// NOTE: Replace these with actual URLs to your hosted models or use free CDN services
+// Remote URLs (optional). Bundled assets in config/furniture-models.ts take priority.
 const FURNITURE_MODEL_URLS: Record<string, string> = {
-  // Using placeholder URLs - you'll need to replace these with actual model URLs
-  // Option 1: Host models on your server/CDN
-  // Option 2: Use free model hosting services
-  // Option 3: Use models from Poly Haven or other free sources
-  
   'sofa-modern': '',
   'coffee-table': '',
   'floor-lamp': '',
@@ -96,6 +131,7 @@ export class FurnitureModelLoader {
   private loadingPromises: Map<string, Promise<THREE.Object3D | null>> = new Map();
 
   constructor() {
+    applyGltfNativePolyfills();
     this.loader = new GLTFLoader();
   }
 
@@ -110,90 +146,62 @@ export class FurnitureModelLoader {
   ): Promise<THREE.Group | null> {
     try {
       console.log('[FurnitureModelLoader] Loading GLB model from:', modelUrl);
-      
-      let modelUri: string;
-      
+
+      let modelUri: string | null = null;
+
       if (typeof modelUrl === 'number') {
-        // Bundled asset via require()
         const asset = Asset.fromModule(modelUrl);
         await asset.downloadAsync();
-        modelUri = asset.localUri || asset.uri;
+        modelUri = asset.localUri ?? asset.uri ?? null;
         console.log('[FurnitureModelLoader] Resolved bundled asset to:', modelUri);
       } else if (modelUrl.startsWith('http://') || modelUrl.startsWith('https://')) {
-        // Remote URL - download to local file first (required for React Native)
         const fileName = `model_${Date.now()}.glb`;
-        const localPath = FileSystem.documentDirectory + fileName;
-        
+        const localPath = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory}${fileName}`;
         console.log('[FurnitureModelLoader] Downloading remote model to:', localPath);
         const downloadResult = await FileSystem.downloadAsync(modelUrl, localPath);
         modelUri = downloadResult.uri;
-        console.log('[FurnitureModelLoader] Model downloaded to:', modelUri);
-      } else {
-        // Local asset - resolve file path
-        if (modelUrl.startsWith('file://')) {
-          modelUri = modelUrl;
-        } else {
-          // Try to resolve as document directory path
-          modelUri = FileSystem.documentDirectory 
-            ? `${FileSystem.documentDirectory}${modelUrl}`
-            : modelUrl;
-        }
-        console.log('[FurnitureModelLoader] Using local file path:', modelUri);
+      } else if (modelUrl.startsWith('file://')) {
+        modelUri = modelUrl;
+      } else if (FileSystem.documentDirectory) {
+        modelUri = `${FileSystem.documentDirectory}${modelUrl}`;
       }
-      
+
       if (!modelUri) {
         throw new Error('Failed to resolve model URI');
       }
 
-      let loadUri = modelUri;
-      if (modelUri.startsWith('file://')) {
-        try {
-          console.log('[FurnitureModelLoader] Reading local file to Base64 to bypass RN fetch limitations...');
-          const base64 = await FileSystem.readAsStringAsync(modelUri, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-          loadUri = `data:application/octet-stream;base64,${base64}`;
-        } catch (e) {
-          console.warn('[FurnitureModelLoader] Failed to read local file as base64:', e);
-        }
-      }
-      
-      // Load with GLTFLoader
+      const arrayBuffer = await uriToArrayBuffer(modelUri);
+      console.log('[FurnitureModelLoader] Parsed buffer bytes:', arrayBuffer.byteLength);
+
+      ensureNavigatorUserAgent();
+
       return new Promise((resolve, reject) => {
-        this.loader.load(
-          loadUri,
+        this.loader.parse(
+          arrayBuffer,
+          '',
           (gltf) => {
             console.log('[FurnitureModelLoader] GLB model loaded successfully');
             const model = gltf.scene;
-            
-            // Apply scale
+            enhanceModelMaterials(model);
+
             if (scale !== 1.0) {
               model.scale.set(scale, scale, scale);
             }
-            
-            // Enable shadows and optimize
+
             model.traverse((child) => {
               if (child instanceof THREE.Mesh) {
                 child.castShadow = true;
                 child.receiveShadow = true;
-                // Ensure materials are updated
                 if (child.material instanceof THREE.MeshStandardMaterial) {
                   child.material.needsUpdate = true;
                 }
               }
             });
-            
+
             resolve(model);
           },
-          (progress) => {
-            // Loading progress
-            if (progress.total > 0) {
-              const percent = (progress.loaded / progress.total) * 100;
-              console.log(`[FurnitureModelLoader] Loading progress: ${percent.toFixed(1)}%`);
-            }
-          },
           (error) => {
-            console.error('[FurnitureModelLoader] Error loading GLB model:', error);
+            console.error('[FurnitureModelLoader] Error parsing GLB model:', error);
             reject(error);
           }
         );
@@ -243,71 +251,60 @@ export class FurnitureModelLoader {
     return this.createBoxFallback(furnitureId, dimensions, color);
   }
 
+  private resolveModelSource(
+    furnitureId: string,
+    config?: FurnitureModelConfig
+  ): string | number | null {
+    const bundled = getBundledModelAsset(furnitureId);
+    if (bundled !== undefined) {
+      return bundled;
+    }
+    if (config?.modelUrl && String(config.modelUrl).length > 0) {
+      return config.modelUrl;
+    }
+    return null;
+  }
+
   private async loadModelInternal(
     furnitureId: string,
     dimensions: { width: number; length: number; height: number },
     color?: string,
     config?: FurnitureModelConfig
   ): Promise<THREE.Object3D | null> {
-    if (!config?.modelUrl) {
-      console.warn(`[FurnitureModelLoader] No model URL for ${furnitureId}, using fallback`);
+    const modelSource = this.resolveModelSource(furnitureId, config);
+    if (modelSource === null) {
+      console.warn(`[FurnitureModelLoader] No bundled/remote model for ${furnitureId}`);
       return null;
     }
 
     try {
-      console.log(`[FurnitureModelLoader] Loading model for ${furnitureId} from ${config.modelUrl}`);
-      
-      // Use the new loadGLBModel method which supports React Native FileSystem
-      const model = await this.loadGLBModel(config.modelUrl, config.scale || 1.0);
-      
+      console.log(`[FurnitureModelLoader] Loading model for ${furnitureId}`);
+
+      const model = await this.loadGLBModel(modelSource, config?.scale || 1.0);
+
       if (!model) {
         throw new Error('Model loading returned null');
       }
 
-      // Apply default rotation
-      if (config.rotation) {
+      if (config?.rotation) {
         if (config.rotation.x !== undefined) model.rotation.x = config.rotation.x;
         if (config.rotation.y !== undefined) model.rotation.y = config.rotation.y;
         if (config.rotation.z !== undefined) model.rotation.z = config.rotation.z;
       }
 
-      // Apply offset
-      if (config.offset) {
+      if (config?.offset) {
         if (config.offset.x !== undefined) model.position.x = config.offset.x;
         if (config.offset.y !== undefined) model.position.y = config.offset.y;
         if (config.offset.z !== undefined) model.position.z = config.offset.z;
       }
 
-      // Calculate bounding box to ensure proper scaling
-      const box = new THREE.Box3().setFromObject(model);
-      const size = box.getSize(new THREE.Vector3());
-      
-      // Scale to match dimensions
-      const scaleX = dimensions.width / size.x;
-      const scaleY = dimensions.height / size.y;
-      const scaleZ = dimensions.length / size.z;
-      const uniformScale = Math.min(scaleX, scaleY, scaleZ);
-      
-      if (uniformScale !== Infinity && uniformScale > 0) {
-        model.scale.multiplyScalar(uniformScale);
-      }
+      fitModelToDimensions(model, dimensions, config?.scale || 1.0);
+      model.userData.usesGLB = true;
 
-      // Center the model
-      box.setFromObject(model);
-      const center = box.getCenter(new THREE.Vector3());
-      model.position.sub(center);
-      model.position.y += dimensions.height / 2; // Position on floor
-
-      console.log(`[FurnitureModelLoader] Successfully loaded model for ${furnitureId}`);
+      console.log(`[FurnitureModelLoader] Successfully loaded GLB for ${furnitureId}`);
       return model;
     } catch (error) {
       console.error(`[FurnitureModelLoader] Failed to load model for ${furnitureId}:`, error);
-      
-      if (config?.fallbackToBox) {
-        console.log(`[FurnitureModelLoader] Using box fallback for ${furnitureId}`);
-        return null; // Will trigger fallback
-      }
-      
       return null;
     }
   }
@@ -388,68 +385,42 @@ export class FurnitureModelLoader {
     const group = new THREE.Group();
     const { width, height, length } = item.dimensions;
 
-    // Check if item has a 3D model URL (GLB/GLTF)
-    if (item.model3D?.url && item.model3D?.format &&
-      (item.model3D.format === 'glb' || item.model3D.format === 'gltf')) {
+    const bundledAsset = getBundledModelAsset(item.id);
+    const remoteUrl = item.model3D?.url;
+    const hasRemoteUrl =
+      typeof remoteUrl === 'string' && remoteUrl.length > 0
+        ? remoteUrl
+        : typeof remoteUrl === 'number'
+          ? remoteUrl
+          : null;
+    const modelSource = bundledAsset ?? hasRemoteUrl;
+
+    if (modelSource !== null && modelSource !== undefined) {
       try {
-        console.log(`[FurnitureModelLoader] Loading external 3D model for ${item.name}:`, item.model3D.url);
+        console.log(`[FurnitureModelLoader] Loading GLB for ${item.name} (${item.id})`);
         const loadedModel = await this.loadGLBModel(
-          item.model3D.url,
-          item.model3D.scale || 1.0
+          modelSource,
+          item.model3D?.scale || 1.0
         );
 
         if (loadedModel) {
-          // Enhance PBR and shadows
-          loadedModel.traverse((child) => {
-            if (child instanceof THREE.Mesh) {
-              child.castShadow = true;
-              child.receiveShadow = true;
-              if (child.material instanceof THREE.MeshStandardMaterial) {
-                child.material.needsUpdate = true;
-              }
-            }
-          });
-
-          // Scale model to match dimensions if needed
-          const modelBox = new THREE.Box3().setFromObject(loadedModel);
-          const modelSize = modelBox.getSize(new THREE.Vector3());
-
-          // Calculate scale to match item dimensions
-          const scaleX = width / modelSize.x;
-          const scaleY = height / modelSize.y;
-          const scaleZ = length / modelSize.z;
-          const uniformScale = Math.min(scaleX, scaleY, scaleZ);
-
-          if (uniformScale !== Infinity && uniformScale > 0) {
-            loadedModel.scale.multiplyScalar(uniformScale);
-          }
-
-          // Center the model
-          modelBox.setFromObject(loadedModel);
-          const center = modelBox.getCenter(new THREE.Vector3());
-          loadedModel.position.sub(center);
-          loadedModel.position.y += height / 2; // Position on floor
-
+          enhanceModelMaterials(loadedModel);
+          fitModelToDimensions(loadedModel, item.dimensions, item.model3D?.scale || 1.0);
+          loadedModel.userData.usesGLB = true;
           group.add(loadedModel);
           group.visible = true;
-
-          console.log(`[FurnitureModelLoader] Successfully loaded GLB model for ${item.name}`);
+          group.userData.usesGLB = true;
+          console.log(`[FurnitureModelLoader] GLB ready for ${item.name}`);
           return group;
-        } else {
-          console.warn(`[FurnitureModelLoader] Failed to load GLB model, falling back to procedural generation`);
         }
       } catch (error) {
-        console.error(`[FurnitureModelLoader] Error loading GLB model for ${item.name}:`, error);
-        if (!__DEV__) {
-          throw new Error(`[FurnitureModelLoader] Failed to load required GLB model for ${item.name}`);
-        }
-        // Fall through to procedural generation in DEV
+        console.error(`[FurnitureModelLoader] GLB load failed for ${item.name}:`, error);
       }
-    } else if (!__DEV__) {
-      throw new Error(`[FurnitureModelLoader] Model URL missing for ${item.name}`);
     }
 
-    // Fallback to procedural generation
+    console.warn(
+      `[FurnitureModelLoader] Using procedural fallback for ${item.name} (${item.id})`
+    );
     return this.createProceduralFurnitureModel(item);
   }
 
