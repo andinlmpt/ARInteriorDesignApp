@@ -60,7 +60,13 @@ InteriorDesignViewer/[Ll]ogs/
 InteriorDesignViewer/[Uu]ser[Ss]ettings/
 InteriorDesignViewer/[Mm]emoryCaptures/
 InteriorDesignViewer/[Rr]ecordings/
+InteriorDesignViewer/.utmp/
+InteriorDesignViewer/Assets/_Recovery/
 InteriorDesignViewer_BurstDebugInformation_DoNotShip/
+_reference-*/
+
+# Unity export / IL2CPP build outputs (regenerate locally)
+frontend/unity/
 *.csproj
 *.sln
 *.suo

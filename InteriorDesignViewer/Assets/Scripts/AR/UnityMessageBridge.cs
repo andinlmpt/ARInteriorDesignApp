@@ -17,14 +17,16 @@ public class UnityMessageBridge : MonoBehaviour
     {
         SendToApp("unityReady", "true");
 
-        // Auto-select default prefab so you can test placement before React Native is wired.
-        if (catalog != null && placer != null)
+        if (placer != null && catalog != null)
         {
-            placer.SetPrefab(catalog.GetPrefab("test-sofa"));
+            var chairPrefab = catalog.GetPrefab("chair");
+            if (chairPrefab != null)
+            {
+                placer.SetPrefab(chairPrefab);
+            }
         }
     }
 
-    // Called from React Native later via @azesmway/react-native-unity
     public void ReceiveMessage(string json)
     {
         var msg = JsonUtility.FromJson<RNMessage>(json);
@@ -50,7 +52,6 @@ public class UnityMessageBridge : MonoBehaviour
         Debug.Log($"[UnityMessageBridge] {message}");
 
 #if UNITY_ANDROID || UNITY_IOS
-        // Hook this up when react-native-unity is installed (Phase G in docs).
         // NativeAPI.SendMessageToRN(message);
 #endif
     }
