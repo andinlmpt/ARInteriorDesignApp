@@ -236,7 +236,7 @@ class MLDepthEstimationServiceClass {
     // Fallback: fetch the image as an ArrayBuffer and attempt a raw decode.
     // (Rough but works in Expo's Hermes environment with expo-file-system.)
     try {
-      const { readAsStringAsync, EncodingType } = await import('expo-file-system');
+      const { readAsStringAsync, EncodingType } = await import('expo-file-system/legacy');
       const base64 = await readAsStringAsync(imageUri, { encoding: EncodingType.Base64 });
       // Decode base64 → binary string → Uint8Array
       const binary = atob(base64);
