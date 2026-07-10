@@ -9,6 +9,9 @@ public static class MeasurementVisualUtility
     static Material cachedLineMaterial;
     static Material cachedPointMaterial;
 
+    /// <summary>
+    /// Configures a horizontal/diagonal floor LineRenderer with a floor inset lift.
+    /// </summary>
     public static void ConfigureLine(
         LineRenderer lineRenderer,
         Vector3 start,
@@ -25,6 +28,34 @@ public static class MeasurementVisualUtility
         var pointA = start + lift;
         var pointB = end + lift;
 
+        ApplyLineRenderer(lineRenderer, pointA, pointB, color, width, materialOverride);
+    }
+
+    /// <summary>
+    /// Configures a perfectly vertical LineRenderer (no floor inset — height lines stay true-vertical).
+    /// </summary>
+    public static void ConfigureVerticalLine(
+        LineRenderer lineRenderer,
+        Vector3 basePos,
+        Vector3 topPos,
+        Color color,
+        float width,
+        Material materialOverride)
+    {
+        if (lineRenderer == null)
+            return;
+
+        ApplyLineRenderer(lineRenderer, basePos, topPos, color, width, materialOverride);
+    }
+
+    static void ApplyLineRenderer(
+        LineRenderer lineRenderer,
+        Vector3 pointA,
+        Vector3 pointB,
+        Color color,
+        float width,
+        Material materialOverride)
+    {
         lineRenderer.useWorldSpace = true;
         lineRenderer.loop = false;
         lineRenderer.positionCount = 2;

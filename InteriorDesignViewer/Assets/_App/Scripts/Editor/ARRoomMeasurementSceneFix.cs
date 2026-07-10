@@ -132,6 +132,7 @@ public static class ARRoomMeasurementSceneFix
 
         var controllerSo = new SerializedObject(controller);
         controllerSo.FindProperty("placementIndicator").objectReferenceValue = placement;
+        controllerSo.FindProperty("arCamera").objectReferenceValue = mainCamera;
         controllerSo.FindProperty("scanController").objectReferenceValue = scan;
         controllerSo.FindProperty("pointMarkerPrefab").objectReferenceValue = prefabs.pointMarker;
         controllerSo.FindProperty("linePrefab").objectReferenceValue = prefabs.line;
@@ -140,6 +141,7 @@ public static class ARRoomMeasurementSceneFix
         controllerSo.FindProperty("lineWidth").floatValue = 0.02f;
         controllerSo.FindProperty("pointScale").floatValue = 0.06f;
         controllerSo.FindProperty("floorVisualInset").floatValue = 0.015f;
+        controllerSo.FindProperty("maxHeightMeters").floatValue = 6f;
         controllerSo.ApplyModifiedPropertiesWithoutUndo();
 
         var overlayGo = new GameObject("MeasurementScanOverlay");
@@ -195,16 +197,21 @@ public static class ARRoomMeasurementSceneFix
         var hud = canvasGo.AddComponent<MeasurementHUDController>();
         var scanOverlay = FindRootObject(scene, "MeasurementScanOverlay")?.GetComponent<MeasurementScanOverlay>();
 
+        // ── Shared UI ──────────────────────────────────────────────────────────
         var scanHint = CreateHudText(controlsRoot.transform, "ScanHintText", new Vector2(0.5f, 0.92f),
             new Vector2(680f, 48f), 22, "Move phone to start");
+        var status = CreateHudText(controlsRoot.transform, "StatusText", new Vector2(0.5f, 0.84f),
+            new Vector2(680f, 40f), 18, "Tap to place the first point.");
+
+        // ── Distance UI ────────────────────────────────────────────────────────
         var live = CreateHudText(controlsRoot.transform, "LiveDistanceText", new Vector2(0.5f, 0.76f),
             new Vector2(420f, 56f), 30, string.Empty);
         live.fontStyle = FontStyles.Bold;
-        var status = CreateHudText(controlsRoot.transform, "StatusText", new Vector2(0.5f, 0.84f),
-            new Vector2(680f, 40f), 18, "Tap to place the first point.");
+
         var total = CreateHudText(controlsRoot.transform, "TotalDistanceText", new Vector2(0.5f, 0.12f),
             new Vector2(320f, 44f), 26, "Total: —");
 
+        // Distance sub-mode toggle (Single / Chained)
         var toggleGo = new GameObject("ModeToggle");
         toggleGo.transform.SetParent(controlsRoot.transform, false);
         var toggleRect = toggleGo.AddComponent<RectTransform>();
@@ -230,21 +237,72 @@ public static class ARRoomMeasurementSceneFix
         toggleLabel.alignment = TextAlignmentOptions.Center;
         toggleLabel.color = Color.white;
 
-        var clearGo = CreateHudButton(controlsRoot.transform, "ClearButton", new Vector2(0.22f, 0.05f),
+        // ── Height UI ──────────────────────────────────────────────────────────
+
+        // "Move aim Up to extrude Height" banner — top-center dark pill
+        var heightBanner = CreateHudText(controlsRoot.transform, "HeightInstructionText", new Vector2(0.5f, 0.78f),
+            new Vector2(640f, 52f), 22, "Move aim Up to extrude Height");
+        var heightBannerBg = heightBanner.gameObject.AddComponent<Image>();
+        heightBannerBg.color = new Color(0.05f, 0.05f, 0.05f, 0.80f);
+        heightBannerBg.transform.SetAsFirstSibling(); // bg behind text
+        heightBanner.gameObject.SetActive(false); // hidden until Extruding
+
+        // Finish button — bottom-center large pill
+        var finishGo = CreateHudButton(controlsRoot.transform, "FinishHeightButton",
+            new Vector2(0.5f, 0.10f), new Vector2(220f, 56f), "Finish");
+        finishGo.GetComponent<Image>().color = new Color(0.38f, 0.22f, 0.72f, 0.95f); // purple
+        finishGo.SetActive(false); // hidden until Extruding
+
+        // Tool toggle (Distance | Height) — top-right pill
+        var toolToggleGo = new GameObject("ToolToggle");
+        toolToggleGo.transform.SetParent(controlsRoot.transform, false);
+        var toolToggleRect = toolToggleGo.AddComponent<RectTransform>();
+        toolToggleRect.anchorMin = new Vector2(0.88f, 0.92f);
+        toolToggleRect.anchorMax = new Vector2(0.88f, 0.92f);
+        toolToggleRect.pivot = new Vector2(0.5f, 0.5f);
+        toolToggleRect.sizeDelta = new Vector2(160f, 44f);
+        toolToggleRect.anchoredPosition = Vector2.zero;
+        var toolToggleBg = toolToggleGo.AddComponent<Image>();
+        toolToggleBg.color = new Color(0.12f, 0.28f, 0.50f, 0.92f);
+        var toolToggle = toolToggleGo.AddComponent<Toggle>();
+        toolToggle.targetGraphic = toolToggleBg;
+        var toolToggleLabelGo = new GameObject("Label");
+        toolToggleLabelGo.transform.SetParent(toolToggleGo.transform, false);
+        var toolToggleLabelRect = toolToggleLabelGo.AddComponent<RectTransform>();
+        toolToggleLabelRect.anchorMin = Vector2.zero;
+        toolToggleLabelRect.anchorMax = Vector2.one;
+        toolToggleLabelRect.offsetMin = Vector2.zero;
+        toolToggleLabelRect.offsetMax = Vector2.zero;
+        var toolToggleLabel = toolToggleLabelGo.AddComponent<TextMeshProUGUI>();
+        toolToggleLabel.text = "Distance";
+        toolToggleLabel.fontSize = 18f;
+        toolToggleLabel.alignment = TextAlignmentOptions.Center;
+        toolToggleLabel.color = Color.white;
+
+        // ── Clear / Undo buttons ───────────────────────────────────────────────
+        var clearGo = CreateHudButton(controlsRoot.transform, "ClearButton", new Vector2(0.14f, 0.05f),
             new Vector2(140f, 44f), "Clear");
-        var undoGo = CreateHudButton(controlsRoot.transform, "UndoButton", new Vector2(0.78f, 0.05f),
+        var undoGo = CreateHudButton(controlsRoot.transform, "UndoButton", new Vector2(0.86f, 0.05f),
             new Vector2(140f, 44f), "Undo");
 
+        // ── Wire HUD serialized fields ─────────────────────────────────────────
         var hudSo = new SerializedObject(hud);
         hudSo.FindProperty("scanController").objectReferenceValue = scanController;
         hudSo.FindProperty("scanOverlay").objectReferenceValue = scanOverlay;
         hudSo.FindProperty("measurementControlsRoot").objectReferenceValue = controlsRoot;
         hudSo.FindProperty("measurementController").objectReferenceValue = controller;
         hudSo.FindProperty("scanHintText").objectReferenceValue = scanHint;
-        hudSo.FindProperty("liveDistanceText").objectReferenceValue = live;
         hudSo.FindProperty("statusText").objectReferenceValue = status;
+        // Distance
+        hudSo.FindProperty("liveDistanceText").objectReferenceValue = live;
         hudSo.FindProperty("totalDistanceText").objectReferenceValue = total;
         hudSo.FindProperty("modeToggle").objectReferenceValue = toggle;
+        // Height
+        hudSo.FindProperty("heightInstructionText").objectReferenceValue = heightBanner;
+        hudSo.FindProperty("finishHeightButton").objectReferenceValue = finishGo.GetComponent<Button>();
+        // Tool
+        hudSo.FindProperty("toolToggle").objectReferenceValue = toolToggle;
+        // Buttons
         hudSo.FindProperty("clearButton").objectReferenceValue = clearGo.GetComponent<Button>();
         hudSo.FindProperty("undoButton").objectReferenceValue = undoGo.GetComponent<Button>();
         hudSo.ApplyModifiedPropertiesWithoutUndo();
