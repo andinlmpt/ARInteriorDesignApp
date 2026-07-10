@@ -221,7 +221,7 @@ public static class ARRoomMeasurementSceneFix
         toggleRect.sizeDelta = new Vector2(280f, 44f);
         toggleRect.anchoredPosition = Vector2.zero;
         var toggleBg = toggleGo.AddComponent<Image>();
-        toggleBg.color = new Color(0.08f, 0.14f, 0.24f, 0.92f);
+        toggleBg.color = new Color(0.478f, 0.561f, 0.482f, 0.92f); // accent #7A8F7B Muted Sage
         var toggle = toggleGo.AddComponent<Toggle>();
         toggle.targetGraphic = toggleBg;
         var toggleLabelGo = new GameObject("Label");
@@ -251,7 +251,7 @@ public static class ARRoomMeasurementSceneFix
         heightBannerGoRect.sizeDelta = new Vector2(640f, 52f);
         heightBannerGoRect.anchoredPosition = Vector2.zero;
         var heightBannerImg = heightBannerGo.AddComponent<Image>();
-        heightBannerImg.color = new Color(0.05f, 0.05f, 0.05f, 0.80f);
+        heightBannerImg.color = new Color(0.122f, 0.122f, 0.122f, 0.82f); // overlay rgba(31,31,31,0.82)
         heightBannerGo.SetActive(false); // hidden until Extruding
 
         // TMP_Text child inside the banner container
@@ -272,7 +272,7 @@ public static class ARRoomMeasurementSceneFix
         // Finish button — bottom-center large pill
         var finishGo = CreateHudButton(controlsRoot.transform, "FinishHeightButton",
             new Vector2(0.5f, 0.10f), new Vector2(220f, 56f), "Finish");
-        finishGo.GetComponent<Image>().color = new Color(0.38f, 0.22f, 0.72f, 0.95f); // purple
+        finishGo.GetComponent<Image>().color = new Color(0.380f, 0.451f, 0.392f, 0.95f); // accentDark #617364 Deep Sage
         finishGo.SetActive(false); // hidden until Extruding
 
         // Tool toggle (Distance | Height) — top-right pill
@@ -285,7 +285,7 @@ public static class ARRoomMeasurementSceneFix
         toolToggleRect.sizeDelta = new Vector2(160f, 44f);
         toolToggleRect.anchoredPosition = Vector2.zero;
         var toolToggleBg = toolToggleGo.AddComponent<Image>();
-        toolToggleBg.color = new Color(0.12f, 0.28f, 0.50f, 0.92f);
+        toolToggleBg.color = new Color(0.478f, 0.561f, 0.482f, 0.92f); // accent #7A8F7B Muted Sage
         var toolToggle = toolToggleGo.AddComponent<Toggle>();
         toolToggle.targetGraphic = toolToggleBg;
         var toolToggleLabelGo = new GameObject("Label");
@@ -363,7 +363,7 @@ public static class ARRoomMeasurementSceneFix
         rect.anchoredPosition = Vector2.zero;
 
         var image = go.AddComponent<Image>();
-        image.color = new Color(0.08f, 0.14f, 0.24f, 0.92f);
+        image.color = new Color(0.478f, 0.561f, 0.482f, 0.92f); // accent #7A8F7B Muted Sage
 
         var button = go.AddComponent<Button>();
         button.targetGraphic = image;

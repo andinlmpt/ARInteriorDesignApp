@@ -58,9 +58,9 @@ public class MeasurementController : MonoBehaviour
     [SerializeField] private Transform measurementRoot;
 
     [Header("Line appearance")]
-    [SerializeField] private Color lineColor = new(0.12f, 0.75f, 1f, 1f);
-    [SerializeField] private Color previewLineColor = new(1f, 1f, 1f, 0.95f);
-    [SerializeField] private Color pointColor = new(1f, 0.85f, 0.15f, 1f);
+    [SerializeField] private Color lineColor = new(0.478f, 0.561f, 0.482f, 1f);      // accent #7A8F7B Muted Sage
+    [SerializeField] private Color previewLineColor = new(1f, 1f, 1f, 0.95f);          // white preview
+    [SerializeField] private Color pointColor = new(0.843f, 0.698f, 0.416f, 1f);      // warning #D7B26A Soft Gold
     [SerializeField] private float lineWidth = 0.02f;
     [SerializeField] private float previewLineWidth = 0.015f;
     [SerializeField] private float pointScale = 0.06f;
