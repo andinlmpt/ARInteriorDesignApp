@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useCallback } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { View, StyleSheet, TouchableOpacity, Alert, Platform, Image, Switch, LayoutAnimation } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -67,10 +68,12 @@ export default function ProfileScreen() {
     }
   };
 
-  // Load data on mount
-  useEffect(() => {
-    loadInitialData();
-  }, []);
+  // Reload user data every time this screen gains focus
+  useFocusEffect(
+    useCallback(() => {
+      loadInitialData();
+    }, [])
+  );
 
   const handleToggleSettings = () => {
     // Enable LayoutAnimation for smooth expansion on native
@@ -112,10 +115,8 @@ export default function ProfileScreen() {
     await AsyncStorage.setItem('settings_analytics', String(value));
   };
 
-  // Debug: Log when component mounts
-  useEffect(() => {
-    console.log('[Profile] ProfileScreen mounted');
-  }, []);
+
+
 
   const handleEditProfile = () => {
     router.push('/edit-profile');
