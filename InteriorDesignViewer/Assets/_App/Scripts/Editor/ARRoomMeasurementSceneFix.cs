@@ -239,13 +239,35 @@ public static class ARRoomMeasurementSceneFix
 
         // ── Height UI ──────────────────────────────────────────────────────────
 
-        // "Move aim Up to extrude Height" banner — top-center dark pill
-        var heightBanner = CreateHudText(controlsRoot.transform, "HeightInstructionText", new Vector2(0.5f, 0.78f),
-            new Vector2(640f, 52f), 22, "Move aim Up to extrude Height");
-        var heightBannerBg = heightBanner.gameObject.AddComponent<Image>();
-        heightBannerBg.color = new Color(0.05f, 0.05f, 0.05f, 0.80f);
-        heightBannerBg.transform.SetAsFirstSibling(); // bg behind text
-        heightBanner.gameObject.SetActive(false); // hidden until Extruding
+        // "Move aim Up to extrude Height" banner — dark pill container + text child.
+        // Image and TextMeshProUGUI cannot share the same GameObject (both are Graphic).
+        // Solution: Image on parent, TMP_Text on child; toggle the parent to show/hide both.
+        var heightBannerGo = new GameObject("HeightInstructionBanner");
+        heightBannerGo.transform.SetParent(controlsRoot.transform, false);
+        var heightBannerGoRect = heightBannerGo.AddComponent<RectTransform>();
+        heightBannerGoRect.anchorMin = new Vector2(0.5f, 0.78f);
+        heightBannerGoRect.anchorMax = new Vector2(0.5f, 0.78f);
+        heightBannerGoRect.pivot = new Vector2(0.5f, 0.5f);
+        heightBannerGoRect.sizeDelta = new Vector2(640f, 52f);
+        heightBannerGoRect.anchoredPosition = Vector2.zero;
+        var heightBannerImg = heightBannerGo.AddComponent<Image>();
+        heightBannerImg.color = new Color(0.05f, 0.05f, 0.05f, 0.80f);
+        heightBannerGo.SetActive(false); // hidden until Extruding
+
+        // TMP_Text child inside the banner container
+        var heightBannerTextGo = new GameObject("HeightInstructionText");
+        heightBannerTextGo.transform.SetParent(heightBannerGo.transform, false);
+        var heightBannerTextRect = heightBannerTextGo.AddComponent<RectTransform>();
+        heightBannerTextRect.anchorMin = Vector2.zero;
+        heightBannerTextRect.anchorMax = Vector2.one;
+        heightBannerTextRect.offsetMin = Vector2.zero;
+        heightBannerTextRect.offsetMax = Vector2.zero;
+        var heightBanner = heightBannerTextGo.AddComponent<TextMeshProUGUI>();
+        heightBanner.text = "Move aim Up to extrude Height";
+        heightBanner.fontSize = 22f;
+        heightBanner.alignment = TextAlignmentOptions.Center;
+        heightBanner.color = Color.white;
+        heightBanner.raycastTarget = false;
 
         // Finish button — bottom-center large pill
         var finishGo = CreateHudButton(controlsRoot.transform, "FinishHeightButton",
@@ -299,6 +321,7 @@ public static class ARRoomMeasurementSceneFix
         hudSo.FindProperty("modeToggle").objectReferenceValue = toggle;
         // Height
         hudSo.FindProperty("heightInstructionText").objectReferenceValue = heightBanner;
+        hudSo.FindProperty("heightBannerRoot").objectReferenceValue = heightBannerGo;
         hudSo.FindProperty("finishHeightButton").objectReferenceValue = finishGo.GetComponent<Button>();
         // Tool
         hudSo.FindProperty("toolToggle").objectReferenceValue = toolToggle;

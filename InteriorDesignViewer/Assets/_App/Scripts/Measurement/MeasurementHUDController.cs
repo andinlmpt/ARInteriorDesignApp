@@ -28,7 +28,8 @@ public class MeasurementHUDController : MonoBehaviour
     [SerializeField] private Toggle modeToggle;
 
     [Header("UI — Height tool")]
-    [SerializeField] private TMP_Text heightInstructionText;  // banner: "Move aim Up to extrude Height"
+    [SerializeField] private TMP_Text heightInstructionText;  // text child inside banner
+    [SerializeField] private GameObject heightBannerRoot;      // parent container (Image bg + text); toggled to show/hide
     [SerializeField] private Button finishHeightButton;        // visible only while Extruding
 
     [Header("UI — Tool toggle")]
@@ -265,7 +266,10 @@ public class MeasurementHUDController : MonoBehaviour
 
     void SetHeightBannerVisible(bool visible)
     {
-        if (heightInstructionText != null)
+        // Toggle the container (Image bg + text child). Fall back to text GO if no root is set.
+        if (heightBannerRoot != null)
+            heightBannerRoot.SetActive(visible);
+        else if (heightInstructionText != null)
             heightInstructionText.gameObject.SetActive(visible);
     }
 
