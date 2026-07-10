@@ -251,7 +251,7 @@ router.put('/:id', authenticate, async (req, res, next) => {
     }
 
     // Validation: prevent updating sensitive fields directly via this endpoint
-    const allowedUpdates = ['name', 'bio', 'phoneNumber', 'avatar', 'preferences', 'email', 'password'];
+    const allowedUpdates = ['name', 'bio', 'phoneNumber', 'avatar', 'profilePicture', 'preferences', 'email', 'password'];
     const invalidUpdates = Object.keys(updates).filter(key => !allowedUpdates.includes(key));
 
     if (invalidUpdates.length > 0) {
@@ -271,7 +271,7 @@ router.put('/:id', authenticate, async (req, res, next) => {
 
     // Use MongoDB if connected
     if (isMongoDBConnected()) {
-      const user = await User.findById(userId);
+      const user = await User.findById(userId).select('+profilePicture');
 
       if (!user) {
         return res.status(404).json({
@@ -299,16 +299,19 @@ router.put('/:id', authenticate, async (req, res, next) => {
       await user.save();
 
       res.json({
-        message: 'Profile updated successfully',
-        user: {
-          id: user._id.toString(),
-          email: user.email,
-          name: user.name,
-          bio: user.bio,
-          phoneNumber: user.phoneNumber,
-          avatar: user.avatar,
-          preferences: user.preferences,
-          updatedAt: user.updatedAt,
+        success: true,
+        data: {
+          user: {
+            id: user._id.toString(),
+            email: user.email,
+            name: user.name,
+            bio: user.bio,
+            phoneNumber: user.phoneNumber,
+            avatar: user.avatar,
+            profilePicture: user.profilePicture || null,
+            preferences: user.preferences,
+            updatedAt: user.updatedAt,
+          }
         }
       });
     } else {
@@ -356,7 +359,7 @@ router.get('/me', authenticate, async (req, res, next) => {
     // Use MongoDB if connected, otherwise fallback to hardcoded users
     if (isMongoDBConnected()) {
       // Get user from MongoDB
-      const user = await User.findById(userId);
+      const user = await User.findById(userId).select('+profilePicture');
 
       if (!user) {
         return res.status(404).json({
@@ -372,6 +375,7 @@ router.get('/me', authenticate, async (req, res, next) => {
         bio: user.bio,
         phoneNumber: user.phoneNumber,
         avatar: user.avatar,
+        profilePicture: user.profilePicture || null,
         preferences: user.preferences,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,

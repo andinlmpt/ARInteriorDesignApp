@@ -38,6 +38,10 @@ const userSchema = new mongoose.Schema({
   avatar: {
     type: String, // URL to avatar image
   },
+  profilePicture: {
+    type: String, // base64 data URL from device camera/gallery
+    select: false, // exclude from default queries to avoid large payloads
+  },
   preferences: {
     theme: { type: String, enum: ['light', 'dark', 'system'], default: 'system' },
     notifications: { type: Boolean, default: true },
