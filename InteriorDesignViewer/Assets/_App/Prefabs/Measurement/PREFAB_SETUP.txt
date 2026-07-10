@@ -1,0 +1,34 @@
+/*
+ * MEASUREMENT PREFAB SETUP (create in Unity Editor under Assets/_App/Prefabs/Measurement/)
+ *
+ * ── MeasurementPointMarker.prefab ─────────────────────────────────────────────
+ * Root: empty GameObject "MeasurementPointMarker"
+ *   • Sphere mesh (built-in) OR child "Visual" with MeshFilter + MeshRenderer
+ *   • Scale: (0.04, 0.04, 0.04)
+ *   • Material: Unlit/Color or URP/Unlit, bright cyan (#1EBFFF), no shadows
+ *   • Remove Collider (not needed for AR markers)
+ *
+ * ── MeasurementLine.prefab ────────────────────────────────────────────────────
+ * Root: empty GameObject "MeasurementLine"
+ *   • LineRenderer only (no mesh children)
+ *   • Use World Space = true
+ *   • Positions: 2 (set at runtime by MeasurementController)
+ *   • Width: 0.008
+ *   • Color: cyan with slight alpha
+ *   • Material: Sprites/Default or URP/Unlit
+ *   • Num Cap Vertices: 4
+ *
+ * ── MeasurementLabel.prefab ───────────────────────────────────────────────────
+ * Root: empty GameObject "MeasurementLabel" at scale (0.001, 0.001, 0.001)
+ *   • Add MeasurementLabel.cs on root; assign billboardTarget = root
+ *   Child: Canvas (Render Mode = World Space, 200×60 px)
+ *     • Canvas Scaler: Constant Pixel Size
+ *     Child: TMP_Text "DistanceText"
+ *       • Font: LiberationSans SDF (default TMP)
+ *       • Font Size: 36
+ *       • Alignment: center
+ *       • Color: white with dark outline
+ *   • MeasurementLabel.labelText → DistanceText TMP_Text
+ *
+ * Assign all three prefabs on MeasurementController in Assets/Scenes/ARRoomMeasurement.unity.
+ */

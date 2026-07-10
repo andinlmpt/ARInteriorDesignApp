@@ -60,52 +60,9 @@ export const SkeletonLoader: React.FC<SkeletonLoaderProps> = ({
   );
 };
 
-/**
- * Skeleton screen for AR view initialization
- */
-export const ARViewSkeleton: React.FC = () => {
-  return (
-    <View style={styles.container}>
-      <SkeletonLoader width="100%" height={60} borderRadius={0} style={styles.header} />
-      <View style={styles.content}>
-        <SkeletonLoader width="90%" height={200} borderRadius={12} style={styles.viewer} />
-        <SkeletonLoader width="80%" height={40} borderRadius={8} style={styles.button} />
-        <SkeletonLoader width="70%" height={40} borderRadius={8} style={styles.button} />
-        <View style={styles.grid}>
-          {[1, 2, 3, 4].map((i) => (
-            <SkeletonLoader key={i} width="45%" height={100} borderRadius={8} />
-          ))}
-        </View>
-      </View>
-    </View>
-  );
-};
-
 const styles = StyleSheet.create({
   skeleton: {
     backgroundColor: '#E0E0E0',
-  },
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  header: {
-    marginBottom: 20,
-  },
-  content: {
-    padding: 20,
-  },
-  viewer: {
-    marginBottom: 20,
-  },
-  button: {
-    marginBottom: 12,
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginTop: 20,
   },
 });
 

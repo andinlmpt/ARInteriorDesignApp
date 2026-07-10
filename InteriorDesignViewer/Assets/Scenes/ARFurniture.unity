@@ -132,6 +132,8 @@ GameObject:
   - component: {fileID: 521325903}
   - component: {fileID: 521325902}
   - component: {fileID: 521325906}
+  - component: {fileID: 521325907}
+  - component: {fileID: 521325908}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -153,8 +155,38 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::FurnitureCatalog
   entries:
   - id: test-sofa
+    displayName: Sofa
+    prefab: {fileID: 9182342873134279007, guid: fbcc2ebfcc9ec634e9adba269614a354, type: 3}
+    icon: {fileID: 0}
+  - id: simple-sofa
+    displayName: Simple Sofa
+    prefab: {fileID: 3243873515764437956, guid: 1629344597124ec4f93285780399ba8a, type: 3}
+    icon: {fileID: 0}
+  - id: modern-chair
+    displayName: Modern Chair
+    prefab: {fileID: 722759159118237870, guid: e4ba48a051dec1d4bb0a1cb25b568401, type: 3}
+    icon: {fileID: 0}
+  - id: wood-chair
+    displayName: Wood Chair
+    prefab: {fileID: 3865862790999712217, guid: 6901ad3280ea07a4a989633e36206053, type: 3}
+    icon: {fileID: 0}
+  - id: dining-chair
+    displayName: Dining Chair
     prefab: {fileID: 3230010106935668783, guid: a1060c68b56f39e4b9cc6e0a7f9b612e, type: 3}
-  defaultPrefab: {fileID: 3230010106935668783, guid: a1060c68b56f39e4b9cc6e0a7f9b612e, type: 3}
+    icon: {fileID: 0}
+  - id: dining-table
+    displayName: Dining Table
+    prefab: {fileID: 2445882162939207002, guid: c3ffc5fd4312d684b8e9d1362200fb46, type: 3}
+    icon: {fileID: 0}
+  - id: side-table
+    displayName: Side Table
+    prefab: {fileID: 7071277580240111744, guid: 8933fde99bcd8c94ba7ce936d6a830a9, type: 3}
+    icon: {fileID: 0}
+  - id: bean-bag
+    displayName: Bean Bag
+    prefab: {fileID: 2520975513715695286, guid: 8bd8b1c107613b641ae7c6093517c941, type: 3}
+    icon: {fileID: 0}
+  defaultPrefab: {fileID: 9182342873134279007, guid: fbcc2ebfcc9ec634e9adba269614a354, type: 3}
 --- !u!114 &521325903
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -187,17 +219,41 @@ MonoBehaviour:
   placementIndicator: {fileID: 1330154966}
   furnitureParent: {fileID: 1774506373}
   arCamera: {fileID: 1122902184}
-  furniturePrefab: {fileID: 3230010106935668783, guid: a1060c68b56f39e4b9cc6e0a7f9b612e, type: 3}
-  minDepthBelowCamera: 0.75
+  furniturePrefab: {fileID: 9182342873134279007, guid: fbcc2ebfcc9ec634e9adba269614a354, type: 3}
+  minDepthBelowCamera: 0.9
   minFloorArea: 0.25
-  autoPlaceDelay: 1
+  scanMinArea: 0.25
+  scanRequiredDuration: 1.5
+  scanMinAreaGrowth: 0.1
+  OnScanStarted:
+    m_PersistentCalls:
+      m_Calls: []
+  OnScanProgress:
+    m_PersistentCalls:
+      m_Calls: []
+  OnSurfaceReady:
+    m_PersistentCalls:
+      m_Calls: []
+  OnFurniturePlacedEvent:
+    m_PersistentCalls:
+      m_Calls:
+      - m_Target: {fileID: 1786306643}
+        m_TargetAssemblyTypeName: ARFloorGuide, Assembly-CSharp
+        m_MethodName: HidePlanesAfterDelay
+        m_Mode: 1
+        m_Arguments:
+          m_ObjectArgument: {fileID: 0}
+          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+          m_IntArgument: 0
+          m_FloatArgument: 0
+          m_StringArgument: 
+          m_BoolArgument: 0
+        m_CallState: 2
   hideIndicatorAfterPlace: 1
-  placementScreenY: 0.35
   placeDistanceInFront: 2.5
-  minAutoPlaceDistance: 2
+  minAutoPlaceDistance: 0.5
   animateSpawn: 1
-  spawnDuration: 0.35
-  spawnStartScaleFactor: 0.05
+  spawnDuration: 0.45
   addBlobShadow: 1
   blobShadowPrefab: {fileID: 8001000000000000001, guid: d5f9b02c3e4a5678901bcdef23456789, type: 3}
   blobShadowScale: 0.55
@@ -206,22 +262,21 @@ MonoBehaviour:
   postPlacementCorrectionDelay: 2.5
   floorCorrectionThreshold: 0.01
   floorCorrectionSmoothDuration: 0.3
---- !u!114 &1786306642
-MonoBehaviour:
+--- !u!4 &521325905
+Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1786306637}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 728ad7fae8e460a4ba41265c7308d757, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Unity.XR.ARFoundation::UnityEngine.XR.ARFoundation.ARAnchorManager
-  <trackablesChanged>k__BackingField:
-    m_PersistentCalls:
-      m_Calls: []
-  m_AnchorPrefab: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &521325906
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -242,21 +297,58 @@ MonoBehaviour:
   fillEuler: {x: 22, y: 130, z: 0}
   keyLight: {fileID: 0}
   fillLight: {fileID: 0}
---- !u!4 &521325905
-Transform:
+--- !u!114 &521325907
+MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 521325901}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b626e49182bb8a547a48c71813cfe7dc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ARFurnitureGestureController
+  placer: {fileID: 521325904}
+  requireTouchOnFurniture: 0
+  furnitureLayerMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  moveSpeedModifier: 0.0005
+  rotationSensitivity: 0.5
+  scaleSensitivity: 1
+  minScaleMultiplier: 0.3
+  maxScaleMultiplier: 3
+  verboseLogging: 0
+  dragStartThreshold: 12
+--- !u!114 &521325908
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ARFurniturePickerUI
+  catalog: {fileID: 521325902}
+  placer: {fileID: 521325904}
+  placementIndicator: {fileID: 1330154966}
+  planeManager: {fileID: 1786306640}
+  floorGuide: {fileID: 1786306643}
+  iconSize: 96
+  iconSpacing: 16
+  scrollBarHeight: 124
+  utilityButtonSize: 58
+  utilityButtonGap: 12
+  bottomMargin: 24
+  sideMargin: 16
+  selectedScale: 1.12
+  unselectedAlpha: 0.72
+  selectionLerpSpeed: 14
+  scrollToSelection: 1
 --- !u!1 &535005051
 GameObject:
   m_ObjectHideFlags: 0
@@ -705,7 +797,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: b19bd519ed8497b45b4e0ac09c5bcb6a, type: 2}
+  - {fileID: 2100000, guid: bc8166bd64afb0f4680eab060a538ebb, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -747,7 +839,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 0.08, y: 0.08, z: 0.08}
+  m_LocalScale: {x: 0.04, y: 0.04, z: 0.04}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -766,9 +858,15 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ARPlacementIndicator
   raycastManager: {fileID: 1786306641}
   indicatorRenderer: {fileID: 1330154963}
-  screenY: 0.5
+  screenY: 0.35
   alignToPlaneRotation: 1
-  horizontalSurfacesOnly: 1
+  minDepthBelowCamera: 0.9
+  minFloorArea: 0.25
+  lockedMaterial: {fileID: 0}
+  searchingMaterial: {fileID: 0}
+  lockedScale: 1
+  searchingScale: 0.7
+  scaleSmoothing: 8
 --- !u!1 &1774506372
 GameObject:
   m_ObjectHideFlags: 0
@@ -813,6 +911,7 @@ GameObject:
   - component: {fileID: 1786306640}
   - component: {fileID: 1786306641}
   - component: {fileID: 1786306642}
+  - component: {fileID: 1786306643}
   m_Layer: 0
   m_Name: XR Origin
   m_TagString: Untagged
@@ -835,8 +934,8 @@ MonoBehaviour:
   m_Camera: {fileID: 1122902184}
   m_OriginBaseGameObject: {fileID: 1786306637}
   m_CameraFloorOffsetObject: {fileID: 535005051}
-  m_RequestedTrackingOriginMode: 2
-  m_CameraYOffset: 1.1176
+  m_RequestedTrackingOriginMode: 0
+  m_CameraYOffset: 0
 --- !u!4 &1786306639
 Transform:
   m_ObjectHideFlags: 0
@@ -887,6 +986,36 @@ MonoBehaviour:
     m_PersistentCalls:
       m_Calls: []
   m_RaycastPrefab: {fileID: 0}
+--- !u!114 &1786306642
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1786306637}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 728ad7fae8e460a4ba41265c7308d757, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.XR.ARFoundation::UnityEngine.XR.ARFoundation.ARAnchorManager
+  <trackablesChanged>k__BackingField:
+    m_PersistentCalls:
+      m_Calls: []
+  m_AnchorPrefab: {fileID: 0}
+--- !u!114 &1786306643
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1786306637}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e90bd82ecbbb7784bba57b725407e0ed, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ARFloorGuide
+  planeManager: {fileID: 1786306640}
+  hideAfterPlacementDelay: 2
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
@@ -894,5 +1023,4 @@ SceneRoots:
   - {fileID: 1786306639}
   - {fileID: 935258868}
   - {fileID: 521325905}
-  - {fileID: 1774506373}
   - {fileID: 1330154965}

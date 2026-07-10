@@ -16,15 +16,6 @@ public class UnityMessageBridge : MonoBehaviour
     void Start()
     {
         SendToApp("unityReady", "true");
-
-        if (placer != null && catalog != null)
-        {
-            var chairPrefab = catalog.GetPrefab("chair");
-            if (chairPrefab != null)
-            {
-                placer.SetPrefab(chairPrefab);
-            }
-        }
     }
 
     public void ReceiveMessage(string json)
@@ -36,9 +27,7 @@ public class UnityMessageBridge : MonoBehaviour
         {
             var prefab = catalog != null ? catalog.GetPrefab(msg.data) : null;
             if (placer != null && prefab != null)
-            {
                 placer.SetPrefab(prefab);
-            }
         }
         else if (msg.method == "clearFurniture" && placer != null)
         {

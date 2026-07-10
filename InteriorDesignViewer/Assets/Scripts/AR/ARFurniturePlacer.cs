@@ -1,6 +1,8 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.Events;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.EnhancedTouch;
 using UnityEngine.XR.ARFoundation;
@@ -8,480 +10,383 @@ using UnityEngine.XR.ARSubsystems;
 using Touch = UnityEngine.InputSystem.EnhancedTouch.Touch;
 using TouchPhase = UnityEngine.InputSystem.TouchPhase;
 
+/// <summary>
+/// Manages AR furniture placement.
+///
+/// FLOW:
+///   1. SCANNING  — reticle is active. ARPlaneManager detects and grows a floor
+///                  plane. No furniture exists. OnScanProgress fires each frame.
+///   2. READY     — scanning criteria met. Reticle is locked on the floor
+///                  (IsLockedOnFloor == true). OnSurfaceReady fires once.
+///                  User TAPS to confirm placement.
+///   3. PLACED    — furniture instantiated at the tapped position via
+///                  Gabmeister-style elastic spawn animation. OnFurniturePlaced
+///                  fires. User can tap again to reposition.
+///
+/// KEY DESIGN DECISIONS:
+///   • No auto-place timer — furniture appears ONLY on an explicit tap when the
+///     reticle is locked on a valid floor plane.
+///   • Reticle visible throughout scanning AND ready-to-place phases.
+///   • Lowest-Y plane selection (not nearest) prevents desk/table mis-detection.
+///   • Pivot pinned to floorY at spawn, scale grows from zero (Gabmeister).
+///   • AlignToFloor deferred one frame so renderer.bounds are initialised first.
+/// </summary>
 public class ARFurniturePlacer : MonoBehaviour
 {
+    /// <summary>Set by ARFurnitureGestureController while drag/pinch/rotate is active.</summary>
+    public static bool SuppressPlacementInput { get; set; }
+
+    // ── State machine ─────────────────────────────────────────────────────────
+    public enum ScanState { Scanning, ReadyToPlace, Placed }
+
     private struct FloorPlacementHit
     {
-        public Pose pose;
+        public Pose    pose;
         public ARPlane plane;
     }
 
+    // ── Inspector: AR references ──────────────────────────────────────────────
     [Header("AR")]
-    [SerializeField] private ARRaycastManager raycastManager;
-    [SerializeField] private ARPlaneManager planeManager;
-    [SerializeField] private ARAnchorManager anchorManager;
+    [SerializeField] private ARRaycastManager    raycastManager;
+    [SerializeField] private ARPlaneManager      planeManager;
+    [SerializeField] private ARAnchorManager     anchorManager;
     [SerializeField] private ARPlacementIndicator placementIndicator;
-    [SerializeField] private Transform furnitureParent;
-    [SerializeField] private Camera arCamera;
+    [SerializeField] private Transform           furnitureParent;
+    [SerializeField] private Camera              arCamera;
 
+    // ── Inspector: Furniture ──────────────────────────────────────────────────
     [Header("Furniture")]
     [SerializeField] private GameObject furniturePrefab;
 
+    // ── Inspector: Floor detection ────────────────────────────────────────────
     [Header("Floor detection")]
-    [SerializeField] private float minDepthBelowCamera = 0.75f;
+    [Tooltip("Plane must be at least this many metres below the camera to count as floor (rejects desks).")]
+    [SerializeField] private float minDepthBelowCamera = 0.9f;
+    [Tooltip("Minimum plane area (m²) for placement raycasts.")]
     [SerializeField] private float minFloorArea = 0.25f;
-    [SerializeField] private float autoPlaceDelay = 1f;
 
+    // ── Inspector: Scanning phase ─────────────────────────────────────────────
+    [Header("Scanning phase")]
+    [Tooltip("Minimum plane area (m²) before scanning completes.")]
+    [SerializeField] private float scanMinArea = 0.25f;
+    [Tooltip("Seconds the same plane must be continuously tracked.")]
+    [SerializeField] private float scanRequiredDuration = 1.5f;
+    [Tooltip("Minimum area growth (m²) — forces the user to pan the camera rather than freeze on one patch.")]
+    [SerializeField] private float scanMinAreaGrowth = 0.15f;
+
+    // ── Inspector: Scanning events ────────────────────────────────────────────
+    [Header("Scanning events")]
+    public UnityEvent        OnScanStarted;
+    /// <summary>Progress 0‥1 — fired every frame while scanning.</summary>
+    public UnityEvent<float> OnScanProgress;
+    /// <summary>Fired once when scanning criteria are met and the reticle becomes active.</summary>
+    public UnityEvent        OnSurfaceReady;
+    /// <summary>Fired once when furniture is first placed.</summary>
+    public UnityEvent        OnFurniturePlacedEvent;
+
+    // ── Inspector: Indicator ──────────────────────────────────────────────────
     [Header("Indicator")]
+    [Tooltip("Hide the reticle once furniture has been placed and the user stops tapping.")]
     [SerializeField] private bool hideIndicatorAfterPlace = true;
 
+    // ── Inspector: Placement distance ─────────────────────────────────────────
     [Header("Placement distance")]
-    [Tooltip("Screen Y for auto-place ray (0=bottom, 1=top). 0.35 = lower third like a natural floor view.")]
-    [SerializeField] private float placementScreenY = 0.35f;
-    [Tooltip("Meters in front of camera when raycast misses (fallback).")]
+    [Tooltip("Meters in front of camera used for the auto-place fallback pose.")]
     [SerializeField] private float placeDistanceInFront = 2.5f;
-    [Tooltip("Auto-place never closer than this (meters).")]
-    [SerializeField] private float minAutoPlaceDistance = 2f;
+    [Tooltip("Furniture will not be placed closer than this to the camera (metres, horizontal).")]
+    [SerializeField] private float minAutoPlaceDistance  = 0.5f;
 
+    // ── Inspector: Spawn animation ────────────────────────────────────────────
     [Header("Spawn animation")]
-    [SerializeField] private bool animateSpawn = true;
-    [SerializeField] private float spawnDuration = 0.35f;
-    [Tooltip("Starting scale as a fraction of the prefab scale (0.05 = 5%).")]
-    [SerializeField] private float spawnStartScaleFactor = 0.05f;
+    [SerializeField] private bool  animateSpawn  = true;
+    [SerializeField] private float spawnDuration = 0.45f;
 
+    // ── Inspector: Grounding ──────────────────────────────────────────────────
     [Header("Grounding")]
-    [SerializeField] private bool addBlobShadow = true;
+    [SerializeField] private bool       addBlobShadow    = false;
     [SerializeField] private GameObject blobShadowPrefab;
-    [SerializeField] private float blobShadowScale = 0.55f;
-    [Tooltip("Slight push into the floor plane so legs visually touch tiles.")]
+    [SerializeField] private float      blobShadowScale  = 0.55f;
+    [Tooltip("Slight push into the floor so legs visually touch tiles.")]
     [SerializeField] private float floorContactInset = 0.02f;
 
-    [Header("Anchor + drift correction")]
-    [Tooltip("Keep re-snapping to the live floor height for this many seconds after placement.")]
-    [SerializeField] private float continuousFloorSnapDuration = 8f;
-    [Tooltip("Wait this long after placement before re-checking floor height (ARCore plane refinement).")]
-    [SerializeField] private float postPlacementCorrectionDelay = 2.5f;
-    [SerializeField] private float floorCorrectionThreshold = 0.01f;
+    // ── Inspector: Drift correction ───────────────────────────────────────────
+    [Header("Drift correction")]
+    [Tooltip("Keep re-snapping to live floor height for this many seconds after placement.")]
+    [SerializeField] private float continuousFloorSnapDuration   = 8f;
+    [Tooltip("Wait this long after placement before re-raycasting floor height.")]
+    [SerializeField] private float postPlacementCorrectionDelay  = 2.5f;
+    [SerializeField] private float floorCorrectionThreshold      = 0.01f;
     [SerializeField] private float floorCorrectionSmoothDuration = 0.25f;
 
+    // ── Private: state machine ────────────────────────────────────────────────
+    private ScanState currentScanState = ScanState.Scanning;
+
+    // Scanning bookkeeping
+    private ARPlane scanTrackedPlane;
+    private float   scanTrackedSince     = -1f;
+    private float   scanTrackedStartArea =  0f;
+
+    // Placement
     private GameObject activePrefab;
     private GameObject placedInstance;
-    private ARPlane activePlacementPlane;
-    private ARAnchor activeAnchor;
-    private float floorSnapUntilTime;
-    private float lastKnownFloorY;
+    private ARPlane    activePlacementPlane;
+    private ARAnchor   activeAnchor;
+    private float      floorSnapUntilTime;
+    private float      lastKnownFloorY;
+    private bool       hasPlacedOnce = false;
     private readonly List<ARRaycastHit> hits = new();
-    private bool autoPlaced;
-    private float floorStableSince = -1f;
     private Coroutine spawnCoroutine;
     private Coroutine correctionCoroutine;
 
-    void OnEnable()
-    {
-        EnhancedTouchSupport.Enable();
-    }
+    // ── Unity messages ────────────────────────────────────────────────────────
+    void OnEnable()  => EnhancedTouchSupport.Enable();
 
     void Start()
     {
         if (arCamera == null)
-        {
             arCamera = Camera.main;
-        }
 
         if (anchorManager == null)
-        {
             anchorManager = FindFirstObjectByType<ARAnchorManager>();
-        }
 
         EnsureFurnitureParentInSessionSpace();
 
         if (furniturePrefab != null)
-        {
             SetPrefab(furniturePrefab);
-        }
-
-        placementIndicator?.StopTracking();
-    }
-
-    void LateUpdate()
-    {
-        if (placedInstance == null || Time.time > floorSnapUntilTime)
-        {
-            return;
-        }
-
-        if (!TryGetFloorYAtFootprint(out var floorY))
-        {
-            if (activePlacementPlane != null)
-            {
-                floorY = activePlacementPlane.transform.position.y;
-            }
-            else
-            {
-                floorY = lastKnownFloorY;
-            }
-        }
         else
-        {
-            lastKnownFloorY = floorY;
-        }
-
-        var contactY = ARFurnitureGrounding.GetSupportContactY(placedInstance);
-        if (float.IsPositiveInfinity(contactY))
-        {
-            return;
-        }
-
-        var targetRestingY = floorY - floorContactInset;
-        if (Mathf.Abs(contactY - targetRestingY) > 0.002f)
-        {
-            ARFurnitureGrounding.AlignToFloor(placedInstance, floorY, floorContactInset);
-        }
-    }
-
-    void EnsureFurnitureParentInSessionSpace()
-    {
-        if (furnitureParent == null || raycastManager == null)
-        {
-            return;
-        }
-
-        var sessionRoot = raycastManager.transform;
-        if (furnitureParent.parent == sessionRoot)
-        {
-            return;
-        }
-
-        furnitureParent.SetParent(sessionRoot, true);
-    }
-
-    void UpdatePlacementIndicator(bool isTap, Vector2 screenPoint)
-    {
-        if (placementIndicator == null)
-        {
-            return;
-        }
-
-        if (!autoPlaced)
-        {
-            placementIndicator.StartTracking();
-            return;
-        }
-
-        if (isTap)
-        {
-            placementIndicator.StartTracking(screenPoint);
-            return;
-        }
-
-        if (hideIndicatorAfterPlace)
-        {
-            placementIndicator.StopTracking();
-        }
+            EnterScanningState();
     }
 
     void Update()
     {
-        if (activePrefab == null || raycastManager == null || arCamera == null)
+        if (activePrefab == null || arCamera == null)
+            return;
+
+        switch (currentScanState)
         {
+            case ScanState.Scanning:
+                UpdateScanning();
+                // ALSO handle taps during scanning — if the indicator is already
+                // locked on a valid floor, let the user place immediately rather
+                // than waiting for the full scan timer to expire.
+                if (placementIndicator != null && placementIndicator.IsLockedOnFloor)
+                    UpdateReadyOrPlaced();
+                break;
+
+            case ScanState.ReadyToPlace:
+            case ScanState.Placed:
+                UpdateReadyOrPlaced();
+                break;
+        }
+    }
+
+    // ── SCANNING state ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Tracks the best (lowest-Y) valid horizontal floor plane each frame.
+    /// Fires OnScanProgress and transitions to ReadyToPlace when all criteria met.
+    /// The reticle stays active throughout so the user sees plane feedback.
+    /// </summary>
+    void UpdateScanning()
+    {
+        if (planeManager == null)
+        {
+            Debug.LogWarning("[ARFurniturePlacer] ARPlaneManager not assigned — cannot scan.");
             return;
         }
 
+        // ── Keep the reticle tracking during scanning so the user sees where
+        //    planes are being detected (even though taps do nothing yet).
+        placementIndicator?.StartTracking();
+
+        // ── Find the best (lowest Y) qualifying floor candidate.
+        var cameraY       = arCamera.transform.position.y;
+        ARPlane best      = null;
+        var     bestY     = float.PositiveInfinity;
+
+        foreach (var plane in planeManager.trackables)
+        {
+            if (plane.alignment    != PlaneAlignment.HorizontalUp) continue;
+            if (plane.trackingState != TrackingState.Tracking)     continue;
+
+            var planeY = plane.transform.position.y;
+            if (planeY > cameraY - minDepthBelowCamera)            continue;
+            if (planeY < bestY) { bestY = planeY; best = plane; }
+        }
+
+        if (best == null)
+        {
+            if (scanTrackedPlane != null)
+            {
+                Debug.Log("[ARFurniturePlacer] Scan: lost tracked plane — resetting timer.");
+                ResetScanTracking();
+            }
+            OnScanProgress?.Invoke(0f);
+            return;
+        }
+
+        if (best != scanTrackedPlane)
+        {
+            Debug.Log($"[ARFurniturePlacer] Scan: new candidate plane '{best.trackableId}' Y={bestY:F3}.");
+            scanTrackedPlane     = best;
+            scanTrackedSince     = Time.time;
+            scanTrackedStartArea = best.size.x * best.size.y;
+        }
+
+        var elapsed     = Time.time - scanTrackedSince;
+        var currentArea = best.size.x * best.size.y;
+        var areaGrowth  = currentArea - scanTrackedStartArea;
+
+        // Progress reported as min(time, growth). Guard against zero scanMinAreaGrowth.
+        var timeProgress   = Mathf.Clamp01(elapsed / scanRequiredDuration);
+        var growthProgress = scanMinAreaGrowth > 0f
+            ? Mathf.Clamp01(areaGrowth / scanMinAreaGrowth)
+            : 1f;
+        OnScanProgress?.Invoke(Mathf.Min(timeProgress, growthProgress));
+
+        // Scan completes once the plane is big enough and has been tracked long
+        // enough. Area growth is optional — not all environments allow panning.
+        var areaOk = currentArea >= scanMinArea;
+        var timeOk = elapsed    >= scanRequiredDuration;
+
+        if (areaOk && timeOk)
+        {
+            Debug.Log($"[ARFurniturePlacer] Scan complete — plane '{best.trackableId}' " +
+                      $"area={currentArea:F3} elapsed={elapsed:F2}s.");
+            currentScanState = ScanState.ReadyToPlace;
+            OnSurfaceReady?.Invoke();
+        }
+    }
+
+    // ── READY / PLACED state ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Keeps the reticle tracking from screen center.
+    /// Furniture is ONLY placed when the user taps AND the reticle is locked on
+    /// a valid floor plane. No auto-place timer.
+    /// After initial placement, a tap repositions the furniture.
+    /// </summary>
+    void UpdateReadyOrPlaced()
+    {
         var isTap = TryGetTapPosition(out var tapPoint);
-        var screenPoint = isTap ? tapPoint : GetAutoPlaceScreenPoint();
 
-        UpdatePlacementIndicator(isTap, screenPoint);
-
-        if (!TryGetFloorHit(screenPoint, !isTap, out var hit))
+        // ── Indicator tracking ────────────────────────────────────────────────
+        if (currentScanState == ScanState.ReadyToPlace || !hasPlacedOnce)
         {
-            floorStableSince = -1f;
-            return;
-        }
-
-        if (!autoPlaced)
-        {
-            if (floorStableSince < 0f)
-            {
-                floorStableSince = Time.time;
-            }
-
-            if (Time.time - floorStableSince >= autoPlaceDelay)
-            {
-                PlaceFurniture(hit);
-                autoPlaced = true;
-
-                if (hideIndicatorAfterPlace)
-                {
-                    placementIndicator?.StopTracking();
-                }
-            }
+            // Always track from screen center while waiting for the first placement.
+            placementIndicator?.StartTracking();
         }
         else if (isTap)
         {
-            PlaceFurniture(hit);
-
-            if (hideIndicatorAfterPlace)
-            {
-                placementIndicator?.StopTracking();
-            }
+            // After first placement, show the reticle at the tap point briefly.
+            placementIndicator?.StartTracking(tapPoint);
         }
+        else if (hideIndicatorAfterPlace)
+        {
+            placementIndicator?.StopTracking();
+        }
+
+        // ── Gate placement on tap ───────────────────────────────────────────
+        if (!isTap) return;
+        if (SuppressPlacementInput) return;
+
+        FloorPlacementHit hit;
+        var               gotHit = TryGetPlacementHit(tapPoint, out hit);
+        if (!gotHit) return;
+
+        hit.pose.position = EnforceMinDistance(hit.pose.position);
+        DoPlaceFurniture(hit);
     }
 
     /// <summary>
-    /// Manual height tweak for glossy / low-texture floors where plane Y is unreliable.
-    /// Positive values raise the furniture; negative values lower it.
+    /// First placement uses the locked indicator position.
+    /// Reposition uses tap raycast (indicator may not update same frame).
     /// </summary>
-    public void NudgeVertical(float deltaMeters)
-    {
-        if (placedInstance == null || Mathf.Approximately(deltaMeters, 0f))
-        {
-            return;
-        }
-
-        placedInstance.transform.position += Vector3.up * deltaMeters;
-        RefreshBlobShadow();
-    }
-
-    Vector2 GetAutoPlaceScreenPoint()
-    {
-        return new Vector2(Screen.width * 0.5f, Screen.height * placementScreenY);
-    }
-
-    bool TryGetFloorHit(Vector2 screenPoint, bool enforceMinDistance, out FloorPlacementHit hit)
+    bool TryGetPlacementHit(Vector2 tapPoint, out FloorPlacementHit hit)
     {
         hit = default;
 
-        if (TryGetFloorPoseFromRaycast(screenPoint, minDepthBelowCamera, minFloorArea, out hit.pose, out hit.plane))
+        if (!hasPlacedOnce)
         {
-            if (enforceMinDistance)
+            if (placementIndicator == null || !placementIndicator.IsLockedOnFloor)
             {
-                hit.pose.position = EnforceMinDistance(hit.pose.position);
+                Debug.Log("[ARFurniturePlacer] Tap ignored: point at the floor until the indicator locks.");
+                return false;
             }
 
+            hit = new FloorPlacementHit
+            {
+                pose  = placementIndicator.CurrentPose,
+                plane = placementIndicator.CurrentPlane,
+            };
+            hit.pose.position = placementIndicator.CurrentPose.position;
             return true;
         }
 
-        if (!TryGetAutoPlacePose(out hit.pose, out hit.plane))
+        if (TryGetFloorPoseFromRaycast(tapPoint, minDepthBelowCamera, minFloorArea,
+                out var tapPose, out var tapPlane))
         {
-            return false;
-        }
-
-        if (enforceMinDistance)
-        {
-            hit.pose.position = EnforceMinDistance(hit.pose.position);
-        }
-
-        return true;
-    }
-
-    Vector3 EnforceMinDistance(Vector3 position)
-    {
-        var cameraPos = arCamera.transform.position;
-        var offset = position - cameraPos;
-        offset.y = 0f;
-
-        if (offset.sqrMagnitude >= minAutoPlaceDistance * minAutoPlaceDistance)
-        {
-            return position;
-        }
-
-        var direction = offset.sqrMagnitude > 0.01f
-            ? offset.normalized
-            : GetFlatForward();
-
-        var adjusted = cameraPos + direction * minAutoPlaceDistance;
-        adjusted.y = position.y;
-        return adjusted;
-    }
-
-    Vector3 GetFlatForward()
-    {
-        var forward = arCamera.transform.forward;
-        forward.y = 0f;
-        if (forward.sqrMagnitude < 0.001f)
-        {
-            forward = Vector3.forward;
-        }
-
-        return forward.normalized;
-    }
-
-    bool TryGetAutoPlacePose(out Pose pose, out ARPlane plane)
-    {
-        pose = default;
-        plane = null;
-
-        if (planeManager == null)
-        {
-            return false;
-        }
-
-        var cameraPos = arCamera.transform.position;
-        var cameraY = cameraPos.y;
-        ARPlane bestPlane = null;
-        var bestDistanceSq = float.PositiveInfinity;
-
-        foreach (var trackablePlane in planeManager.trackables)
-        {
-            if (trackablePlane.alignment != PlaneAlignment.HorizontalUp)
-            {
-                Debug.Log($"[ARFurniturePlacer] Auto-place rejected plane '{trackablePlane.trackableId}': not HorizontalUp (alignment={trackablePlane.alignment}).");
-                continue;
-            }
-
-            if (trackablePlane.trackingState != TrackingState.Tracking)
-            {
-                Debug.Log($"[ARFurniturePlacer] Auto-place rejected plane '{trackablePlane.trackableId}': trackingState={trackablePlane.trackingState} (need Tracking).");
-                continue;
-            }
-
-            var planeY = trackablePlane.transform.position.y;
-            if (planeY > cameraY - minDepthBelowCamera)
-            {
-                Debug.Log($"[ARFurniturePlacer] Auto-place rejected plane '{trackablePlane.trackableId}': y={planeY:F3} above min depth (cameraY - minDepth = {cameraY - minDepthBelowCamera:F3}).");
-                continue;
-            }
-
-            var area = trackablePlane.size.x * trackablePlane.size.y;
-            if (area < minFloorArea)
-            {
-                Debug.Log($"[ARFurniturePlacer] Auto-place rejected plane '{trackablePlane.trackableId}': area={area:F3} < minFloorArea={minFloorArea:F3}.");
-                continue;
-            }
-
-            var distanceSq = (trackablePlane.transform.position - cameraPos).sqrMagnitude;
-            if (distanceSq < bestDistanceSq)
-            {
-                bestDistanceSq = distanceSq;
-                bestPlane = trackablePlane;
-            }
-        }
-
-        if (bestPlane == null)
-        {
-            return false;
-        }
-
-        var position = cameraPos + GetFlatForward() * placeDistanceInFront;
-        position.y = bestPlane.transform.position.y;
-
-        pose = new Pose(position, Quaternion.identity);
-        plane = bestPlane;
-        return true;
-    }
-
-    bool TryGetFloorPoseFromRaycast(Vector2 screenPoint, float minDepth, float minArea, out Pose pose, out ARPlane plane)
-    {
-        pose = default;
-        plane = null;
-
-        if (!raycastManager.Raycast(screenPoint, hits, TrackableType.PlaneWithinPolygon))
-        {
-            return false;
-        }
-
-        var cameraY = arCamera.transform.position.y;
-
-        // hits are already sorted nearest-to-farthest by ARRaycastManager — take the first valid hit.
-        foreach (var hit in hits)
-        {
-            if (hit.trackable is not ARPlane hitPlane)
-            {
-                Debug.Log("[ARFurniturePlacer] Rejected raycast hit: trackable is not an ARPlane.");
-                continue;
-            }
-
-            if (hitPlane.alignment != PlaneAlignment.HorizontalUp)
-            {
-                Debug.Log($"[ARFurniturePlacer] Rejected raycast hit on '{hitPlane.trackableId}': not HorizontalUp (alignment={hitPlane.alignment}).");
-                continue;
-            }
-
-            if (hitPlane.trackingState != TrackingState.Tracking)
-            {
-                Debug.Log($"[ARFurniturePlacer] Rejected raycast hit on '{hitPlane.trackableId}': trackingState={hitPlane.trackingState} (need Tracking).");
-                continue;
-            }
-
-            if (Vector3.Dot(hit.pose.up, Vector3.up) < 0.85f)
-            {
-                Debug.Log($"[ARFurniturePlacer] Rejected raycast hit on '{hitPlane.trackableId}': up-dot={Vector3.Dot(hit.pose.up, Vector3.up):F3} < 0.85.");
-                continue;
-            }
-
-            if (hit.pose.position.y > cameraY - minDepth)
-            {
-                Debug.Log($"[ARFurniturePlacer] Rejected raycast hit on '{hitPlane.trackableId}': y={hit.pose.position.y:F3} above min depth (cameraY - minDepth = {cameraY - minDepth:F3}).");
-                continue;
-            }
-
-            var area = hitPlane.size.x * hitPlane.size.y;
-            if (area < minArea)
-            {
-                Debug.Log($"[ARFurniturePlacer] Rejected raycast hit on '{hitPlane.trackableId}': area={area:F3} < minArea={minArea:F3}.");
-                continue;
-            }
-
-            pose = hit.pose;
-            plane = hitPlane;
+            hit = new FloorPlacementHit { pose = tapPose, plane = tapPlane };
             return true;
         }
 
+        if (placementIndicator != null && placementIndicator.IsLockedOnFloor)
+        {
+            hit = new FloorPlacementHit
+            {
+                pose  = placementIndicator.CurrentPose,
+                plane = placementIndicator.CurrentPlane,
+            };
+            hit.pose.position = placementIndicator.CurrentPose.position;
+            return true;
+        }
+
+        Debug.Log("[ARFurniturePlacer] Tap ignored: no valid floor under tap.");
         return false;
     }
 
-    bool TryGetTapPosition(out Vector2 screenPoint)
+    // ── State transitions ─────────────────────────────────────────────────────
+
+    void EnterScanningState()
     {
-        screenPoint = default;
+        currentScanState = ScanState.Scanning;
+        ResetScanTracking();
+        hasPlacedOnce    = false;
 
-        if (Touch.activeTouches.Count > 0)
-        {
-            var touch = Touch.activeTouches[0];
-            if (touch.phase == TouchPhase.Began)
-            {
-                screenPoint = touch.screenPosition;
-                return true;
-            }
-        }
+        // Show the reticle immediately so the user gets plane-detection feedback
+        // even during scanning.
+        placementIndicator?.StartTracking();
 
-        if (Input.touchCount > 0 && Input.GetTouch(0).phase == UnityEngine.TouchPhase.Began)
-        {
-            screenPoint = Input.GetTouch(0).position;
-            return true;
-        }
-
-#if UNITY_EDITOR
-        if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
-        {
-            screenPoint = Mouse.current.position.ReadValue();
-            return true;
-        }
-#endif
-
-        return false;
+        Debug.Log("[ARFurniturePlacer] → SCANNING state.");
+        OnScanStarted?.Invoke();
     }
 
+    void ResetScanTracking()
+    {
+        scanTrackedPlane     = null;
+        scanTrackedSince     = -1f;
+        scanTrackedStartArea =  0f;
+    }
+
+    // ── Public API ────────────────────────────────────────────────────────────
+
+    /// <summary>Assign a new prefab. Clears any placed furniture and restarts scanning.</summary>
     public void SetPrefab(GameObject prefab)
     {
-        if (prefab == null)
-        {
-            return;
-        }
-
+        if (prefab == null) return;
         activePrefab = prefab;
-        autoPlaced = false;
-        floorStableSince = -1f;
         ClearPlacedFurniture();
-        placementIndicator?.StopTracking();
+        EnterScanningState();
     }
 
+    /// <summary>Destroy the currently placed furniture and return to scanning.</summary>
     public void ClearPlacedFurniture()
     {
         StopSpawnAnimation();
         StopFloorCorrection();
         DestroyPlacementAnchor();
         activePlacementPlane = null;
-        floorSnapUntilTime = 0f;
+        floorSnapUntilTime   = 0f;
         ARFurnitureGrounding.ClearBlobShadows(furnitureParent);
 
         if (placedInstance != null)
@@ -491,25 +396,75 @@ public class ARFurniturePlacer : MonoBehaviour
         }
     }
 
-    void StopSpawnAnimation()
+    /// <summary>Manual fine-tuning: move the placed furniture up or down.</summary>
+    public void NudgeVertical(float deltaMeters)
     {
-        if (spawnCoroutine != null)
-        {
-            StopCoroutine(spawnCoroutine);
-            spawnCoroutine = null;
-        }
+        if (placedInstance == null || Mathf.Approximately(deltaMeters, 0f)) return;
+        placedInstance.transform.position += Vector3.up * deltaMeters;
+        RefreshBlobShadow();
     }
 
-    void StopFloorCorrection()
+    /// <summary>
+    /// Projects <paramref name="worldPoint"/> to screen space and raycasts against
+    /// AR planes to find the floor height at that world location.
+    /// Used by ARFurnitureGestureController to re-ground furniture during drag.
+    /// </summary>
+    public bool TryGetFloorHeightAtWorldPoint(Vector3 worldPoint, out float floorY)
     {
-        if (correctionCoroutine != null)
+        floorY = 0f;
+        if (arCamera == null || raycastManager == null) return false;
+
+        var bestY = float.PositiveInfinity;
+        var found = false;
+
+        // Sample the given point and a small cross-pattern around it.
+        var offsets = new[]
         {
-            StopCoroutine(correctionCoroutine);
-            correctionCoroutine = null;
+            Vector3.zero,
+            new Vector3( 0.08f, 0f,  0f),
+            new Vector3(-0.08f, 0f,  0f),
+            new Vector3( 0f,    0f,  0.08f),
+            new Vector3( 0f,    0f, -0.08f),
+        };
+
+        foreach (var off in offsets)
+        {
+            var sampleWorld  = worldPoint + off + Vector3.up * 0.35f;
+            var screenPoint  = (Vector2)arCamera.WorldToScreenPoint(sampleWorld);
+            if (screenPoint.x < 0f || screenPoint.y < 0f ||
+                screenPoint.x > Screen.width || screenPoint.y > Screen.height)
+                continue;
+
+            if (!TryGetFloorPoseFromRaycast(screenPoint, minDepthBelowCamera, minFloorArea,
+                    out var p, out _))
+                continue;
+
+            if (p.position.y < bestY) { bestY = p.position.y; found = true; }
         }
+
+        if (!found) return false;
+        floorY = bestY;
+        return true;
     }
 
-    void PlaceFurniture(FloorPlacementHit hit)
+    /// <summary>Public wrapper so external scripts can refresh the blob shadow.</summary>
+    public void RefreshBlobShadowExternal() => RefreshBlobShadow();
+
+    /// <summary>
+    /// Exposes the floor-contact inset so the gesture controller can pass the
+    /// same value to ARFurnitureGrounding.AlignToFloor.
+    /// </summary>
+    public float FloorContactInset => floorContactInset;
+
+    /// <summary>The currently placed furniture instance (null if none).</summary>
+    public GameObject PlacedInstance => placedInstance;
+
+    /// <summary>Current state (Scanning / ReadyToPlace / Placed).</summary>
+    public ScanState CurrentScanState => currentScanState;
+
+    // ── Placement ─────────────────────────────────────────────────────────────
+
+    void DoPlaceFurniture(FloorPlacementHit hit)
     {
         var prefab = activePrefab ?? furniturePrefab;
         if (prefab == null)
@@ -518,11 +473,29 @@ public class ARFurniturePlacer : MonoBehaviour
             return;
         }
 
-        var pose = hit.pose;
-        var floorY = pose.position.y;
-        lastKnownFloorY = floorY;
-        activePlacementPlane = hit.plane;
-        floorSnapUntilTime = Time.time + continuousFloorSnapDuration;
+        Vector3 indicatorPos;
+        Pose    placePose;
+
+        if (!hasPlacedOnce)
+        {
+            if (placementIndicator == null || !placementIndicator.IsLockedOnFloor)
+            {
+                Debug.Log("[ARFurniturePlacer] Placement blocked: indicator not locked on floor.");
+                return;
+            }
+
+            placePose    = placementIndicator.CurrentPose;
+            indicatorPos = placePose.position;
+        }
+        else
+        {
+            placePose    = hit.pose;
+            indicatorPos = hit.pose.position;
+        }
+
+        lastKnownFloorY      = indicatorPos.y;
+        activePlacementPlane = hit.plane ?? placementIndicator.CurrentPlane;
+        floorSnapUntilTime   = Time.time + continuousFloorSnapDuration;
 
         StopSpawnAnimation();
         StopFloorCorrection();
@@ -530,278 +503,426 @@ public class ARFurniturePlacer : MonoBehaviour
         ARFurnitureGrounding.ClearBlobShadows(furnitureParent);
 
         if (placedInstance != null)
-        {
             Destroy(placedInstance);
-        }
 
-        var prefabEuler = prefab.transform.rotation.eulerAngles;
-        var rotation = Quaternion.Euler(prefabEuler.x, arCamera.transform.eulerAngles.y, prefabEuler.z);
+        var yaw         = arCamera.transform.eulerAngles.y;
+        var rotation    = Quaternion.Euler(0f, yaw, 0f);
         var targetScale = prefab.transform.localScale;
 
-        // 1) Spawn at the captured hit pose (initial plane estimate).
         placedInstance = Instantiate(prefab);
-        placedInstance.transform.SetPositionAndRotation(pose.position, rotation);
+        ARFurniturePrefabCleanup.HideEmbeddedBaseMeshes(placedInstance);
+        placedInstance.transform.SetPositionAndRotation(indicatorPos, rotation);
+        placedInstance.transform.localScale = targetScale;
 
-        if (animateSpawn && spawnDuration > 0f)
-        {
-            placedInstance.transform.localScale = targetScale * spawnStartScaleFactor;
-        }
-        else
-        {
-            ApplyTargetScale(placedInstance, targetScale);
-        }
-
-        // 2) Snap mesh feet to the floor Y from this frame.
-        ARFurnitureGrounding.AlignToFloor(placedInstance, floorY, floorContactInset);
-
-        // 3) Parent to world root — NOT the AR anchor (anchor Y drift was lifting furniture).
         if (furnitureParent != null)
-        {
             placedInstance.transform.SetParent(furnitureParent, true);
-        }
 
-        // Optional plane anchor for tracking only (furniture stays on FurnitureRoot).
-        CreatePlacementAnchor(hit, new Pose(placedInstance.transform.position, Quaternion.identity));
+        CreatePlacementAnchor(hit, new Pose(indicatorPos, rotation));
+        if (activeAnchor != null)
+            placedInstance.transform.SetParent(activeAnchor.transform, true);
 
-        // 4) Blob shadow + spawn animation (unchanged behaviour).
-        if (addBlobShadow && (!animateSpawn || spawnDuration <= 0f))
+        spawnCoroutine = StartCoroutine(
+            FinalizePlacedFurniture(placedInstance, indicatorPos, targetScale, animateSpawn));
+
+        hasPlacedOnce = true;
+        if (currentScanState != ScanState.Placed)
         {
-            RefreshBlobShadow();
+            currentScanState = ScanState.Placed;
+            OnFurniturePlacedEvent?.Invoke();
         }
 
-        if (animateSpawn && spawnDuration > 0f)
-        {
-            spawnCoroutine = StartCoroutine(LerpObjectScale(
-                targetScale * spawnStartScaleFactor,
-                targetScale,
-                spawnDuration,
-                placedInstance,
-                floorY));
-        }
-        else
-        {
-            ApplyTargetScale(placedInstance, targetScale);
-        }
+        if (hideIndicatorAfterPlace)
+            placementIndicator?.StopTracking();
 
-        // 5) After ARCore settles, re-raycast and correct if the plane Y drifted.
-        correctionCoroutine = StartCoroutine(PostPlacementFloorCorrection(floorY));
-
-        Debug.Log($"[ARFurniturePlacer] Placed '{prefab.name}' at distance={Vector3.Distance(arCamera.transform.position, placedInstance.transform.position):F2}m");
+        Debug.Log($"[ARFurniturePlacer] Placed '{prefab.name}' at indicator Y={indicatorPos.y:F3}");
         UnityMessageBridge.SendToApp("furniturePlaced", placedInstance.name);
     }
 
+    // ── Raycast / plane helpers ───────────────────────────────────────────────
+
     /// <summary>
-    /// Creates a plane anchor for AR session tracking. Furniture is NOT parented here
-    /// because anchor Y updates during plane refinement were causing visible floating.
+    /// Raycasts and returns the hit with the LOWEST Y that passes all floor checks.
+    /// Shared logic between indicator, placement, and footprint raycasts.
     /// </summary>
-    void CreatePlacementAnchor(FloorPlacementHit hit, Pose pose)
+    bool TryGetFloorPoseFromRaycast(Vector2 screenPoint, float minDepth, float minArea,
+                                     out Pose pose, out ARPlane plane)
     {
-        if (anchorManager == null || hit.plane == null)
+        pose  = default;
+        plane = null;
+
+        if (raycastManager == null || !raycastManager.Raycast(screenPoint, hits, TrackableType.PlaneWithinPolygon))
+            return false;
+
+        var cameraY      = arCamera.transform.position.y;
+        var bestY        = float.PositiveInfinity;
+        var bestPose     = default(Pose);
+        ARPlane bestPlane = null;
+
+        foreach (var hit in hits)
         {
-            return;
+            if (hit.trackable is not ARPlane hp)                                 continue;
+            if (hp.alignment    != PlaneAlignment.HorizontalUp)                  continue;
+            if (hp.trackingState != TrackingState.Tracking)                      continue;
+            if (Vector3.Dot(hit.pose.up, Vector3.up) < 0.85f)                   continue;
+            if (hit.pose.position.y > cameraY - minDepth)                        continue;
+            if (hp.size.x * hp.size.y < minArea)                                 continue;
+
+            if (hit.pose.position.y < bestY)
+            {
+                bestY     = hit.pose.position.y;
+                bestPose  = hit.pose;
+                bestPlane = hp;
+            }
         }
 
+        if (bestPlane == null) return false;
+
+        Debug.Log($"[ARFurniturePlacer] Raycast → plane '{bestPlane.trackableId}' Y={bestY:F3} " +
+                  $"(lowest of {hits.Count} hits).");
+        pose  = bestPose;
+        plane = bestPlane;
+        return true;
+    }
+
+    /// <summary>
+    /// Scans all tracked planes and returns the lowest-Y one passing all filters.
+    /// Used as a fallback when the screen-center raycast misses.
+    /// </summary>
+    bool TryGetAutoPlacePose(out Pose pose, out ARPlane plane)
+    {
+        pose  = default;
+        plane = null;
+        if (planeManager == null) return false;
+
+        var cameraPos  = arCamera.transform.position;
+        var bestY      = float.PositiveInfinity;
+        ARPlane best   = null;
+
+        foreach (var tp in planeManager.trackables)
+        {
+            if (tp.alignment    != PlaneAlignment.HorizontalUp) continue;
+            if (tp.trackingState != TrackingState.Tracking)     continue;
+            var py = tp.transform.position.y;
+            if (py > cameraPos.y - minDepthBelowCamera)         continue;
+            if (tp.size.x * tp.size.y < minFloorArea)           continue;
+            if (py < bestY) { bestY = py; best = tp; }
+        }
+
+        if (best == null) return false;
+
+        Debug.Log($"[ARFurniturePlacer] Auto-place → plane '{best.trackableId}' Y={bestY:F3}.");
+        var pos  = cameraPos + GetFlatForward() * placeDistanceInFront;
+        pos.y    = best.transform.position.y;
+        pose     = new Pose(pos, Quaternion.identity);
+        plane    = best;
+        return true;
+    }
+
+    Vector3 EnforceMinDistance(Vector3 position)
+    {
+        var cam    = arCamera.transform.position;
+        var offset = position - cam;
+        offset.y   = 0f;
+        if (offset.sqrMagnitude >= minAutoPlaceDistance * minAutoPlaceDistance)
+            return position;
+        var dir    = offset.sqrMagnitude > 0.01f ? offset.normalized : GetFlatForward();
+        var adj    = cam + dir * minAutoPlaceDistance;
+        adj.y      = position.y;
+        return adj;
+    }
+
+    Vector3 GetFlatForward()
+    {
+        var f = arCamera.transform.forward;
+        f.y   = 0f;
+        return f.sqrMagnitude < 0.001f ? Vector3.forward : f.normalized;
+    }
+
+    // ── Input ─────────────────────────────────────────────────────────────────
+
+    bool TryGetTapPosition(out Vector2 screenPoint)
+    {
+        screenPoint = default;
+
+        if (Touch.activeTouches.Count > 0)
+        {
+            var t = Touch.activeTouches[0];
+            if (t.phase == TouchPhase.Began)
+            {
+                if (IsPointerOverUI(t.touchId))
+                    return false;
+
+                screenPoint = t.screenPosition;
+                return true;
+            }
+        }
+
+        if (Input.touchCount > 0 && Input.GetTouch(0).phase == UnityEngine.TouchPhase.Began)
+        {
+            if (IsPointerOverUI(Input.GetTouch(0).fingerId))
+                return false;
+
+            screenPoint = Input.GetTouch(0).position;
+            return true;
+        }
+
+#if UNITY_EDITOR
+        if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
+        {
+            if (IsPointerOverUI())
+                return false;
+
+            screenPoint = Mouse.current.position.ReadValue();
+            return true;
+        }
+#endif
+        return false;
+    }
+
+    static bool IsPointerOverUI(int pointerId = -1)
+    {
+        if (EventSystem.current == null)
+            return false;
+
+        return pointerId >= 0
+            ? EventSystem.current.IsPointerOverGameObject(pointerId)
+            : EventSystem.current.IsPointerOverGameObject();
+    }
+
+    // ── Anchors ───────────────────────────────────────────────────────────────
+
+    void CreatePlacementAnchor(FloorPlacementHit hit, Pose pose)
+    {
+        if (anchorManager == null || hit.plane == null) return;
         activeAnchor = anchorManager.AttachAnchor(hit.plane, pose);
+    }
+
+    IEnumerator FinalizePlacedFurniture(GameObject obj, Vector3 indicatorPos, Vector3 targetScale, bool useSpawnAnimation)
+    {
+        yield return null;
+        yield return new WaitForEndOfFrame();
+        if (obj == null) { spawnCoroutine = null; yield break; }
+
+        var floorPoint = new Vector3(indicatorPos.x, indicatorPos.y, indicatorPos.z);
+        yield return SnapFeetToFloorWhenReady(obj, floorPoint);
+
+        if (useSpawnAnimation)
+        {
+            obj.transform.localScale = Vector3.zero;
+            yield return SpawnScaleAnimation(targetScale, spawnDuration, obj, floorPoint.y);
+        }
+
+        yield return SnapFeetToFloorWhenReady(obj, floorPoint);
+
+        if (addBlobShadow)
+            RefreshBlobShadow();
+
+        correctionCoroutine = StartCoroutine(PostPlacementFloorCorrection(floorPoint.y));
+        spawnCoroutine = null;
+    }
+
+    IEnumerator SnapFeetToFloorWhenReady(GameObject obj, Vector3 floorPoint)
+    {
+        for (var i = 0; i < 10 && obj != null; i++)
+        {
+            if (ARFurnitureGrounding.SnapPivotToFloorPoint(obj, floorPoint, floorContactInset))
+            {
+                var footY = ARFurnitureGrounding.GetSupportContactY(obj);
+                Debug.Log($"[ARFurniturePlacer] Snapped feet to floor footY={footY:F3} pivotY={obj.transform.position.y:F3}");
+                yield break;
+            }
+
+            ARFurnitureGrounding.PlaceFeetOnFloor(obj, floorPoint, floorContactInset, 12);
+            var contactY = ARFurnitureGrounding.GetSupportContactY(obj);
+            if (!float.IsPositiveInfinity(contactY) &&
+                Mathf.Abs(contactY - (floorPoint.y - floorContactInset)) < 0.05f)
+            {
+                Debug.Log($"[ARFurniturePlacer] Feet grounded via iterative snap contactY={contactY:F3}");
+                yield break;
+            }
+
+            yield return null;
+        }
+
+        if (obj != null)
+            Debug.LogWarning("[ARFurniturePlacer] Could not fully ground furniture; kept best-effort position.");
     }
 
     void DestroyPlacementAnchor()
     {
-        if (activeAnchor == null)
-        {
-            return;
-        }
-
+        if (activeAnchor == null) return;
         Destroy(activeAnchor.gameObject);
         activeAnchor = null;
     }
 
+    // ── Coroutines ────────────────────────────────────────────────────────────
+
+    void StopSpawnAnimation()
+    {
+        if (spawnCoroutine    != null) { StopCoroutine(spawnCoroutine);    spawnCoroutine    = null; }
+    }
+
+    void StopFloorCorrection()
+    {
+        if (correctionCoroutine != null) { StopCoroutine(correctionCoroutine); correctionCoroutine = null; }
+    }
+
     /// <summary>
-    /// Waits for ARCore plane refinement, then re-checks floor height at the furniture footprint.
+    /// Gabmeister-style spawn animation:
+    ///   Frame 0:    yield — Unity initialises renderer.bounds.
+    ///   Phase 1 (80% duration): 0% → 110% scale. Pivot stays at floorY — the
+    ///               object "grows from the floor" naturally. NO AlignToFloor
+    ///               during this phase because bounds are unreliable at small scale.
+    ///   Phase 2 (20% duration): 110% → 100% elastic settle.
+    ///   Final:      Set exact target scale, then ONE authoritative AlignToFloor
+    ///               when renderer.bounds are fully valid.
     /// </summary>
+    IEnumerator SpawnScaleAnimation(Vector3 targetScale, float duration, GameObject obj, float initFloorY)
+    {
+        if (obj == null) { yield break; }
+
+        var floorPoint = new Vector3(obj.transform.position.x, initFloorY, obj.transform.position.z);
+        var spawnPos   = obj.transform.position;
+
+        var overshoot    = targetScale * 1.1f;
+        var growDuration = duration * 0.8f;
+        var elapsed      = 0f;
+        var rate         = growDuration > 0f ? 1f / growDuration : 1f;
+
+        while (elapsed < 1f && obj != null)
+        {
+            elapsed += Time.deltaTime * rate;
+            obj.transform.localScale = Vector3.Lerp(Vector3.zero, overshoot,
+                                                    Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed)));
+            obj.transform.position = spawnPos;
+            yield return null;
+        }
+
+        var settleDuration = duration * 0.2f;
+        elapsed = 0f;
+        rate    = settleDuration > 0f ? 1f / settleDuration : 1f;
+
+        while (elapsed < 1f && obj != null)
+        {
+            elapsed += Time.deltaTime * rate;
+            obj.transform.localScale = Vector3.Lerp(overshoot, targetScale,
+                                                    Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed)));
+            yield return null;
+        }
+
+        if (obj != null)
+        {
+            obj.transform.localScale = targetScale;
+            ARFurnitureGrounding.PlaceFeetOnFloor(obj, floorPoint, floorContactInset);
+
+            var contactY = ARFurnitureGrounding.GetSupportContactY(obj);
+            Debug.Log($"[ARFurniturePlacer] Spawn done '{obj.name}' " +
+                      $"floorY={initFloorY:F3} contactY={contactY:F3} " +
+                      $"pivotY={obj.transform.position.y:F3}");
+        }
+    }
+
+    /// <summary>Re-checks floor height at furniture footprint after ARCore settles.</summary>
     IEnumerator PostPlacementFloorCorrection(float initialFloorY)
     {
         var checkpoints = new[] { 0.5f, postPlacementCorrectionDelay, postPlacementCorrectionDelay + 2f };
-        var previousCheckpoint = 0f;
+        var prev        = 0f;
 
-        foreach (var checkpoint in checkpoints)
+        foreach (var cp in checkpoints)
         {
-            yield return new WaitForSeconds(checkpoint - previousCheckpoint);
-            previousCheckpoint = checkpoint;
+            yield return new WaitForSeconds(cp - prev);
+            prev = cp;
 
-            if (placedInstance == null)
-            {
-                correctionCoroutine = null;
-                yield break;
-            }
+            if (placedInstance == null) { correctionCoroutine = null; yield break; }
+            if (!TryGetFloorYAtFootprint(out var corrY))                              continue;
 
-            if (!TryGetFloorYAtFootprint(out var correctedFloorY))
-            {
-                continue;
-            }
+            var restY = ARFurnitureGrounding.GetSupportContactY(placedInstance);
+            if (float.IsPositiveInfinity(restY))                                      continue;
+            if (Mathf.Abs(corrY - (restY + floorContactInset)) <= floorCorrectionThreshold) continue;
 
-            var currentRestingY = ARFurnitureGrounding.GetSupportContactY(placedInstance);
-            if (float.IsPositiveInfinity(currentRestingY))
-            {
-                continue;
-            }
-
-            var currentFloorY = currentRestingY + floorContactInset;
-            if (Mathf.Abs(correctedFloorY - currentFloorY) <= floorCorrectionThreshold)
-            {
-                continue;
-            }
-
-            yield return SmoothAlignToFloor(correctedFloorY, floorCorrectionSmoothDuration);
-            lastKnownFloorY = correctedFloorY;
+            yield return SmoothAlignToFloor(corrY, floorCorrectionSmoothDuration);
+            lastKnownFloorY = corrY;
             RefreshBlobShadow();
-            Debug.Log($"[ARFurniturePlacer] Floor correction {currentFloorY:F3} -> {correctedFloorY:F3}");
+            Debug.Log($"[ARFurniturePlacer] Floor correction → {corrY:F3}");
         }
 
         correctionCoroutine = null;
     }
 
+    // ── Floor Y helpers ───────────────────────────────────────────────────────
+
     bool TryGetFloorYAtFootprint(out float floorY)
     {
         floorY = 0f;
-
-        if (placedInstance == null || arCamera == null || raycastManager == null)
-        {
-            return false;
-        }
-
-        if (!ARFurnitureGrounding.TryGetFootprint(placedInstance, out var footprintCenter, out _, out _))
-        {
-            return false;
-        }
+        if (placedInstance == null || arCamera == null || raycastManager == null) return false;
+        if (!ARFurnitureGrounding.TryGetFootprint(placedInstance, out var center, out _, out _)) return false;
 
         var bestY = float.PositiveInfinity;
         var found = false;
 
-        // Sample a few points above the footprint to survive glossy / low-texture floors.
         var offsets = new[]
         {
             Vector3.zero,
-            new Vector3(0.08f, 0f, 0f),
+            new Vector3( 0.08f, 0f, 0f),
             new Vector3(-0.08f, 0f, 0f),
-            new Vector3(0f, 0f, 0.08f),
+            new Vector3(0f, 0f,  0.08f),
             new Vector3(0f, 0f, -0.08f),
         };
 
-        foreach (var offset in offsets)
+        foreach (var off in offsets)
         {
-            var samplePoint = footprintCenter + offset + Vector3.up * 0.35f;
-            var screenPoint = (Vector2)arCamera.WorldToScreenPoint(samplePoint);
-
-            if (screenPoint.x < 0f || screenPoint.y < 0f
-                || screenPoint.x > Screen.width || screenPoint.y > Screen.height)
-            {
-                continue;
-            }
-
-            if (!TryGetFloorPoseFromRaycast(screenPoint, minDepthBelowCamera, minFloorArea, out var pose, out _))
-            {
-                continue;
-            }
-
-            if (pose.position.y < bestY)
-            {
-                bestY = pose.position.y;
-                found = true;
-            }
+            var sp = (Vector2)arCamera.WorldToScreenPoint(center + off + Vector3.up * 0.35f);
+            if (sp.x < 0f || sp.y < 0f || sp.x > Screen.width || sp.y > Screen.height) continue;
+            if (!TryGetFloorPoseFromRaycast(sp, minDepthBelowCamera, minFloorArea, out var p, out _)) continue;
+            if (p.position.y < bestY) { bestY = p.position.y; found = true; }
         }
 
-        if (!found)
-        {
-            return false;
-        }
-
+        if (!found) return false;
         floorY = bestY;
         return true;
     }
 
-    /// <summary>
-    /// Projects the furniture footprint center to the screen and raycasts against AR planes.
-    /// </summary>
-    bool TryRaycastFloorAtFootprint(out float floorY)
+    IEnumerator SmoothAlignToFloor(float targetY, float duration)
     {
-        return TryGetFloorYAtFootprint(out floorY);
-    }
+        if (placedInstance == null) yield break;
+        var startPos = placedInstance.transform.position;
+        var startLow = ARFurnitureGrounding.GetSupportContactY(placedInstance);
+        if (float.IsPositiveInfinity(startLow)) yield break;
 
-    IEnumerator SmoothAlignToFloor(float targetFloorY, float duration)
-    {
-        if (placedInstance == null)
-        {
-            yield break;
-        }
+        var targetPos  = startPos;
+        targetPos.y   += (targetY - floorContactInset) - startLow;
+        var elapsed    = 0f;
 
-        var startPosition = placedInstance.transform.position;
-        var startLowestY = ARFurnitureGrounding.GetSupportContactY(placedInstance);
-        if (float.IsPositiveInfinity(startLowestY))
-        {
-            yield break;
-        }
-
-        var targetPosition = startPosition;
-        targetPosition.y += (targetFloorY - floorContactInset) - startLowestY;
-
-        var elapsed = 0f;
         while (elapsed < duration && placedInstance != null)
         {
             elapsed += Time.deltaTime;
-            var t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / duration));
-            placedInstance.transform.position = Vector3.Lerp(startPosition, targetPosition, t);
+            var t    = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / duration));
+            placedInstance.transform.position = Vector3.Lerp(startPos, targetPos, t);
             yield return null;
         }
 
         if (placedInstance != null)
         {
-            ARFurnitureGrounding.AlignToFloor(placedInstance, targetFloorY, floorContactInset);
+            var pt = new Vector3(placedInstance.transform.position.x, targetY, placedInstance.transform.position.z);
+            ARFurnitureGrounding.PlaceFeetOnFloor(placedInstance, pt, floorContactInset, 8);
         }
     }
+
+    // ── Misc ──────────────────────────────────────────────────────────────────
 
     void RefreshBlobShadow()
     {
-        if (!addBlobShadow || placedInstance == null)
-        {
-            return;
-        }
-
-        ARFurnitureGrounding.AttachBlobShadow(
-            placedInstance,
-            furnitureParent,
-            blobShadowPrefab,
-            blobShadowScale);
+        if (!addBlobShadow || placedInstance == null) return;
+        ARFurnitureGrounding.AttachBlobShadow(placedInstance, furnitureParent, blobShadowPrefab, blobShadowScale);
     }
 
-    static void ApplyTargetScale(GameObject instance, Vector3 targetScale)
+    void EnsureFurnitureParentInSessionSpace()
     {
-        instance.transform.localScale = targetScale;
+        if (furnitureParent == null || raycastManager == null) return;
+        var root = raycastManager.transform;
+        if (furnitureParent.parent != root)
+            furnitureParent.SetParent(root, true);
     }
 
-    IEnumerator LerpObjectScale(Vector3 from, Vector3 to, float duration, GameObject lerpObject, float initialFloorY)
-    {
-        var elapsed = 0f;
-        var rate = duration > 0f ? 1f / duration : 1f;
-
-        while (elapsed < 1f && lerpObject != null)
-        {
-            elapsed += Time.deltaTime * rate;
-            var t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed));
-            lerpObject.transform.localScale = Vector3.Lerp(from, to, t);
-
-            var floorY = TryGetFloorYAtFootprint(out var y) ? y : initialFloorY;
-            ARFurnitureGrounding.AlignToFloor(lerpObject, floorY, floorContactInset);
-            yield return null;
-        }
-
-        if (lerpObject != null)
-        {
-            lerpObject.transform.localScale = to;
-            var floorY = TryGetFloorYAtFootprint(out var y) ? y : initialFloorY;
-            ARFurnitureGrounding.AlignToFloor(lerpObject, floorY, floorContactInset);
-            RefreshBlobShadow();
-        }
-
-        spawnCoroutine = null;
-    }
+    static void ApplyTargetScale(GameObject go, Vector3 s) => go.transform.localScale = s;
 }

@@ -27,11 +27,6 @@ export const FURNITURE_LIBRARY: FurnitureLibraryItem[] = [
         material: 'fabric',
         styles: ['Modern', 'Contemporary'],
         roomTypes: ['Living Room', 'Lounge'],
-        model3D: {
-            url: '', // Ready for local require('@/assets/models/furniture/sofa-modern.glb') or remote URL
-            format: 'glb',
-            scale: 1.0,
-        },
     },
     {
         id: 'accent-chair',
@@ -45,11 +40,6 @@ export const FURNITURE_LIBRARY: FurnitureLibraryItem[] = [
         material: 'velvet',
         styles: ['Modern', 'Eclectic'],
         roomTypes: ['Living Room', 'Bedroom', 'Office'],
-        model3D: {
-            url: '',
-            format: 'glb',
-            scale: 1.0,
-        },
     },
     {
         id: 'dining-chair',
@@ -73,11 +63,6 @@ export const FURNITURE_LIBRARY: FurnitureLibraryItem[] = [
         material: 'wood',
         styles: ['Modern', 'Minimalist'],
         roomTypes: ['Living Room'],
-        model3D: {
-            url: '',
-            format: 'glb',
-            scale: 1.0,
-        },
     },
     {
         id: 'dining-table',
@@ -110,11 +95,6 @@ export const FURNITURE_LIBRARY: FurnitureLibraryItem[] = [
         material: 'wood',
         styles: ['Classic', 'Modern'],
         roomTypes: ['Office', 'Living Room', 'Library'],
-        model3D: {
-            url: '',
-            format: 'glb',
-            scale: 1.0,
-        },
     },
     {
         id: 'tv-stand',
@@ -147,11 +127,6 @@ export const FURNITURE_LIBRARY: FurnitureLibraryItem[] = [
         material: 'metal',
         styles: ['Modern', 'Industrial'],
         roomTypes: ['Living Room', 'Bedroom', 'Office'],
-        model3D: {
-            url: '',
-            format: 'glb',
-            scale: 1.0,
-        },
     },
     {
         id: 'table-lamp',
@@ -175,11 +150,6 @@ export const FURNITURE_LIBRARY: FurnitureLibraryItem[] = [
         material: 'ceramic',
         styles: ['Bohemian', 'Modern'],
         roomTypes: ['Living Room', 'Balcony', 'Entryway'],
-        model3D: {
-            url: '',
-            format: 'glb',
-            scale: 1.0,
-        },
     },
     {
         id: 'mirror',
