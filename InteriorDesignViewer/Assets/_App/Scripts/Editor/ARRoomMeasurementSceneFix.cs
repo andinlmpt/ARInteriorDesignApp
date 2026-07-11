@@ -222,6 +222,7 @@ public static class ARRoomMeasurementSceneFix
         toggleRect.anchoredPosition = Vector2.zero;
         var toggleBg = toggleGo.AddComponent<Image>();
         toggleBg.color = new Color(0.478f, 0.561f, 0.482f, 0.92f); // accent #7A8F7B Muted Sage
+        ConfigureRoundedImage(toggleBg);
         var toggle = toggleGo.AddComponent<Toggle>();
         toggle.targetGraphic = toggleBg;
         var toggleLabelGo = new GameObject("Label");
@@ -252,6 +253,7 @@ public static class ARRoomMeasurementSceneFix
         heightBannerGoRect.anchoredPosition = Vector2.zero;
         var heightBannerImg = heightBannerGo.AddComponent<Image>();
         heightBannerImg.color = new Color(0.122f, 0.122f, 0.122f, 0.82f); // overlay rgba(31,31,31,0.82)
+        ConfigureRoundedImage(heightBannerImg);
         heightBannerGo.SetActive(false); // hidden until Extruding
 
         // TMP_Text child inside the banner container
@@ -286,6 +288,7 @@ public static class ARRoomMeasurementSceneFix
         toolToggleRect.anchoredPosition = Vector2.zero;
         var toolToggleBg = toolToggleGo.AddComponent<Image>();
         toolToggleBg.color = new Color(0.478f, 0.561f, 0.482f, 0.92f); // accent #7A8F7B Muted Sage
+        ConfigureRoundedImage(toolToggleBg);
         var toolToggle = toolToggleGo.AddComponent<Toggle>();
         toolToggle.targetGraphic = toolToggleBg;
         var toolToggleLabelGo = new GameObject("Label");
@@ -364,6 +367,7 @@ public static class ARRoomMeasurementSceneFix
 
         var image = go.AddComponent<Image>();
         image.color = new Color(0.478f, 0.561f, 0.482f, 0.92f); // accent #7A8F7B Muted Sage
+        ConfigureRoundedImage(image);
 
         var button = go.AddComponent<Button>();
         button.targetGraphic = image;
@@ -385,6 +389,18 @@ public static class ARRoomMeasurementSceneFix
 
         return go;
     }
+
+    static void ConfigureRoundedImage(Image image)
+    {
+        if (image == null) return;
+        var sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+        if (sprite != null)
+        {
+            image.sprite = sprite;
+            image.type = Image.Type.Sliced;
+        }
+    }
+
 
     static GameObject FindRootObject(Scene scene, string name)
     {
