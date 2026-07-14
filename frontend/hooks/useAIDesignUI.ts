@@ -3,7 +3,7 @@
  * Manages UI-related state (filters, sorting, favorites, etc.)
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import type {
   ImageQuality,
   ImageStyle,

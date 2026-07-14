@@ -134,6 +134,12 @@ GameObject:
   - component: {fileID: 521325906}
   - component: {fileID: 521325907}
   - component: {fileID: 521325908}
+  - component: {fileID: 521325914}
+  - component: {fileID: 521325913}
+  - component: {fileID: 521325912}
+  - component: {fileID: 521325911}
+  - component: {fileID: 521325910}
+  - component: {fileID: 521325909}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -157,35 +163,35 @@ MonoBehaviour:
   - id: test-sofa
     displayName: Sofa
     prefab: {fileID: 1727103240953327219, guid: 8664b7a56558ba74ca1b72777f738efb, type: 3}
-    icon: {fileID: 0}
+    icon: {fileID: 21300000, guid: 9964e031a7d4dbc469453febc2bafe8b, type: 3}
   - id: simple-sofa
     displayName: Simple Sofa
     prefab: {fileID: 2154421882036726593, guid: a4d544b18ec2e1340bf910730a01eca4, type: 3}
-    icon: {fileID: 0}
+    icon: {fileID: 21300000, guid: b9a3cff655ae8b74a94424e2998657cc, type: 3}
   - id: modern-chair
     displayName: Modern Chair
     prefab: {fileID: 4904183919999329595, guid: ff2347ad2d874674eb24fd37b11ab521, type: 3}
-    icon: {fileID: 0}
+    icon: {fileID: 21300000, guid: f50276c0191a4b4408e3c99147aa1921, type: 3}
   - id: wood-chair
     displayName: Wood Chair
     prefab: {fileID: 3865862790999712217, guid: 6901ad3280ea07a4a989633e36206053, type: 3}
-    icon: {fileID: 0}
+    icon: {fileID: 21300000, guid: 36bee5234163e404eb38adbfdeb91d54, type: 3}
   - id: dining-chair
     displayName: Dining Chair
-    prefab: {fileID: 3230010106935668783, guid: a1060c68b56f39e4b9cc6e0a7f9b612e, type: 3}
-    icon: {fileID: 0}
+    prefab: {fileID: 919132149155446097, guid: b2d2350175ff66640996d7615461e898, type: 3}
+    icon: {fileID: 21300000, guid: 0f61413534f8aaa469de4bc931b6f2e0, type: 3}
   - id: dining-table
     displayName: Dining Table
     prefab: {fileID: 2445882162939207002, guid: c3ffc5fd4312d684b8e9d1362200fb46, type: 3}
-    icon: {fileID: 0}
+    icon: {fileID: 21300000, guid: d7f5cf647901977429bfcda7467cae97, type: 3}
   - id: side-table
     displayName: Side Table
-    prefab: {fileID: 7071277580240111744, guid: 8933fde99bcd8c94ba7ce936d6a830a9, type: 3}
-    icon: {fileID: 0}
+    prefab: {fileID: 8782459148370197961, guid: 200644434163a8f4ab93ead273fa9bca, type: 3}
+    icon: {fileID: 21300000, guid: 20ee6edd3c9bec5448955f64e91086c2, type: 3}
   - id: bean-bag
     displayName: Bean Bag
     prefab: {fileID: 2520975513715695286, guid: 8bd8b1c107613b641ae7c6093517c941, type: 3}
-    icon: {fileID: 0}
+    icon: {fileID: 21300000, guid: 494694a5a3421e24ba49d1c1b711101c, type: 3}
   defaultPrefab: {fileID: 9182342873134279007, guid: fbcc2ebfcc9ec634e9adba269614a354, type: 3}
 --- !u!114 &521325903
 MonoBehaviour:
@@ -358,6 +364,116 @@ MonoBehaviour:
   fallbackLabelColor: {r: 0.22, g: 0.22, b: 0.22, a: 1}
   utilityIconColor: {r: 0.12, g: 0.12, b: 0.12, a: 1}
   utilityBgColor: {r: 1, g: 1, b: 1, a: 0.94}
+--- !u!114 &521325909
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cb3ade762a1204c4a8e6400207900c19, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ColorPickerUIController
+  wallSelector: {fileID: 0}
+  wallPainter: {fileID: 0}
+  uiPanel: {fileID: 0}
+  presetButtons: []
+  resetButton: {fileID: 0}
+  closeButton: {fileID: 0}
+  presetColors:
+  - {r: 1, g: 1, b: 1, a: 1}
+  - {r: 0.96, g: 0.95, b: 0.9, a: 1}
+  - {r: 0.85, g: 0.85, b: 0.85, a: 1}
+  - {r: 0.68, g: 0.85, b: 0.9, a: 1}
+  - {r: 0.55, g: 0.65, b: 0.55, a: 1}
+  - {r: 0.8, g: 0.45, b: 0.35, a: 1}
+--- !u!114 &521325910
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 391cdfb5698305543995d882832664b0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WallPainter
+  paintMaterialTemplate: {fileID: 0}
+  paintAlpha: 0.8
+  useTransitions: 1
+  transitionDuration: 0.3
+--- !u!114 &521325911
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b5b0b5bf9e4353240ae29db18acaa65c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WallSelector
+  raycastManager: {fileID: 0}
+  arCamera: {fileID: 0}
+  OnWallSelectedEvent:
+    m_PersistentCalls:
+      m_Calls: []
+--- !u!114 &521325912
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fa17d122634046b4a8e23048891fafc5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.XR.ARFoundation::UnityEngine.XR.ARFoundation.ARRaycastManager
+  <trackablesChanged>k__BackingField:
+    m_PersistentCalls:
+      m_Calls: []
+  m_RaycastPrefab: {fileID: 0}
+--- !u!114 &521325913
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e0cb9aa70a22847b5925ee5f067c10a9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.XR.CoreUtils::Unity.XR.CoreUtils.XROrigin
+  m_Camera: {fileID: 0}
+  m_OriginBaseGameObject: {fileID: 521325901}
+  m_CameraFloorOffsetObject: {fileID: 0}
+  m_RequestedTrackingOriginMode: 0
+  m_CameraYOffset: 1.1176
+--- !u!114 &521325914
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fc5c2685502096f48b79ef55c33828bd, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ARModeSwitcher
+  planeManager: {fileID: 0}
+  furniturePlacer: {fileID: 0}
+  gestureController: {fileID: 0}
+  wallSelector: {fileID: 0}
+  wallPainter: {fileID: 0}
+  furnitureUIPanel: {fileID: 0}
+  wallPaintUIPanel: {fileID: 0}
 --- !u!1 &535005051
 GameObject:
   m_ObjectHideFlags: 0

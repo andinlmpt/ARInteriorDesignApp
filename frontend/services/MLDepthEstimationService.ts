@@ -22,10 +22,21 @@
  * final DepthMap on a 64×48 grid (upsampled later).
  */
 
+import type { DepthMap, SpatialPoint } from '@/types/spatial-mapping';
 import * as tf from '@tensorflow/tfjs';
 import * as cocoSsd from '@tensorflow-models/coco-ssd';
-import type { DepthMap, SpatialPoint } from '@/types/spatial-mapping';
-import type { DepthHint, VisionAnalysisResult } from './VisionRoomAnalysisService';
+
+export interface DepthHint {
+  x: number;
+  y: number;
+  depthMeters: number;
+  confidence: number;
+}
+
+export interface VisionAnalysisResult {
+  roomType?: string;
+  depthHints?: DepthHint[];
+}
 
 // ---------------------------------------------------------------------------
 // Known real-world heights for common COCO-SSD classes (metres)

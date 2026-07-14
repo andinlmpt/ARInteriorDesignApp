@@ -235,6 +235,67 @@ public static class ARFurnitureGrounding
         return found;
     }
 
+    public static bool TryGetLocalFurnitureBounds(GameObject root, out Bounds localBounds)
+    {
+        localBounds = new Bounds(Vector3.zero, Vector3.zero);
+        var renderers = root.GetComponentsInChildren<Renderer>();
+        if (renderers == null || renderers.Length == 0) return false;
+
+        var found = false;
+        var rootMatrixInv = root.transform.worldToLocalMatrix;
+
+        foreach (var r in renderers)
+        {
+            if (r == null || !r.enabled || IsBlobShadow(r) || IsIgnoredForGrounding(r.gameObject)) continue;
+
+            Bounds rendererLocalBounds;
+            if (r is MeshRenderer && r.TryGetComponent<MeshFilter>(out var filter) && filter.sharedMesh != null)
+            {
+                rendererLocalBounds = filter.sharedMesh.bounds;
+            }
+            else if (r is SkinnedMeshRenderer smr && smr.sharedMesh != null)
+            {
+                rendererLocalBounds = smr.localBounds;
+            }
+            else
+            {
+                var worldB = r.bounds;
+                var localCenter = rootMatrixInv.MultiplyPoint3x4(worldB.center);
+                var localExtents = rootMatrixInv.MultiplyVector(worldB.extents);
+                rendererLocalBounds = new Bounds(localCenter, localExtents * 2f);
+            }
+
+            var toRootMatrix = rootMatrixInv * r.transform.localToWorldMatrix;
+            var center = rendererLocalBounds.center;
+            var extents = rendererLocalBounds.extents;
+
+            Vector3[] corners = new Vector3[8];
+            corners[0] = center + new Vector3(extents.x, extents.y, extents.z);
+            corners[1] = center + new Vector3(extents.x, extents.y, -extents.z);
+            corners[2] = center + new Vector3(extents.x, -extents.y, extents.z);
+            corners[3] = center + new Vector3(extents.x, -extents.y, -extents.z);
+            corners[4] = center + new Vector3(-extents.x, extents.y, extents.z);
+            corners[5] = center + new Vector3(-extents.x, extents.y, -extents.z);
+            corners[6] = center + new Vector3(-extents.x, -extents.y, extents.z);
+            corners[7] = center + new Vector3(-extents.x, -extents.y, -extents.z);
+
+            foreach (var corner in corners)
+            {
+                var rootSpaceCorner = toRootMatrix.MultiplyPoint3x4(corner);
+                if (!found)
+                {
+                    localBounds = new Bounds(rootSpaceCorner, Vector3.zero);
+                    found = true;
+                }
+                else
+                {
+                    localBounds.Encapsulate(rootSpaceCorner);
+                }
+            }
+        }
+        return found;
+    }
+
     static bool IsIgnoredForGrounding(GameObject go)
     {
         if (go == null) return true;

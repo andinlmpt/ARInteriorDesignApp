@@ -106,6 +106,7 @@ public class MeasurementController : MonoBehaviour
     public int PointCount => placedPoints.Count;
     public bool IsLivePreviewActive { get; private set; }
     public bool IsHeightExtruding => activeTool == MeasurementTool.Height && heightPhase == HeightPhase.Extruding;
+    public bool IsAwaitingNewPair => awaitingNewPair;
 
     // ── Events ────────────────────────────────────────────────────────────────
     public event Action<float> OnTotalDistanceChanged;
@@ -173,25 +174,10 @@ public class MeasurementController : MonoBehaviour
         if (activeTool == MeasurementTool.Distance)
         {
             UpdateLivePreview();
-
-            if (!TryConsumeTap(out _))
-                return;
-
-            if (scanController != null && !scanController.IsScanComplete)
-                return;
-
-            if (placementIndicator == null || !placementIndicator.IsLockedOnFloor)
-            {
-                PublishStatus("Point the reticle at the floor before tapping.");
-                return;
-            }
-
-            PlacePoint(placementIndicator.CurrentPose.position);
         }
         else
         {
             UpdateHeightExtrude();
-            HandleHeightTap();
         }
     }
 
@@ -221,16 +207,90 @@ public class MeasurementController : MonoBehaviour
         PublishStatus(GetToolInstructions());
     }
 
+    // ── Public Trigger APIs for HUD Buttons ───────────────────────────────────
+
+    public bool CanStart()
+    {
+        if (scanController != null && !scanController.IsScanComplete) return false;
+        if (placementIndicator == null || !placementIndicator.IsLockedOnFloor) return false;
+        return true;
+    }
+
+    public void TriggerStart()
+    {
+        if (!CanStart()) return;
+
+        if (activeTool == MeasurementTool.Distance)
+        {
+            PlacePoint(placementIndicator.CurrentPose.position);
+        }
+        else if (activeTool == MeasurementTool.Height && heightPhase == HeightPhase.AwaitingBase)
+        {
+            // Lock base point on the floor
+            heightBasePos = placementIndicator.CurrentPose.position;
+            SpawnHeightBaseMarker(heightBasePos);
+            placementIndicator.StopTracking();
+
+            SetHeightPhase(HeightPhase.Extruding);
+            PublishStatus("Move aim Up to extrude Height.");
+        }
+    }
+
+    public void TriggerFinish()
+    {
+        if (activeTool == MeasurementTool.Distance)
+        {
+            if (placedPoints.Count == 0) return;
+
+            // In Single mode, clicking Finish places the second point at the reticle's current position
+            if (mode == MeasurementMode.Single)
+            {
+                if (placementIndicator != null && placementIndicator.IsLockedOnFloor)
+                {
+                    PlacePoint(placementIndicator.CurrentPose.position);
+                }
+            }
+            else // Chained mode
+            {
+                // Place final point at current reticle position
+                if (placementIndicator != null && placementIndicator.IsLockedOnFloor)
+                {
+                    PlacePoint(placementIndicator.CurrentPose.position);
+                }
+                FinishDistanceChain();
+            }
+        }
+        else if (activeTool == MeasurementTool.Height)
+        {
+            FinishHeightMeasurement();
+        }
+    }
+
+    public void FinishDistanceChain()
+    {
+        if (placedPoints.Count < 2)
+        {
+            ClearAll();
+            return;
+        }
+
+        placedPoints.Clear();
+        awaitingNewPair = false;
+        HideLivePreview();
+        OnPointCountChanged?.Invoke(0);
+        PublishStatus("Measurement completed. Start next measurement.");
+    }
+
     string GetToolInstructions()
     {
         if (activeTool == MeasurementTool.Height)
             return heightPhase == HeightPhase.AwaitingBase
-                ? "Point at the floor, then tap to set the base."
-                : "Move aim Up to extrude Height.";
+                ? "Point at the floor, then tap Start to set the base."
+                : "Move aim Up to extrude Height, then tap Finish.";
 
         return mode == MeasurementMode.Chained
-            ? "Chained mode — tap corners to measure a perimeter."
-            : "Single mode — tap two points per measurement.";
+            ? "Chained mode — tap Start/Add Point to measure, Finish to complete."
+            : "Single mode — tap Start to set start point, Finish to set end point.";
     }
 
     // ── Distance mode ─────────────────────────────────────────────────────────
@@ -434,31 +494,6 @@ public class MeasurementController : MonoBehaviour
         OnHeightPhaseChanged?.Invoke(heightPhase);
     }
 
-    void HandleHeightTap()
-    {
-        if (heightPhase != HeightPhase.AwaitingBase)
-            return;
-
-        if (!TryConsumeTap(out _))
-            return;
-
-        if (scanController != null && !scanController.IsScanComplete)
-            return;
-
-        if (placementIndicator == null || !placementIndicator.IsLockedOnFloor)
-        {
-            PublishStatus("Point the reticle at the floor before tapping.");
-            return;
-        }
-
-        // Lock base point
-        heightBasePos = placementIndicator.CurrentPose.position;
-        SpawnHeightBaseMarker(heightBasePos);
-        placementIndicator.StopTracking();
-
-        SetHeightPhase(HeightPhase.Extruding);
-        PublishStatus("Move aim Up to extrude Height.");
-    }
 
     void UpdateHeightExtrude()
     {

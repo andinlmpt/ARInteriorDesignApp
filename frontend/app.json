@@ -31,7 +31,8 @@
           "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera for room scanning and AR features."
         }
       ],
-      "./plugins/withARSessionNative"
+      "./plugins/withARSessionNative",
+      "./plugins/withUnity"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -132,6 +132,7 @@ export function useThemeImageGeneration({
     try {
       const proposal: DesignProposal = {
         id: theme.id,
+        roomType: selectedRoom || '',
         title: theme.name,
         description: theme.description || '',
         layout: {
@@ -250,6 +251,7 @@ export function useThemeImageGeneration({
     try {
       const proposal: DesignProposal = {
         id: 'custom-design',
+        roomType: selectedRoom || '',
         title: 'Custom Design',
         description: customDesignText.trim(),
         layout: {

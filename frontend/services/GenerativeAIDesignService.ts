@@ -176,6 +176,7 @@ export class GenerativeAIDesignService {
 
     const proposal: DesignProposal = {
       id: `fallback-design-${Date.now()}`,
+      roomType: preferences.roomType,
       title: `${preferences.designStyle || 'Basic'} ${preferences.roomType} Design`,
       description: 'Basic layout generated offline. Connect to server for optimized designs.',
       layout,

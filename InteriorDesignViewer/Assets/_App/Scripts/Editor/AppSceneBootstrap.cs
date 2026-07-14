@@ -307,7 +307,14 @@ public static class AppSceneBootstrap
         rect.anchoredPosition = Vector2.zero;
 
         var image = go.AddComponent<Image>();
-        image.color = new Color(0.08f, 0.14f, 0.24f, 0.92f);
+        image.color = new Color(0.478f, 0.561f, 0.482f, 0.92f); // accent #7A8F7B Muted Sage
+
+        var sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+        if (sprite != null)
+        {
+            image.sprite = sprite;
+            image.type = Image.Type.Sliced;
+        }
 
         var button = go.AddComponent<Button>();
         button.targetGraphic = image;
@@ -329,6 +336,16 @@ public static class AppSceneBootstrap
         return go;
     }
 
+    [MenuItem("AR Interior/Repair MainMenu Scene", false, 8)]
+    public static void RepairMainMenuScene()
+    {
+        CreateMainMenuScene();
+        EditorUtility.DisplayDialog(
+            "AR Interior",
+            "MainMenu scene rebuilt and styled to match the color palette.",
+            "OK");
+    }
+
     static void CreateMainMenuScene()
     {
         if (File.Exists(MainMenuScenePath))
@@ -343,23 +360,54 @@ public static class AppSceneBootstrap
 
         var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
 
+        // Style the Main Camera to use solid Warm Ivory background instead of skybox
+        var mainCam = Camera.main;
+        if (mainCam != null)
+        {
+            mainCam.clearFlags = CameraClearFlags.SolidColor;
+            mainCam.backgroundColor = new Color(0.980f, 0.976f, 0.969f, 1f); // Warm Ivory #FAF9F7
+        }
+
         var canvasGo = new GameObject("MainMenuCanvas");
         var canvas = canvasGo.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvasGo.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         canvasGo.AddComponent<GraphicRaycaster>();
 
+        // Create gradient background panel matching the login page aesthetic
+        var bgGo = new GameObject("BackgroundPanel");
+        bgGo.transform.SetParent(canvasGo.transform, false);
+        var bgRect = bgGo.AddComponent<RectTransform>();
+        bgRect.anchorMin = Vector2.zero;
+        bgRect.anchorMax = Vector2.one;
+        bgRect.offsetMin = Vector2.zero;
+        bgRect.offsetMax = Vector2.zero;
+        var bgImg = bgGo.AddComponent<Image>();
+        bgImg.color = Color.white;
+        var gradient = bgGo.AddComponent<UIGradient>();
+        gradient.ColorTop = new Color(0.773f, 0.827f, 0.780f, 1f);    // Soft Sage #C5D3C7
+        gradient.ColorBottom = new Color(0.980f, 0.976f, 0.969f, 1f); // Warm Ivory #FAF9F7
+        bgGo.transform.SetAsFirstSibling();
+
         var controllerGo = new GameObject("MainMenuController");
         var controller = controllerGo.AddComponent<MainMenuController>();
 
-        var title = CreateHudText(canvasGo.transform, "Title", new Vector2(0.5f, 0.72f),
+        // Title text using Soft Black #1F1F1F centered and offset upwards
+        var title = CreateHudText(canvasGo.transform, "Title", new Vector2(0.5f, 0.5f),
             new Vector2(500f, 60f), 34, "AR Interior Design");
+        title.rectTransform.anchoredPosition = new Vector2(0f, 180f);
+        title.color = new Color(0.122f, 0.122f, 0.122f, 1f);
         title.fontStyle = FontStyles.Bold;
 
-        var furnitureBtn = CreateHudButton(canvasGo.transform, "FurnitureButton", new Vector2(0.5f, 0.52f),
-            new Vector2(320f, 56f), "Place Furniture");
-        var measureBtn = CreateHudButton(canvasGo.transform, "MeasurementButton", new Vector2(0.5f, 0.40f),
-            new Vector2(320f, 56f), "Measure Room");
+        // Place Furniture button offset 50px above center
+        var furnitureBtn = CreateHudButton(canvasGo.transform, "FurnitureButton", new Vector2(0.5f, 0.5f),
+            new Vector2(360f, 64f), "Place Furniture");
+        furnitureBtn.GetComponent<RectTransform>().anchoredPosition = new Vector2(0f, 50f);
+
+        // Measure Room button offset 50px below center
+        var measureBtn = CreateHudButton(canvasGo.transform, "MeasurementButton", new Vector2(0.5f, 0.5f),
+            new Vector2(360f, 64f), "Measure Room");
+        measureBtn.GetComponent<RectTransform>().anchoredPosition = new Vector2(0f, -50f);
 
         var controllerSo = new SerializedObject(controller);
         controllerSo.FindProperty("furnitureButton").objectReferenceValue = furnitureBtn.GetComponent<Button>();

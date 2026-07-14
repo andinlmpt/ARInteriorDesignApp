@@ -126,6 +126,7 @@ public class ARFurnitureGestureController : MonoBehaviour
                     ARFurniturePlacer.SuppressPlacementInput = true;
                     if (verboseLogging)
                         Debug.Log("[ARFurnitureGestureController] Drag started.");
+                    SetOutlineVisible(furniture, true);
                 }
 
                 MoveFurniture(furniture, touch.delta);
@@ -164,6 +165,8 @@ public class ARFurnitureGestureController : MonoBehaviour
 
             if (verboseLogging)
                 Debug.Log("[ARFurnitureGestureController] Two-finger gesture started.");
+
+            SetOutlineVisible(furniture, true);
         }
 
         ApplyPinchScale(furniture, distance);
@@ -256,10 +259,32 @@ public class ARFurnitureGestureController : MonoBehaviour
 
     void ClearGestureState()
     {
+        if (trackedFurniture != null)
+        {
+            SetOutlineVisible(trackedFurniture, false);
+        }
         isDragging       = false;
         isTwoFinger      = false;
         dragEligible     = false;
         trackedFurniture = null;
+    }
+
+    void SetOutlineVisible(GameObject furniture, bool visible)
+    {
+        if (furniture == null) return;
+        var outline = furniture.GetComponent<ARDragOutline>();
+        if (outline == null && visible)
+        {
+            outline = furniture.AddComponent<ARDragOutline>();
+            if (ARFurnitureGrounding.TryGetLocalFurnitureBounds(furniture, out var localBounds))
+            {
+                outline.SetupOutline(localBounds);
+            }
+        }
+        if (outline != null)
+        {
+            outline.SetVisible(visible);
+        }
     }
 
     static bool IsPointerOverUI(int pointerId)

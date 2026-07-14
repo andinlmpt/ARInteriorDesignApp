@@ -58,6 +58,7 @@ public class ARFurniturePickerUI : MonoBehaviour
     string selectedEntryId;
     bool   gridVisible = true;
     Image  gridButtonBg;
+    GameObject uiCanvasInstance;
 
     sealed class IconButton
     {
@@ -71,6 +72,14 @@ public class ARFurniturePickerUI : MonoBehaviour
 
     void Awake()
     {
+        // Enforce larger icon sizes and container height programmatically for premium visibility
+        iconSize         = 136f;
+        scrollBarHeight  = 172f;
+        bottomMargin     = 32f;
+        utilityButtonSize = 96f;
+        utilityButtonGap  = 20f;
+        sideMargin        = 32f;
+
         if (catalog == null)            catalog            = FindFirstObjectByType<FurnitureCatalog>();
         if (placer == null)             placer             = FindFirstObjectByType<ARFurniturePlacer>();
         if (placementIndicator == null) placementIndicator = FindFirstObjectByType<ARPlacementIndicator>();
@@ -99,6 +108,7 @@ public class ARFurniturePickerUI : MonoBehaviour
         EnsureEventSystem();
 
         var canvasGo = new GameObject("ARFurnitureUI");
+        uiCanvasInstance = canvasGo;
         var canvas   = canvasGo.AddComponent<Canvas>();
         canvas.renderMode   = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 100;
@@ -535,5 +545,13 @@ public class ARFurniturePickerUI : MonoBehaviour
         for (var x = x0; x <= x1; x++)
             if (x >= 0 && x < tex.width && y >= 0 && y < tex.height)
                 tex.SetPixel(x, y, color);
+    }
+
+    public void SetVisible(bool visible)
+    {
+        if (uiCanvasInstance != null)
+        {
+            uiCanvasInstance.SetActive(visible);
+        }
     }
 }

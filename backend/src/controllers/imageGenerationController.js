@@ -272,7 +272,7 @@ async function performPexelsSearch(query, proposal, res) {
             return res.json({
               success: true,
               photos: enhancedPhotos,
-              imageUrl: bestPhoto.src.large,
+              imageUrl: bestPhoto.src.medium,
               thumbnailUrl: bestPhoto.src.medium,
               prompt: currentQuery,
               generatedAt: Date.now(),

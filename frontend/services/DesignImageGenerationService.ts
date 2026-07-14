@@ -74,6 +74,7 @@ export class DesignImageGenerationService {
         message?: string;
       }>('/images/generate', {
         method: 'POST',
+        timeoutMs: 60000, // 60 seconds timeout for image generation
         body: {
           proposal: {
             id: proposal.id,

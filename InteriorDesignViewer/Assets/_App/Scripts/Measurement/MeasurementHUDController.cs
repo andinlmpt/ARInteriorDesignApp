@@ -23,14 +23,18 @@ public class MeasurementHUDController : MonoBehaviour
     [SerializeField] private Button undoButton;
 
     [Header("UI — Distance tool")]
-    [SerializeField] private TMP_Text totalDistanceText;
     [SerializeField] private TMP_Text liveDistanceText;
-    [SerializeField] private Toggle modeToggle;
+
+    [Header("UI — Mode & Tool Dropdown")]
+    [SerializeField] private TMP_Dropdown modeDropdown;      // Options: 0=Horizontal Single, 1=Horizontal Chained, 2=Vertical Height
 
     [Header("UI — Height tool")]
     [SerializeField] private TMP_Text heightInstructionText;  // text child inside banner
     [SerializeField] private GameObject heightBannerRoot;      // parent container (Image bg + text); toggled to show/hide
-    [SerializeField] private Button finishHeightButton;        // visible only while Extruding
+
+    [Header("UI — Action Buttons")]
+    [SerializeField] private Button startButton;              // Start/Add Point button
+    [SerializeField] private Button finishButton;             // Finish button
 
     [Header("UI — Tool toggle")]
     [SerializeField] private Toggle toolToggle;                // off=Distance, on=Height
@@ -73,11 +77,23 @@ public class MeasurementHUDController : MonoBehaviour
             measurementController.OnHeightPhaseChanged += HandleHeightPhaseChanged;
         }
 
-        if (modeToggle != null)
-            modeToggle.onValueChanged.AddListener(HandleModeToggle);
-
-        if (toolToggle != null)
-            toolToggle.onValueChanged.AddListener(HandleToolToggle);
+        if (modeDropdown != null)
+        {
+            modeDropdown.ClearOptions();
+            modeDropdown.AddOptions(new System.Collections.Generic.List<string> { "Single Measurement", "Chained / Perimeter", "Height Measurement" });
+            modeDropdown.onValueChanged.AddListener(HandleDropdownChanged);
+            
+            // Set initial state
+            int initialVal = 0;
+            if (measurementController != null)
+            {
+                if (measurementController.ActiveTool == MeasurementController.MeasurementTool.Height)
+                    initialVal = 2;
+                else
+                    initialVal = measurementController.Mode == MeasurementController.MeasurementMode.Chained ? 1 : 0;
+            }
+            modeDropdown.value = initialVal;
+        }
 
         if (clearButton != null)
             clearButton.onClick.AddListener(OnClearPressed);
@@ -85,16 +101,18 @@ public class MeasurementHUDController : MonoBehaviour
         if (undoButton != null)
             undoButton.onClick.AddListener(OnUndoPressed);
 
-        if (finishHeightButton != null)
-            finishHeightButton.onClick.AddListener(OnFinishHeightPressed);
+        if (startButton != null)
+            startButton.onClick.AddListener(OnStartPressed);
+
+        if (finishButton != null)
+            finishButton.onClick.AddListener(OnFinishPressed);
 
         RefreshTotalLabel(0f);
-        RefreshLiveLabel(0f, false);
-        UpdateModeToggleLabel();
+        if (liveDistanceText != null) liveDistanceText.text = string.Empty;
         SetControlsVisible(scanController == null || scanController.IsScanComplete);
         RefreshToolUI(MeasurementController.MeasurementTool.Distance);
-        SetFinishButtonVisible(false);
         SetHeightBannerVisible(false);
+        RefreshActionButtons();
     }
 
     void OnDisable()
@@ -116,11 +134,8 @@ public class MeasurementHUDController : MonoBehaviour
             measurementController.OnHeightPhaseChanged -= HandleHeightPhaseChanged;
         }
 
-        if (modeToggle != null)
-            modeToggle.onValueChanged.RemoveListener(HandleModeToggle);
-
-        if (toolToggle != null)
-            toolToggle.onValueChanged.RemoveListener(HandleToolToggle);
+        if (modeDropdown != null)
+            modeDropdown.onValueChanged.RemoveListener(HandleDropdownChanged);
 
         if (clearButton != null)
             clearButton.onClick.RemoveListener(OnClearPressed);
@@ -128,8 +143,11 @@ public class MeasurementHUDController : MonoBehaviour
         if (undoButton != null)
             undoButton.onClick.RemoveListener(OnUndoPressed);
 
-        if (finishHeightButton != null)
-            finishHeightButton.onClick.RemoveListener(OnFinishHeightPressed);
+        if (startButton != null)
+            startButton.onClick.RemoveListener(OnStartPressed);
+
+        if (finishButton != null)
+            finishButton.onClick.RemoveListener(OnFinishPressed);
     }
 
     // ── Scan events ───────────────────────────────────────────────────────────
@@ -143,6 +161,7 @@ public class MeasurementHUDController : MonoBehaviour
     void HandleScanPhaseChanged(MeasurementScanController.ScanPhase phase)
     {
         SetControlsVisible(phase == MeasurementScanController.ScanPhase.Ready);
+        RefreshActionButtons();
     }
 
     // ── Measurement events ────────────────────────────────────────────────────
@@ -163,7 +182,12 @@ public class MeasurementHUDController : MonoBehaviour
         if (measurementController == null || measurementController.ActiveTool != MeasurementController.MeasurementTool.Distance)
             return;
 
-        RefreshLiveLabel(liveMeters, measurementController.IsLivePreviewActive);
+        if (liveDistanceText != null)
+        {
+            liveDistanceText.text = measurementController.IsLivePreviewActive
+                ? MeasurementController.FormatLive(liveMeters)
+                : string.Empty;
+        }
     }
 
     void HandlePointCountChanged(int pointCount)
@@ -173,6 +197,7 @@ public class MeasurementHUDController : MonoBehaviour
         {
             undoButton.interactable = pointCount > 0;
         }
+        RefreshActionButtons();
     }
 
     void HandleLiveHeightChanged(float heightMeters)
@@ -188,8 +213,8 @@ public class MeasurementHUDController : MonoBehaviour
     void HandleHeightPhaseChanged(MeasurementController.HeightPhase phase)
     {
         bool extruding = phase == MeasurementController.HeightPhase.Extruding;
-        SetFinishButtonVisible(extruding);
         SetHeightBannerVisible(extruding);
+        RefreshActionButtons();
 
         if (undoButton != null)
             undoButton.interactable = true; // always allow undo in height mode
@@ -197,43 +222,54 @@ public class MeasurementHUDController : MonoBehaviour
 
     // ── Button / toggle handlers ──────────────────────────────────────────────
 
-    void HandleModeToggle(bool isChained)
+    void HandleDropdownChanged(int index)
     {
         if (measurementController == null) return;
 
-        measurementController.SetMode(isChained
-            ? MeasurementController.MeasurementMode.Chained
-            : MeasurementController.MeasurementMode.Single);
+        // Reset measurement states when switching modes
+        measurementController.ClearAll();
 
-        UpdateModeToggleLabel();
-    }
+        if (index == 0)
+        {
+            measurementController.SetTool(MeasurementController.MeasurementTool.Distance);
+            measurementController.SetMode(MeasurementController.MeasurementMode.Single);
+        }
+        else if (index == 1)
+        {
+            measurementController.SetTool(MeasurementController.MeasurementTool.Distance);
+            measurementController.SetMode(MeasurementController.MeasurementMode.Chained);
+        }
+        else if (index == 2)
+        {
+            measurementController.SetTool(MeasurementController.MeasurementTool.Height);
+        }
 
-    void HandleToolToggle(bool isHeight)
-    {
-        if (measurementController == null) return;
-
-        measurementController.SetTool(isHeight
-            ? MeasurementController.MeasurementTool.Height
-            : MeasurementController.MeasurementTool.Distance);
+        RefreshActionButtons();
     }
 
     void OnClearPressed()
     {
         measurementController?.ClearAll();
-        SetFinishButtonVisible(false);
         SetHeightBannerVisible(false);
+        RefreshActionButtons();
     }
 
     void OnUndoPressed()
     {
         measurementController?.UndoLastPoint();
+        RefreshActionButtons();
     }
 
-    void OnFinishHeightPressed()
+    void OnStartPressed()
     {
-        measurementController?.FinishHeightMeasurement();
-        SetFinishButtonVisible(false);
-        SetHeightBannerVisible(false);
+        measurementController?.TriggerStart();
+        RefreshActionButtons();
+    }
+
+    void OnFinishPressed()
+    {
+        measurementController?.TriggerFinish();
+        RefreshActionButtons();
     }
 
     // ── UI visibility helpers ─────────────────────────────────────────────────
@@ -242,26 +278,17 @@ public class MeasurementHUDController : MonoBehaviour
     {
         bool isDistance = tool == MeasurementController.MeasurementTool.Distance;
 
-        if (totalDistanceText != null)
-            totalDistanceText.gameObject.SetActive(isDistance);
-
         if (liveDistanceText != null)
             liveDistanceText.gameObject.SetActive(isDistance);
 
-        if (modeToggle != null)
-            modeToggle.gameObject.SetActive(isDistance);
+        if (modeDropdown != null)
+            modeDropdown.gameObject.SetActive(true); // always show dropdown
 
         // Hide height UI when in distance mode
         if (!isDistance) return;
 
-        SetFinishButtonVisible(false);
         SetHeightBannerVisible(false);
-    }
-
-    void SetFinishButtonVisible(bool visible)
-    {
-        if (finishHeightButton != null)
-            finishHeightButton.gameObject.SetActive(visible);
+        RefreshActionButtons();
     }
 
     void SetHeightBannerVisible(bool visible)
@@ -280,35 +307,109 @@ public class MeasurementHUDController : MonoBehaviour
 
         if (scanHintText != null) scanHintText.gameObject.SetActive(visible);
         if (statusText != null) statusText.gameObject.SetActive(visible);
-        if (totalDistanceText != null) totalDistanceText.gameObject.SetActive(visible);
         if (liveDistanceText != null) liveDistanceText.gameObject.SetActive(visible);
     }
 
     void RefreshTotalLabel(float totalMeters)
     {
-        if (totalDistanceText == null) return;
-
-        totalDistanceText.text = totalMeters > 0f
-            ? $"Total: {MeasurementController.FormatMeters(totalMeters)}"
-            : "Total: —";
+        // Removed total label support
     }
 
-    void RefreshLiveLabel(float liveMeters, bool active)
-    {
-        if (liveDistanceText == null) return;
 
-        liveDistanceText.text = active
-            ? MeasurementController.FormatLive(liveMeters)
-            : string.Empty;
+    // ── Dynamic button management ─────────────────────────────────────────────
+
+    void RefreshActionButtons()
+    {
+        if (measurementController == null) return;
+
+        // Hide action buttons during initial scanning
+        if (scanController != null && !scanController.IsScanComplete)
+        {
+            if (startButton != null) startButton.gameObject.SetActive(false);
+            if (finishButton != null) finishButton.gameObject.SetActive(false);
+            return;
+        }
+
+        bool isDistance = measurementController.ActiveTool == MeasurementController.MeasurementTool.Distance;
+
+        if (isDistance)
+        {
+            int pointCount = measurementController.PointCount;
+            bool isSingle = measurementController.Mode == MeasurementController.MeasurementMode.Single;
+            bool awaitingNewPair = measurementController.IsAwaitingNewPair;
+
+            if (pointCount == 0 || (isSingle && awaitingNewPair))
+            {
+                SetButtonState(startButton, true, "Start");
+                SetButtonState(finishButton, false);
+            }
+            else
+            {
+                if (isSingle)
+                {
+                    SetButtonState(startButton, false);
+                    SetButtonState(finishButton, true, "Finish");
+                }
+                else // Chained
+                {
+                    SetButtonState(startButton, true, "Add Point");
+                    SetButtonState(finishButton, true, "Finish");
+                }
+            }
+        }
+        else // Height tool
+        {
+            var phase = measurementController.CurrentHeightPhase;
+
+            if (phase == MeasurementController.HeightPhase.AwaitingBase)
+            {
+                SetButtonState(startButton, true, "Start");
+                SetButtonState(finishButton, false);
+            }
+            else if (phase == MeasurementController.HeightPhase.Extruding)
+            {
+                SetButtonState(startButton, false);
+                SetButtonState(finishButton, true, "Finish");
+            }
+            else
+            {
+                SetButtonState(startButton, false);
+                SetButtonState(finishButton, false);
+            }
+        }
+
+        // Adjust horizontal layout dynamically:
+        // - If both buttons are active (e.g. in Chained Mode), place them side-by-side with offset.
+        // - If only one button is active, center it perfectly at X = 0.
+        if (startButton != null && finishButton != null)
+        {
+            var startActive = startButton.gameObject.activeSelf;
+            var finishActive = finishButton.gameObject.activeSelf;
+            var startRect = startButton.GetComponent<RectTransform>();
+            var finishRect = finishButton.GetComponent<RectTransform>();
+
+            if (startActive && finishActive)
+            {
+                if (startRect != null) startRect.anchoredPosition = new Vector2(-130f, startRect.anchoredPosition.y);
+                if (finishRect != null) finishRect.anchoredPosition = new Vector2(130f, finishRect.anchoredPosition.y);
+            }
+            else
+            {
+                if (startRect != null) startRect.anchoredPosition = new Vector2(0f, startRect.anchoredPosition.y);
+                if (finishRect != null) finishRect.anchoredPosition = new Vector2(0f, finishRect.anchoredPosition.y);
+            }
+        }
     }
 
-    void UpdateModeToggleLabel()
+    void SetButtonState(Button button, bool visible, string labelText = null)
     {
-        if (modeToggle == null) return;
-
-        var label = modeToggle.GetComponentInChildren<TMP_Text>();
-        if (label == null) return;
-
-        label.text = modeToggle.isOn ? chainedModeLabel : singleModeLabel;
+        if (button == null) return;
+        button.gameObject.SetActive(visible);
+        if (visible && labelText != null)
+        {
+            var label = button.GetComponentInChildren<TMP_Text>();
+            if (label != null) label.text = labelText;
+        }
     }
 }
+

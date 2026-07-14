@@ -112,6 +112,7 @@ export function useAIDesignGeneration() {
     retryCount,
     handleGenerate,
     setDesignHistory,
+    setGeneratedDesigns,
   }), [
     isGenerating,
     generatedDesigns,
@@ -119,6 +120,8 @@ export function useAIDesignGeneration() {
     designHistory,
     retryCount,
     handleGenerate,
+    setDesignHistory,
+    setGeneratedDesigns,
   ]);
 }
 

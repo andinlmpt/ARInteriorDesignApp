@@ -16,8 +16,6 @@ export type ScreenName =
   | '(tabs)'
   | 'ai-design'
   | 'theme-recommend'
-  | 'spatial-mapping'
-  | 'live-scan'
   | 'ar-view'
   | 'layout-3d'
   | 'create-project';
@@ -126,18 +124,6 @@ export const NAVIGATION_SCREENS: Record<string, ScreenConfig[]> = {
 
   // AR & Spatial Features
   arSpatial: [
-    {
-      name: 'spatial-mapping',
-      options: {
-        ...ANIMATION_PRESETS.slideRight,
-      },
-    },
-    {
-      name: 'live-scan',
-      options: {
-        ...ANIMATION_PRESETS.slideRight,
-      },
-    },
     {
       name: 'ar-view',
       options: {

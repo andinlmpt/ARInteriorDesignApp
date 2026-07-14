@@ -714,6 +714,15 @@ public class ARFurniturePlacer : MonoBehaviour
 
         yield return SnapFeetToFloorWhenReady(obj, floorPoint);
 
+        if (obj != null && obj.GetComponent<ARDragOutline>() == null)
+        {
+            var outline = obj.AddComponent<ARDragOutline>();
+            if (ARFurnitureGrounding.TryGetLocalFurnitureBounds(obj, out var localBounds))
+            {
+                outline.SetupOutline(localBounds);
+            }
+        }
+
         if (addBlobShadow)
             RefreshBlobShadow();
 

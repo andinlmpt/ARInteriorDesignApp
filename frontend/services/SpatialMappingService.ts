@@ -410,6 +410,7 @@ export class SpatialMappingService {
    */
   private create3DSpatialMap(planes: DetectedPlane[], roomData: RoomData): SpatialMap3D {
     const { width, length, height } = roomData.dimensions;
+    const points = planes.flatMap(p => p.points);
 
     // Create 3D mesh from planes
     const mesh = {
