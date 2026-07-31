@@ -129,25 +129,27 @@ export default function HomeScreen() {
                   <Ionicons name="cube" size={36} color={t.accent} />
                 </View>
                 <View style={styles.brandingText}>
-                  <AppText variant="h2" weight="700" style={[styles.appName, { color: t.textPrimary }]}>
-                    AR Interior Design
-                  </AppText>
+                  <View style={styles.titleRow}>
+                    <AppText variant="h2" weight="700" style={[styles.appName, { color: t.textPrimary }]}>
+                      AR Interior Design
+                    </AppText>
+                    <View style={styles.headerActions}>
+                      <Button onPress={toggleTheme} activeScale={0.9}>
+                        <View style={[styles.headerBtn, { backgroundColor: t.surfacePrimary }]}>
+                          <Ionicons name={isDark ? 'sunny' : 'moon'} size={20} color={t.textSecondary} />
+                        </View>
+                      </Button>
+                      <Button activeScale={0.9}>
+                        <View style={[styles.headerBtn, { backgroundColor: t.surfacePrimary }]}>
+                          <Ionicons name="notifications-outline" size={20} color={t.textSecondary} />
+                          <View style={[styles.dot, { backgroundColor: t.accent }]} />
+                        </View>
+                      </Button>
+                    </View>
+                  </View>
                   <AppText variant="caption" style={[styles.appTagline, { color: t.textSecondary }]}>
                     Design your space with AR
                   </AppText>
-                </View>
-                <View style={styles.headerActions}>
-                  <Button onPress={toggleTheme} activeScale={0.9}>
-                    <View style={[styles.headerBtn, { backgroundColor: t.surfacePrimary }]}>
-                      <Ionicons name={isDark ? 'sunny' : 'moon'} size={20} color={t.textSecondary} />
-                    </View>
-                  </Button>
-                  <Button activeScale={0.9}>
-                    <View style={[styles.headerBtn, { backgroundColor: t.surfacePrimary }]}>
-                      <Ionicons name="notifications-outline" size={20} color={t.textSecondary} />
-                      <View style={[styles.dot, { backgroundColor: t.accent }]} />
-                    </View>
-                  </Button>
                 </View>
               </View>
             </FadeInView>
@@ -338,7 +340,7 @@ const styles = StyleSheet.create({
 
   // Header
   header: {
-    marginTop: spacing.xs,
+    marginTop: spacing.md, // Increased to provide breathing room from the status bar
     marginBottom: spacing.lg,
     paddingHorizontal: spacing.xs,
   },
@@ -357,14 +359,21 @@ const styles = StyleSheet.create({
   },
   brandingText: {
     flex: 1,
+    justifyContent: 'center',
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
   },
   appName: {
     fontSize: 20,
     letterSpacing: 0.3,
-    marginBottom: spacing.xs / 2,
   },
   appTagline: {
     fontSize: 12,
+    marginTop: 2, // Spacing directly below the title line
   },
   headerContentRow: {
     flexDirection: 'row',
