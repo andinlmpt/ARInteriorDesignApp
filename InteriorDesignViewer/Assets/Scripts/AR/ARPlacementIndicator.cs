@@ -207,6 +207,12 @@ public class ARPlacementIndicator : MonoBehaviour
         screenPointOverride = screenPoint;
     }
 
+    /// <summary>Match furniture placement's floor-depth rule so the reticle and the sofa share a plane.</summary>
+    public void SetMinDepthBelowCamera(float metres)
+    {
+        minDepthBelowCamera = Mathf.Max(0.05f, metres);
+    }
+
     public void StopTracking()
     {
         isTracking          = false;

@@ -49,6 +49,11 @@ export function ThemeRecommendResults({
       processingTimeSeconds,
     } = uiWithResults.resultsData;
 
+    const topThemeGeneratedImage = topTheme
+      ? imageGeneration.generatedImages.get(topTheme.id)
+      : undefined;
+    const topThemeAttribution = topThemeGeneratedImage?.attribution;
+
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <StatusBar style={statusBarStyle} />
@@ -213,13 +218,22 @@ export function ThemeRecommendResults({
               )}
 
               {/* Generated Image */}
-              {imageGeneration.generatedImages.has(topTheme.id) && (
+              {topThemeGeneratedImage && (
                 <View style={styles.generatedImageContainer}>
                   <Image
-                    source={{ uri: imageGeneration.generatedImages.get(topTheme.id)?.imageUrl }}
+                    source={{ uri: topThemeGeneratedImage.imageUrl }}
                     style={styles.generatedImage}
                     resizeMode="cover"
                   />
+                  {topThemeAttribution && (
+                    <View style={styles.attributionContainer}>
+                      <Text style={styles.attributionText}>
+                        {topThemeAttribution.photographer
+                          ? `Photo by ${topThemeAttribution.photographer} on Pexels`
+                          : `Generated via ${topThemeAttribution.source || 'AI'}`}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               )}
 
@@ -328,8 +342,9 @@ export function ThemeRecommendResults({
                   {imageGeneration.customDesignAttribution && (
                     <View style={styles.attributionContainer}>
                       <Text style={styles.attributionText}>
-                        Photo by {imageGeneration.customDesignAttribution.photographer || 'Unknown'} on{' '}
-                        {imageGeneration.customDesignAttribution.source || 'Pexels'}
+                        {imageGeneration.customDesignAttribution.photographer
+                          ? `Photo by ${imageGeneration.customDesignAttribution.photographer} on Pexels`
+                          : `Generated via ${imageGeneration.customDesignAttribution.source || 'AI'}`}
                       </Text>
                     </View>
                   )}

@@ -31,8 +31,28 @@ public static class ARFurnitureGrounding
     /// Places furniture at floorPoint XZ and iteratively snaps mesh feet to floor Y.
     /// Works for imported models whose pivot is not at the legs.
     /// </summary>
-    const float MaxFootCorrectionPerStep = 0.5f;
-    const float MaxPivotAboveFoot        = 2f;
+    const float MaxFootCorrectionPerStep = 2.5f;
+    const float MaxPivotAboveFoot        = 4f;
+
+    /// <summary>
+    /// One-shot snap using the model's local-space lowest Y (not a world AABB).
+    /// World AABBs grow when the sofa is yawed and make feet look like they float.
+    /// </summary>
+    public static bool SnapLocalFootToFloor(
+        Transform furniture,
+        float localFootY,
+        Vector3 floorPoint,
+        float contactInset = 0.01f)
+    {
+        if (furniture == null) return false;
+
+        var scaleY = Mathf.Abs(furniture.lossyScale.y);
+        if (scaleY < 1e-5f) scaleY = 1f;
+
+        var targetPivotY = floorPoint.y - contactInset - localFootY * scaleY;
+        furniture.position = new Vector3(floorPoint.x, targetPivotY, floorPoint.z);
+        return true;
+    }
 
     /// <summary>
     /// One-shot snap: keep XZ at floorPoint, raise pivot so mesh feet touch floor Y.
@@ -129,13 +149,6 @@ public static class ARFurnitureGrounding
             if (IsBlobShadow(renderer) || IsIgnoredForGrounding(renderer.gameObject)) continue;
             if (!HasValidBounds(renderer.bounds)) continue;
             lowest = Mathf.Min(lowest, renderer.bounds.min.y);
-        }
-
-        foreach (var collider in root.GetComponentsInChildren<Collider>())
-        {
-            if (collider == null || !collider.enabled) continue;
-            if (!HasValidBounds(collider.bounds)) continue;
-            lowest = Mathf.Min(lowest, collider.bounds.min.y);
         }
 
         return lowest;

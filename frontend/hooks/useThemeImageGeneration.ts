@@ -198,6 +198,7 @@ export function useThemeImageGeneration({
             imageUrl: result.imageUrl!,
             prompt: result.prompt || '',
             generatedAt: Date.now(),
+            attribution: result.attribution,
           });
           return newImages;
         });

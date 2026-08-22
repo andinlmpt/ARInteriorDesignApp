@@ -144,8 +144,6 @@ function patchBlobAndUrl(): void {
 }
 
 function patchTextureLoader(): void {
-  const originalLoad = THREE.TextureLoader.prototype.load;
-
   THREE.TextureLoader.prototype.load = function loadPatched(
     url: string,
     onLoad?: (texture: THREE.Texture) => void,
@@ -157,6 +155,9 @@ function patchTextureLoader(): void {
     if (this.path && typeof resolvedUrl === 'string') {
       resolvedUrl = this.path + resolvedUrl;
     }
+
+    const manager = this.manager;
+    manager.itemStart(resolvedUrl);
 
     const texture = new THREE.Texture();
 
@@ -173,18 +174,19 @@ function patchTextureLoader(): void {
           width,
           height,
         };
+        texture.colorSpace = THREE.SRGBColorSpace;
         texture.flipY = true;
         texture.needsUpdate = true;
         (texture as THREE.Texture & { isDataTexture?: boolean }).isDataTexture = true;
 
         onLoad?.(texture);
+        manager.itemEnd(resolvedUrl);
       })
       .catch((error) => {
-        if (originalLoad) {
-          originalLoad.call(this, url, onLoad, onProgress, onError);
-          return;
-        }
+        console.warn('[gltfNativePolyfills] Texture load failed:', resolvedUrl, error);
         onError?.(error);
+        manager.itemError(resolvedUrl);
+        manager.itemEnd(resolvedUrl);
       });
 
     return texture;

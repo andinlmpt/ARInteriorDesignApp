@@ -58,6 +58,11 @@ export interface GeneratedImageData {
   imageUrl: string;
   prompt: string;
   generatedAt: number;
+  attribution?: {
+    photographer?: string;
+    photographerUrl?: string;
+    source?: string;
+  };
 }
 
 // ============================================================================

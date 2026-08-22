@@ -18,6 +18,8 @@ export type ScreenName =
   | 'theme-recommend'
   | 'ar-view'
   | 'layout-3d'
+  | 'model-preview'
+  | 'room-view'
   | 'create-project';
 
 // Screen configuration type
@@ -135,6 +137,19 @@ export const NAVIGATION_SCREENS: Record<string, ScreenConfig[]> = {
       name: 'layout-3d',
       options: {
         ...ANIMATION_PRESETS.slideRight,
+      },
+    },
+    {
+      name: 'model-preview',
+      options: {
+        ...ANIMATION_PRESETS.slideRight,
+      },
+    },
+    {
+      name: 'room-view',
+      options: {
+        ...ANIMATION_PRESETS.slideRight,
+        orientation: 'portrait',
       },
     },
   ],

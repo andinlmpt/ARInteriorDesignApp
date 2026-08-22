@@ -178,6 +178,7 @@ const withUnityAndroidGradle = (config) => {
       }
 
       patchUnityExportGradle(projectRoot);
+      patchAzesmwayUPlayer(projectRoot);
 
       const manifestPath = path.join(
         projectRoot,
@@ -195,6 +196,36 @@ const withUnityAndroidGradle = (config) => {
     },
   ]);
 };
+
+/** Unity 6-safe UPlayer: never use constructors()[1]. */
+function patchAzesmwayUPlayer(projectRoot) {
+  const src = path.join(
+    projectRoot,
+    'patches',
+    'azesmway-react-native-unity',
+    'UPlayer.java'
+  );
+  const dest = path.join(
+    projectRoot,
+    'node_modules',
+    '@azesmway',
+    'react-native-unity',
+    'android',
+    'src',
+    'main',
+    'java',
+    'com',
+    'azesmwayreactnativeunity',
+    'UPlayer.java'
+  );
+
+  if (!fs.existsSync(src) || !fs.existsSync(path.dirname(dest))) {
+    return;
+  }
+
+  fs.copyFileSync(src, dest);
+  console.log('[withUnity] Applied Unity 6 UPlayer constructor patch');
+}
 
 const withUnity = (config) => withUnityAndroidGradle(config);
 

@@ -157,6 +157,13 @@ export default function ExploreScreen() {
         >
           <Ionicons name={isSaved ? "heart" : "heart-outline"} size={20} color={isSaved ? "#EC4899" : "#FFFFFF"} />
         </TouchableOpacity>
+        {!!item.photographer && (
+          <View style={styles.photoOverlay}>
+            <AppText style={styles.photoAttribution} numberOfLines={1}>
+              Photo by {item.photographer}
+            </AppText>
+          </View>
+        )}
       </View>
     );
   };

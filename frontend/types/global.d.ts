@@ -1,5 +1,10 @@
 /// <reference types="three" />
 
+declare module '*.glb' {
+  const asset: number;
+  export default asset;
+}
+
 declare module 'expo-gl' {
   import type { FunctionComponent } from 'react';
   import type { ViewProps } from 'react-native';

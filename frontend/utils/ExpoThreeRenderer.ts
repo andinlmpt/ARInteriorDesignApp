@@ -52,6 +52,9 @@ export interface ExpoThreeRendererParams {
  */
 export class ExpoThreeRenderer extends THREE.WebGLRenderer {
   constructor({ gl, width, height, pixelRatio = 1 }: ExpoThreeRendererParams) {
+    // expo-gl can return null from info-log getters; Three.js r166 calls .trim() on them.
+    patchExpoGlInfoLogs(gl);
+
     super({
       canvas: {
         width,
@@ -70,10 +73,32 @@ export class ExpoThreeRenderer extends THREE.WebGLRenderer {
 
     this.setSize(width, height);
     this.setPixelRatio(pixelRatio);
+    // Skip expensive shader-error string parsing on expo-gl (logs are often null).
+    this.debug.checkShaderErrors = false;
     // Expo GL handles frame submission via gl.endFrameEXP()
     // so we disable Three's own auto-clear to avoid double-clearing
     this.autoClear = true;
   }
+}
+
+/**
+ * expo-gl's getProgramInfoLog / getShaderInfoLog may return null instead of "".
+ * Three.js unconditionally calls .trim() on those values during first shader use.
+ */
+function patchExpoGlInfoLogs(gl: ExpoWebGLRenderingContext): void {
+  const anyGl = gl as ExpoWebGLRenderingContext & {
+    getProgramInfoLog: (program: WebGLProgram) => string | null;
+    getShaderInfoLog: (shader: WebGLShader) => string | null;
+    __arInfoLogPatched?: boolean;
+  };
+  if (anyGl.__arInfoLogPatched) return;
+  anyGl.__arInfoLogPatched = true;
+
+  const originalProgramLog = anyGl.getProgramInfoLog.bind(anyGl);
+  anyGl.getProgramInfoLog = (program: WebGLProgram) => originalProgramLog(program) ?? '';
+
+  const originalShaderLog = anyGl.getShaderInfoLog.bind(anyGl);
+  anyGl.getShaderInfoLog = (shader: WebGLShader) => originalShaderLog(shader) ?? '';
 }
 
 /**

@@ -62,8 +62,13 @@ InteriorDesignViewer/[Mm]emoryCaptures/
 InteriorDesignViewer/[Rr]ecordings/
 InteriorDesignViewer/.utmp/
 InteriorDesignViewer/Assets/_Recovery/
+InteriorDesignViewer/Assets/_App/Furniture/Baked/
 InteriorDesignViewer_BurstDebugInformation_DoNotShip/
 _reference-*/
+
+# Local debug artifacts
+backend/scratch/
+frontend/unity-crash-bugreport.zip
 
 # Unity export / IL2CPP build outputs (regenerate locally)
 frontend/unity/

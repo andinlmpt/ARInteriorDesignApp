@@ -4,43 +4,45 @@ using UnityEditor;
 using UnityEngine;
 
 /// <summary>
-/// Captures prefab thumbnail sprites for the furniture picker (Gabmeister-style icons).
+/// Captures prefab thumbnail sprites for the furniture catalog.
+/// Writes PNGs under Resources/FurnitureIcons so the player can load them
+/// without serializing the 3D prefabs on the scene.
 /// </summary>
 public static class FurnitureIconCapture
 {
-    const string OutputFolder = "Assets/UI/FurnitureIcons";
+    public const string OutputFolder = "Assets/_App/Furniture/Resources/FurnitureIcons";
 
     [MenuItem("AR Interior/Capture Furniture Icons From Catalog", false, 30)]
-    static void CaptureFromCatalog()
+    public static void CaptureFromCatalog()
     {
         var catalog = Object.FindFirstObjectByType<FurnitureCatalog>();
         if (catalog == null)
         {
-            EditorUtility.DisplayDialog("AR Interior", "Open a scene with FurnitureCatalog on Managers.", "OK");
+            EditorUtility.DisplayDialog("AR Interior", "Open ARDesignScene (FurnitureCatalog on Managers).", "OK");
             return;
         }
 
         EnsureFolder(OutputFolder);
         var captured = 0;
-        var so       = new SerializedObject(catalog);
-        var entries  = so.FindProperty("entries");
+        var so = new SerializedObject(catalog);
+        var entries = so.FindProperty("entries");
 
         for (var i = 0; i < entries.arraySize; i++)
         {
             var element = entries.GetArrayElementAtIndex(i);
-            var idProp  = element.FindPropertyRelative("id");
-            var prefab  = element.FindPropertyRelative("prefab").objectReferenceValue as GameObject;
-            if (prefab == null)
-                continue;
+            var id = element.FindPropertyRelative("id").stringValue;
+            var prefab = ResolvePrefab(element, id);
+            if (prefab == null) continue;
 
-            var sprite = CapturePrefab(prefab, idProp.stringValue);
-            if (sprite == null)
-                continue;
+            EditorUtility.DisplayProgressBar("Furniture icons", $"Capturing {id}", (float)i / Mathf.Max(1, entries.arraySize));
+            var sprite = CaptureToResources(prefab, id);
+            if (sprite == null) continue;
 
             element.FindPropertyRelative("icon").objectReferenceValue = sprite;
             captured++;
         }
 
+        EditorUtility.ClearProgressBar();
         so.ApplyModifiedProperties();
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
@@ -48,18 +50,40 @@ public static class FurnitureIconCapture
         EditorUtility.DisplayDialog("AR Interior", $"Captured {captured} furniture icon(s) to {OutputFolder}.", "OK");
     }
 
+    public static Sprite CaptureToResources(GameObject prefab, string id)
+    {
+        if (prefab == null || string.IsNullOrEmpty(id)) return null;
+        EnsureFolder(OutputFolder);
+        return CapturePrefab(prefab, id);
+    }
+
+    static GameObject ResolvePrefab(SerializedProperty element, string id)
+    {
+        var prefab = element.FindPropertyRelative("prefab").objectReferenceValue as GameObject;
+        if (prefab != null) return prefab;
+
+        var resourceProp = element.FindPropertyRelative("resourcePath");
+        var resourcePath = resourceProp != null ? resourceProp.stringValue : null;
+        if (string.IsNullOrWhiteSpace(resourcePath))
+            resourcePath = $"Furniture/{id}";
+
+        return Resources.Load<GameObject>(resourcePath)
+               ?? AssetDatabase.LoadAssetAtPath<GameObject>($"Assets/_App/Furniture/Resources/{resourcePath}.prefab");
+    }
+
     static Sprite CapturePrefab(GameObject prefab, string id)
     {
         var bounds = CalculateBounds(prefab);
-        var camGo  = new GameObject("IconCaptureCamera");
-        var cam    = camGo.AddComponent<Camera>();
-        cam.clearFlags      = CameraClearFlags.SolidColor;
-        cam.backgroundColor = Color.clear;
-        cam.orthographic    = true;
-        cam.nearClipPlane   = 0.01f;
-        cam.farClipPlane    = 100f;
+        var camGo = new GameObject("IconCaptureCamera");
+        var cam = camGo.AddComponent<Camera>();
+        cam.clearFlags = CameraClearFlags.SolidColor;
+        cam.backgroundColor = new Color(0.93f, 0.93f, 0.94f, 1f);
+        cam.orthographic = true;
+        cam.nearClipPlane = 0.01f;
+        cam.farClipPlane = 100f;
+        cam.allowHDR = false;
+        cam.enabled = false;
 
-        // Create temporary directional light to illuminate the model
         var lightGo = new GameObject("IconCaptureLight");
         var lightComp = lightGo.AddComponent<Light>();
         lightComp.type = LightType.Directional;
@@ -67,11 +91,12 @@ public static class FurnitureIconCapture
         lightGo.transform.rotation = Quaternion.Euler(45f, -35f, 0f);
 
         var instance = Object.Instantiate(prefab);
+        instance.hideFlags = HideFlags.HideAndDontSave;
         instance.transform.position = Vector3.zero;
         instance.transform.rotation = Quaternion.Euler(0f, 35f, 0f);
 
-        var size   = Mathf.Max(bounds.size.x, bounds.size.y, bounds.size.z, 0.5f);
-        cam.orthographicSize = size * 0.48f; // Zoom in closer to make model fill the icon frame
+        var size = Mathf.Max(bounds.size.x, bounds.size.y, bounds.size.z, 0.5f);
+        cam.orthographicSize = size * 0.48f;
         camGo.transform.position = bounds.center + new Vector3(0.4f, size * 0.55f, -size * 1.2f);
         camGo.transform.LookAt(bounds.center);
 
@@ -87,19 +112,23 @@ public static class FurnitureIconCapture
 
         Object.DestroyImmediate(instance);
         Object.DestroyImmediate(camGo);
-        Object.DestroyImmediate(lightGo); // Destroy light
+        Object.DestroyImmediate(lightGo);
         rt.Release();
 
         var path = $"{OutputFolder}/{Sanitize(id)}.png";
         File.WriteAllBytes(path, tex.EncodeToPNG());
+        Object.DestroyImmediate(tex);
         AssetDatabase.ImportAsset(path);
 
         var importer = AssetImporter.GetAtPath(path) as TextureImporter;
         if (importer != null)
         {
-            importer.textureType         = TextureImporterType.Sprite;
-            importer.spriteImportMode    = SpriteImportMode.Single;
+            importer.textureType = TextureImporterType.Sprite;
+            importer.spriteImportMode = SpriteImportMode.Single;
             importer.alphaIsTransparency = true;
+            importer.isReadable = true;
+            importer.mipmapEnabled = false;
+            importer.maxTextureSize = 256;
             importer.SaveAndReimport();
         }
 
@@ -108,24 +137,23 @@ public static class FurnitureIconCapture
 
     static Bounds CalculateBounds(GameObject prefab)
     {
-        var instance  = Object.Instantiate(prefab);
+        var instance = Object.Instantiate(prefab);
+        instance.hideFlags = HideFlags.HideAndDontSave;
         instance.transform.position = Vector3.zero;
         instance.transform.rotation = Quaternion.identity;
         var renderers = instance.GetComponentsInChildren<Renderer>();
-        
+
         Bounds bounds = new Bounds();
         bool hasBound = false;
 
         foreach (var r in renderers)
         {
             if (r == null || !r.enabled) continue;
-            
-            // Ignore shadow planes, helper indicators, or colliders which skew the model size bounds
+
             string name = r.gameObject.name.ToLower();
             if (name.Contains("shadow") || name.Contains("outline") || name.Contains("indicator") || name.Contains("collider"))
                 continue;
 
-            // Only bounds-check actual Mesh and Skinned Mesh geometry
             if (!(r is MeshRenderer || r is SkinnedMeshRenderer))
                 continue;
 
@@ -141,9 +169,7 @@ public static class FurnitureIconCapture
         }
 
         if (!hasBound)
-        {
             bounds = new Bounds(instance.transform.position, Vector3.one);
-        }
 
         Object.DestroyImmediate(instance);
         return bounds;
@@ -151,11 +177,15 @@ public static class FurnitureIconCapture
 
     static void EnsureFolder(string path)
     {
-        if (!AssetDatabase.IsValidFolder(path))
+        if (AssetDatabase.IsValidFolder(path)) return;
+        var parts = path.Replace('\\', '/').Split('/');
+        var current = parts[0];
+        for (var i = 1; i < parts.Length; i++)
         {
-            if (!AssetDatabase.IsValidFolder("Assets/UI"))
-                AssetDatabase.CreateFolder("Assets", "UI");
-            AssetDatabase.CreateFolder("Assets/UI", "FurnitureIcons");
+            var next = current + "/" + parts[i];
+            if (!AssetDatabase.IsValidFolder(next))
+                AssetDatabase.CreateFolder(current, parts[i]);
+            current = next;
         }
     }
 
