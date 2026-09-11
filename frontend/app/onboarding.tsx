@@ -1,11 +1,20 @@
-import { View, StyleSheet, TouchableOpacity, Dimensions, ScrollView, Animated } from 'react-native';
+/**
+ * First-launch onboarding — Maharlika Furniture.
+ * Shown once after splash; then Login / Sign up → Home.
+ */
+
+import { View, StyleSheet, TouchableOpacity, Dimensions, ScrollView } from 'react-native';
 import { useState, useRef } from 'react';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
 import { AppText } from '@/components/ui/Text';
 import { Button } from '@/components/ui/Button';
-import { colors, spacing } from '@/components/ui/theme';
+import { AppLogo } from '@/components/ui/AppLogo';
+import { colors, spacing, radii } from '@/components/ui/theme';
+import { BRAND } from '@/constants/branding';
+import { ONBOARDING_COMPLETED_KEY } from '@/data/authData';
 import { getHorizontalPadding } from '@/utils/responsive';
 
 const { width } = Dimensions.get('window');
@@ -13,24 +22,27 @@ const { width } = Dimensions.get('window');
 const slides = [
   {
     id: 1,
-    title: 'Visualize Your Dream Space',
-    description: 'Use AR technology to preview furniture and layouts in real time.',
-    emoji: '📱',
-    color: '#2563EB',
+    title: 'Browse our collection',
+    description:
+      'Explore sofas, beds, accent chairs, and more from Maharlika Furniture — curated for every room.',
+    icon: 'bed-outline' as const,
+    color: BRAND.colors.navy,
   },
   {
     id: 2,
-    title: 'Design Made Easy',
-    description: 'Scan your room, generate AI-driven layouts, and customize effortlessly.',
-    emoji: '🏠',
-    color: '#22C55E',
+    title: 'Visualize in your space',
+    description:
+      'Scan your room and place furniture with AR so you can see true scale before you buy.',
+    icon: 'scan-outline' as const,
+    color: BRAND.colors.orange,
   },
   {
     id: 3,
-    title: 'Save & Share',
-    description: 'Export 3D scenes, share with clients, and collaborate in minutes.',
-    emoji: '✨',
-    color: '#F97316',
+    title: 'Save & get inspired',
+    description:
+      'Keep room measurements, save favorites, and use AI design ideas to shape your home.',
+    icon: 'heart-outline' as const,
+    color: BRAND.colors.olive,
   },
 ];
 
@@ -40,10 +52,25 @@ export default function OnboardingScreen() {
   const router = useRouter();
   const [isNavigating, setIsNavigating] = useState(false);
 
-  const handleScroll = (event: any) => {
+  const handleScroll = (event: { nativeEvent: { contentOffset: { x: number } } }) => {
     const scrollPosition = event.nativeEvent.contentOffset.x;
     const index = Math.round(scrollPosition / width);
     setCurrentIndex(index);
+  };
+
+  const goToLogin = async () => {
+    if (isNavigating) return;
+    setIsNavigating(true);
+    try {
+      await AsyncStorage.setItem(ONBOARDING_COMPLETED_KEY, 'true');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      router.replace('/login');
+    } catch (error) {
+      console.warn('[Onboarding] Error finishing:', error);
+      router.replace('/login');
+    } finally {
+      setIsNavigating(false);
+    }
   };
 
   const handleNext = async () => {
@@ -54,44 +81,26 @@ export default function OnboardingScreen() {
         x: width * (currentIndex + 1),
         animated: true,
       });
-    } else {
-      // Complete onboarding
-      await completeOnboarding();
+      return;
     }
+
+    await goToLogin();
   };
 
-  const handleSkip = async () => {
-    if (isNavigating) return;
-    await completeOnboarding();
-  };
-
-  const completeOnboarding = async () => {
-    setIsNavigating(true);
-    try {
-      // Mark onboarding as completed
-      await AsyncStorage.setItem('onboarding_completed', 'true');
-      
-      // Small delay for smooth transition
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      router.replace('/login');
-    } catch (error) {
-      console.warn('[Onboarding] Error saving onboarding state:', error);
-      router.replace('/login');
-    } finally {
-      setIsNavigating(false);
-    }
-  };
+  const activeColor = slides[currentIndex]?.color ?? BRAND.colors.navy;
 
   return (
     <View style={styles.container}>
       <StatusBar style="dark" />
 
-      <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
-        <AppText variant="caption" color="textMuted">
-          Skip
-        </AppText>
-      </TouchableOpacity>
+      <View style={styles.topBar}>
+        <AppLogo size={44} circular />
+        <TouchableOpacity style={styles.skipButton} onPress={goToLogin} disabled={isNavigating}>
+          <AppText variant="caption" style={styles.skipText}>
+            Skip
+          </AppText>
+        </TouchableOpacity>
+      </View>
 
       <ScrollView
         ref={scrollViewRef}
@@ -103,18 +112,19 @@ export default function OnboardingScreen() {
       >
         {slides.map((slide, index) => (
           <View key={slide.id} style={[styles.slide, { width }]}>
-            <Animated.View 
+            <View
               style={[
-                styles.emojiContainer, 
-                { 
+                styles.iconRing,
+                {
                   borderColor: slide.color,
-                  opacity: currentIndex === index ? 1 : 0.6,
-                  transform: [{ scale: currentIndex === index ? 1 : 0.9 }],
-                }
+                  backgroundColor: `${slide.color}12`,
+                  opacity: currentIndex === index ? 1 : 0.7,
+                  transform: [{ scale: currentIndex === index ? 1 : 0.94 }],
+                },
               ]}
             >
-              <AppText variant="h1">{slide.emoji}</AppText>
-            </Animated.View>
+              <Ionicons name={slide.icon} size={56} color={slide.color} />
+            </View>
             <View style={styles.slideContent}>
               <AppText variant="h2" style={[styles.title, { color: slide.color }]}>
                 {slide.title}
@@ -141,18 +151,18 @@ export default function OnboardingScreen() {
 
       <View style={styles.footer}>
         <Button
-          label={currentIndex === slides.length - 1 ? 'Get started →' : 'Next →'}
+          label={currentIndex === slides.length - 1 ? 'Get started' : 'Next'}
           onPress={handleNext}
           disabled={isNavigating}
           loading={isNavigating}
         />
         <View style={styles.helperRow}>
           <AppText variant="caption" color="textMuted">
-            Already exploring?
+            Already a customer?
           </AppText>
-          <TouchableOpacity onPress={handleSkip} disabled={isNavigating}>
-            <AppText variant="caption" color="accent" style={styles.skipLink}>
-              Sign in →
+          <TouchableOpacity onPress={goToLogin} disabled={isNavigating}>
+            <AppText variant="caption" style={[styles.signInLink, { color: activeColor }]}>
+              Sign in
             </AppText>
           </TouchableOpacity>
         </View>
@@ -166,38 +176,47 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.surfacePrimary,
   },
-  skipButton: {
-    position: 'absolute',
-    top: spacing.xxl,
-    right: spacing.xl,
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: spacing.xxl,
+    paddingHorizontal: getHorizontalPadding(spacing.xl),
     zIndex: 10,
-    padding: spacing.sm,
+  },
+  skipButton: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  skipText: {
+    color: colors.textMuted,
+    fontWeight: '600',
   },
   slide: {
     flex: 1,
     alignItems: 'center',
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
     paddingHorizontal: getHorizontalPadding(spacing.xl),
-    paddingBottom: spacing.xxl * 2,
     gap: spacing.xl,
   },
-  emojiContainer: {
-    width: 160,
-    height: 160,
-    borderRadius: 80,
+  iconRing: {
+    width: 148,
+    height: 148,
+    borderRadius: 74,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.85)',
-    borderWidth: 4,
+    borderWidth: 3,
   },
   slideContent: {
     gap: spacing.md,
+    maxWidth: 340,
   },
   title: {
     textAlign: 'center',
   },
   description: {
     textAlign: 'center',
+    lineHeight: 22,
   },
   pagination: {
     flexDirection: 'row',
@@ -214,6 +233,7 @@ const styles = StyleSheet.create({
   },
   activeDot: {
     width: 26,
+    borderRadius: radii.pill,
   },
   footer: {
     paddingHorizontal: getHorizontalPadding(spacing.xl),
@@ -226,7 +246,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     alignItems: 'center',
   },
-  skipLink: {
-    fontWeight: '600',
+  signInLink: {
+    fontWeight: '700',
   },
 });

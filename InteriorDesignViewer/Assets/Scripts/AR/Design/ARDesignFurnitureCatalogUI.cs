@@ -18,7 +18,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
 
     [Header("Layout")]
     [SerializeField] private float sidebarWidth = 72f;
-    [SerializeField] private float panelWidth = 220f;
+    [SerializeField] private float panelWidth = 260f;
     [SerializeField] private float categoryButtonSize = 52f;
     [SerializeField] private float itemTileSize = 56f;
     [SerializeField] private float toolButtonSize = 52f;
@@ -84,6 +84,8 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
     bool active;
     bool panelOpen = true;
 
+    RemoteFurnitureCatalogLoader remoteCatalogLoader;
+
     void Awake()
     {
         if (scanController == null) scanController = FindFirstObjectByType<RoomScanController>();
@@ -91,6 +93,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         if (catalog == null) catalog = FindFirstObjectByType<FurnitureCatalog>();
         if (layoutHistory == null) layoutHistory = FindFirstObjectByType<FurnitureLayoutHistory>();
         if (layoutMode == null) layoutMode = FindFirstObjectByType<ARDesignLayoutModeController>();
+        if (remoteCatalogLoader == null) remoteCatalogLoader = FindFirstObjectByType<RemoteFurnitureCatalogLoader>();
         EnsureExportManager();
 
         active = enableNativeCatalog && !ARDesignHostDetect.IsEmbeddedInReactNative();
@@ -143,6 +146,15 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
             layoutMode.ViewModeChanged += OnViewModeChanged;
         if (exportManager != null)
             exportManager.ExportFinished += OnExportFinished;
+        if (remoteCatalogLoader != null)
+            remoteCatalogLoader.CatalogLoaded += OnRemoteCatalogLoaded;
+    }
+
+    void OnRemoteCatalogLoaded()
+    {
+        if (!active) return;
+        RebuildCategories();
+        RebuildItems();
     }
 
     void OnDisable()
@@ -157,6 +169,8 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
             layoutMode.ViewModeChanged -= OnViewModeChanged;
         if (exportManager != null)
             exportManager.ExportFinished -= OnExportFinished;
+        if (remoteCatalogLoader != null)
+            remoteCatalogLoader.CatalogLoaded -= OnRemoteCatalogLoaded;
     }
 
     void OnDestroy()
@@ -172,6 +186,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
     void Start()
     {
         if (!active) return;
+        catalog?.EnsureBundledResourceEntries();
         RebuildCategories();
         RebuildItems();
         RefreshToolButtons();
@@ -421,9 +436,19 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         List<FurnitureEntry> items;
         if (catalog == null || catalog.Entries.Count == 0)
         {
+            if (catalog != null && catalog.RemoteCatalogOnly && remoteCatalogLoader != null && !remoteCatalogLoader.IsLoaded)
+            {
+                if (panelCount != null)
+                    panelCount.text = "Loading…";
+                UpdatePanelVisibility();
+                return;
+            }
+
             items = new List<FurnitureEntry>();
-            CreateItemButton("sample-cube", "Cube", null, new Vector3(0.6f, 0.6f, 0.6f));
-            if (panelCount != null) panelCount.text = "1 item";
+            if (catalog == null || !catalog.RemoteCatalogOnly)
+                CreateItemButton("sample-cube", "Cube", null, new Vector3(0.6f, 0.6f, 0.6f), null);
+            if (panelCount != null)
+                panelCount.text = catalog != null && catalog.RemoteCatalogOnly ? "Catalog unavailable" : "1 item";
             UpdatePanelVisibility();
             return;
         }
@@ -437,12 +462,13 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
                 entry.id,
                 catalog.GetDisplayName(entry),
                 catalog.GetIcon(entry),
-                catalog.GetDefaultDimensions(entry.id));
+                catalog.GetDefaultDimensions(entry.id),
+                catalog.GetDimensionLabel(entry.id));
 
         UpdatePanelVisibility();
     }
 
-    void CreateItemButton(string id, string label, Sprite icon, Vector3 dims)
+    void CreateItemButton(string id, string label, Sprite icon, Vector3 dims, string referenceDimensionLabel)
     {
         var selected = selectedItemId == id;
         var row = new GameObject($"Item_{id}", typeof(RectTransform), typeof(Image), typeof(Button));
@@ -509,8 +535,9 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         nameRt.offsetMin = new Vector2(76f, 2f);
         nameRt.offsetMax = new Vector2(-10f, -8f);
 
-        var dimLabel =
-            $"{Mathf.RoundToInt(dims.x * 100)}×{Mathf.RoundToInt(dims.z * 100)}×{Mathf.RoundToInt(dims.y * 100)} cm";
+        var dimLabel = !string.IsNullOrWhiteSpace(referenceDimensionLabel)
+            ? referenceDimensionLabel.Trim()
+            : FurnitureDimensionFormat.FromCatalogMetres(dims);
         var dimText = ARDesignUiUtil.CreateText(row.transform, dimLabel, 12, FontStyle.Normal, TextAnchor.UpperLeft);
         dimText.color = selected ? new Color(1f, 1f, 1f, 0.7f) : InkMuted;
         dimText.raycastTarget = false;
@@ -538,10 +565,20 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         {
             modelId = id,
             catalogId = id,
+            glbUrl = catalog != null ? catalog.GetGlbUrl(id) : null,
             width = dims.x,
             height = dims.y,
             depth = dims.z,
+            dimensionLabel = catalog != null ? catalog.GetDimensionLabel(id) : null,
         });
+    }
+
+    /// <summary>Rebuilds the native catalog after remote items are merged.</summary>
+    public void RefreshFromCatalog()
+    {
+        RebuildCategories();
+        RebuildItems();
+        RefreshToolButtons();
     }
 
     static string CategoryTitle(string id)
@@ -742,67 +779,59 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         canvas.sortingOrder = 950;
         var scaler = root.AddComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1080, 1920);
-        scaler.matchWidthOrHeight = 0.55f;
+        scaler.referenceResolution = new Vector2(1920, 1080);
+        scaler.matchWidthOrHeight = 0.5f;
         root.AddComponent<GraphicRaycaster>();
 
+        // ── Catalog dock (sidebar + list stay side-by-side, never overlap) ─
+        var dockGo = new GameObject("CatalogDock", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+        dockGo.transform.SetParent(root.transform, false);
+        var dockRt = dockGo.GetComponent<RectTransform>();
+        dockRt.anchorMin = new Vector2(0f, 0.18f);
+        dockRt.anchorMax = new Vector2(0f, 0.82f);
+        dockRt.pivot = new Vector2(0f, 0.5f);
+        dockRt.anchoredPosition = new Vector2(12f, 0f);
+        dockRt.sizeDelta = new Vector2(sidebarWidth + panelWidth + 10f, 0f);
+
+        var dockLayout = dockGo.GetComponent<HorizontalLayoutGroup>();
+        dockLayout.spacing = 10f;
+        dockLayout.childAlignment = TextAnchor.UpperLeft;
+        dockLayout.childControlWidth = false;
+        dockLayout.childControlHeight = true;
+        dockLayout.childForceExpandWidth = false;
+        dockLayout.childForceExpandHeight = true;
+        dockLayout.padding = new RectOffset(0, 0, 0, 0);
+
         // ── Left dark category sidebar ─────────────────────────────────────
-        var sidebar = ARDesignUiUtil.CreateRoundedImage(root.transform, SidebarBg, 28);
+        var sidebar = ARDesignUiUtil.CreateRoundedImage(dockGo.transform, SidebarBg, 28);
         sidebar.gameObject.name = "CategorySidebar";
         var sidebarRt = sidebar.rectTransform;
-        sidebarRt.anchorMin = new Vector2(0f, 0.12f);
-        sidebarRt.anchorMax = new Vector2(0f, 0.88f);
+        sidebarRt.anchorMin = new Vector2(0f, 0f);
+        sidebarRt.anchorMax = new Vector2(0f, 1f);
         sidebarRt.pivot = new Vector2(0f, 0.5f);
         sidebarRt.sizeDelta = new Vector2(sidebarWidth, 0f);
-        sidebarRt.anchoredPosition = new Vector2(14f, 0f);
+        var sidebarLayout = sidebar.gameObject.AddComponent<LayoutElement>();
+        sidebarLayout.preferredWidth = sidebarWidth;
+        sidebarLayout.flexibleHeight = 1f;
 
-        var catScrollGo = new GameObject("CategoryScroll", typeof(RectTransform), typeof(ScrollRect), typeof(Image));
-        catScrollGo.transform.SetParent(sidebar.transform, false);
-        var catScrollImg = catScrollGo.GetComponent<Image>();
-        catScrollImg.color = Color.clear;
-        var catScroll = catScrollGo.GetComponent<ScrollRect>();
-        catScroll.horizontal = false;
-        catScroll.vertical = true;
-        catScroll.movementType = ScrollRect.MovementType.Clamped;
-        catScroll.scrollSensitivity = 28f;
-        var catScrollRt = catScrollGo.GetComponent<RectTransform>();
-        catScrollRt.anchorMin = Vector2.zero;
-        catScrollRt.anchorMax = Vector2.one;
-        catScrollRt.offsetMin = new Vector2(8f, 16f);
-        catScrollRt.offsetMax = new Vector2(-8f, -16f);
-
-        var catContent = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
-        catContent.transform.SetParent(catScrollGo.transform, false);
-        categoryContent = catContent.GetComponent<RectTransform>();
-        categoryContent.anchorMin = new Vector2(0f, 1f);
-        categoryContent.anchorMax = new Vector2(1f, 1f);
-        categoryContent.pivot = new Vector2(0.5f, 1f);
-        categoryContent.anchoredPosition = Vector2.zero;
-        categoryContent.sizeDelta = Vector2.zero;
-
-        var catLayout = catContent.GetComponent<VerticalLayoutGroup>();
-        catLayout.childAlignment = TextAnchor.UpperCenter;
-        catLayout.childControlHeight = false;
+        var catScroll = CreateVerticalScrollArea(sidebar.transform, new RectOffset(8, 8, 16, 16), 0f, out categoryContent);
+        catScroll.scrollSensitivity = 24f;
+        var catLayout = categoryContent.GetComponent<VerticalLayoutGroup>();
         catLayout.childControlWidth = false;
-        catLayout.childForceExpandHeight = false;
         catLayout.childForceExpandWidth = false;
         catLayout.spacing = 10f;
-        catLayout.padding = new RectOffset(0, 0, 4, 8);
-
-        var catFitter = catContent.GetComponent<ContentSizeFitter>();
-        catFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-        catScroll.content = categoryContent;
-        catScroll.viewport = catScrollRt;
 
         // ── Item panel (IKEA product list) ─────────────────────────────────
-        var panel = ARDesignUiUtil.CreateRoundedImage(root.transform, PanelBg, 28);
+        var panel = ARDesignUiUtil.CreateRoundedImage(dockGo.transform, PanelBg, 28);
         panel.gameObject.name = "ItemPanel";
         var panelRt = panel.rectTransform;
-        panelRt.anchorMin = new Vector2(0f, 0.12f);
-        panelRt.anchorMax = new Vector2(0f, 0.88f);
+        panelRt.anchorMin = new Vector2(0f, 0f);
+        panelRt.anchorMax = new Vector2(0f, 1f);
         panelRt.pivot = new Vector2(0f, 0.5f);
         panelRt.sizeDelta = new Vector2(panelWidth, 0f);
-        panelRt.anchoredPosition = new Vector2(14f + sidebarWidth + 10f, 0f);
+        var panelLayout = panel.gameObject.AddComponent<LayoutElement>();
+        panelLayout.preferredWidth = panelWidth;
+        panelLayout.flexibleHeight = 1f;
 
         panelTitle = ARDesignUiUtil.CreateText(panel.transform, "All", 20, FontStyle.Bold, TextAnchor.MiddleLeft);
         panelTitle.color = Ink;
@@ -846,46 +875,61 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         closeX.color = Ink;
         closeX.raycastTarget = false;
 
-        var itemScrollGo = new GameObject("ItemScroll", typeof(RectTransform), typeof(ScrollRect), typeof(Image));
-        itemScrollGo.transform.SetParent(panel.transform, false);
-        var itemScrollImg = itemScrollGo.GetComponent<Image>();
-        itemScrollImg.color = Color.clear;
-        var itemScroll = itemScrollGo.GetComponent<ScrollRect>();
-        itemScroll.horizontal = false;
-        itemScroll.vertical = true;
-        itemScroll.movementType = ScrollRect.MovementType.Clamped;
-        itemScroll.scrollSensitivity = 28f;
-        var itemScrollRt = itemScrollGo.GetComponent<RectTransform>();
-        itemScrollRt.anchorMin = Vector2.zero;
-        itemScrollRt.anchorMax = Vector2.one;
-        itemScrollRt.offsetMin = new Vector2(10f, 12f);
-        itemScrollRt.offsetMax = new Vector2(-10f, -68f);
-
-        var items = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
-        items.transform.SetParent(itemScrollGo.transform, false);
-        itemContent = items.GetComponent<RectTransform>();
-        itemContent.anchorMin = new Vector2(0f, 1f);
-        itemContent.anchorMax = new Vector2(1f, 1f);
-        itemContent.pivot = new Vector2(0.5f, 1f);
-        itemContent.anchoredPosition = Vector2.zero;
-        itemContent.sizeDelta = Vector2.zero;
-
-        var itemLayout = items.GetComponent<VerticalLayoutGroup>();
-        itemLayout.childAlignment = TextAnchor.UpperCenter;
-        itemLayout.childControlHeight = false;
-        itemLayout.childControlWidth = true;
-        itemLayout.childForceExpandHeight = false;
-        itemLayout.childForceExpandWidth = true;
-        itemLayout.spacing = 10f;
-        itemLayout.padding = new RectOffset(0, 0, 4, 12);
-
-        var itemFitter = items.GetComponent<ContentSizeFitter>();
-        itemFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-        itemScroll.content = itemContent;
-        itemScroll.viewport = itemScrollRt;
+        var itemScroll = CreateVerticalScrollArea(panel.transform, new RectOffset(10, 10, 68, 12), 0f, out itemContent);
+        itemScroll.scrollSensitivity = 24f;
 
         BuildToolsBar(root.transform);
         RefreshToolButtons();
+    }
+
+    static ScrollRect CreateVerticalScrollArea(
+        Transform parent,
+        RectOffset padding,
+        float headerReserve,
+        out RectTransform content)
+    {
+        var scrollGo = new GameObject("Scroll", typeof(RectTransform), typeof(ScrollRect), typeof(Image), typeof(RectMask2D));
+        scrollGo.transform.SetParent(parent, false);
+
+        var scrollRt = scrollGo.GetComponent<RectTransform>();
+        scrollRt.anchorMin = Vector2.zero;
+        scrollRt.anchorMax = Vector2.one;
+        scrollRt.offsetMin = new Vector2(padding.left, padding.bottom);
+        scrollRt.offsetMax = new Vector2(-padding.right, -padding.top - headerReserve);
+
+        var scrollImg = scrollGo.GetComponent<Image>();
+        scrollImg.color = new Color(1f, 1f, 1f, 0.01f);
+
+        var scroll = scrollGo.GetComponent<ScrollRect>();
+        scroll.horizontal = false;
+        scroll.vertical = true;
+        scroll.movementType = ScrollRect.MovementType.Clamped;
+        scroll.scrollSensitivity = 24f;
+
+        var contentGo = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
+        contentGo.transform.SetParent(scrollGo.transform, false);
+        content = contentGo.GetComponent<RectTransform>();
+        content.anchorMin = new Vector2(0f, 1f);
+        content.anchorMax = new Vector2(1f, 1f);
+        content.pivot = new Vector2(0.5f, 1f);
+        content.anchoredPosition = Vector2.zero;
+        content.sizeDelta = Vector2.zero;
+
+        var layout = contentGo.GetComponent<VerticalLayoutGroup>();
+        layout.childAlignment = TextAnchor.UpperCenter;
+        layout.childControlHeight = false;
+        layout.childControlWidth = true;
+        layout.childForceExpandHeight = false;
+        layout.childForceExpandWidth = true;
+        layout.spacing = 8f;
+        layout.padding = new RectOffset(0, 0, 4, 8);
+
+        var fitter = contentGo.GetComponent<ContentSizeFitter>();
+        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        scroll.content = content;
+        scroll.viewport = scrollRt;
+        return scroll;
     }
 
     void BuildToolsBar(Transform canvasRoot)
@@ -896,8 +940,8 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         barRt.anchorMin = new Vector2(0.5f, 0f);
         barRt.anchorMax = new Vector2(0.5f, 0f);
         barRt.pivot = new Vector2(0.5f, 0f);
-        barRt.sizeDelta = new Vector2(340f, 68f);
-        barRt.anchoredPosition = new Vector2(0f, 28f);
+        barRt.sizeDelta = new Vector2(360f, 64f);
+        barRt.anchoredPosition = new Vector2(0f, 20f);
 
         var row = new GameObject("Row", typeof(RectTransform), typeof(HorizontalLayoutGroup));
         row.transform.SetParent(bar.transform, false);

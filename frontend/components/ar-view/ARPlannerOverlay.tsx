@@ -10,13 +10,15 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
+  Image,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { FURNITURE_LIBRARY } from '@/data/furnitureLibrary';
-import type { FurnitureCategory } from '@/types/ar-view';
+import type { FurnitureCategory, FurnitureLibraryItem } from '@/types/ar-view';
+import { formatDimensionSubtitle } from '@/utils/furnitureCatalogHelpers';
 import { spacing, radii } from '@/components/ui/theme';
 
 export type PlannerTool = 'place' | 'select' | 'measure';
@@ -25,15 +27,19 @@ const CATEGORY_ICONS: { id: FurnitureCategory | 'all'; icon: keyof typeof Ionico
   { id: 'all', icon: 'home-outline' },
   { id: 'seating', icon: 'bed-outline' },
   { id: 'tables', icon: 'grid-outline' },
-  { id: 'storage', icon: 'file-tray-stacked-outline' },
-  { id: 'lighting', icon: 'bulb-outline' },
-  { id: 'decor', icon: 'flower-outline' },
   { id: 'bedroom', icon: 'moon-outline' },
+  { id: 'lighting', icon: 'bulb-outline' },
   { id: 'kitchen', icon: 'restaurant-outline' },
+  { id: 'storage', icon: 'file-tray-stacked-outline' },
+  { id: 'decor', icon: 'flower-outline' },
 ];
 
 interface ARPlannerOverlayProps {
+  catalogItems: FurnitureLibraryItem[];
+  catalogLoading?: boolean;
+  catalogError?: string | null;
   roomConfirmed: boolean;
+  scanModalOpen?: boolean;
   scanProgress: number;
   scanReady: boolean;
   statusMessage: string;
@@ -73,7 +79,11 @@ export function formatPlannerTotal(amount: number): string {
 }
 
 export function ARPlannerOverlay({
+  catalogItems,
+  catalogLoading = false,
+  catalogError = null,
   roomConfirmed,
+  scanModalOpen = false,
   scanProgress,
   scanReady,
   statusMessage,
@@ -102,15 +112,15 @@ export function ARPlannerOverlay({
 
   const total = useMemo(() => {
     return placedModelIds.reduce((sum, modelId) => {
-      const item = FURNITURE_LIBRARY.find((entry) => entry.id === modelId);
+      const item = catalogItems.find((entry) => entry.id === modelId);
       return sum + (item ? parseFurniturePrice(item.price) : 0);
     }, 0);
-  }, [placedModelIds]);
+  }, [catalogItems, placedModelIds]);
 
   const filteredItems =
     selectedCategory === 'all'
-      ? FURNITURE_LIBRARY
-      : FURNITURE_LIBRARY.filter((item) => item.category === selectedCategory);
+      ? catalogItems
+      : catalogItems.filter((item) => item.category === selectedCategory);
 
   return (
     <View style={[styles.root, style]} pointerEvents="box-none">
@@ -135,7 +145,7 @@ export function ARPlannerOverlay({
       </View>
 
       {/* Scan banner */}
-      {!roomConfirmed && (
+      {!roomConfirmed && !scanModalOpen && (
         <View style={styles.scanCard} pointerEvents="box-none">
           <Text style={styles.scanTitle}>Scanning room</Text>
           <Text style={styles.scanBody}>{statusMessage}</Text>
@@ -162,7 +172,7 @@ export function ARPlannerOverlay({
 
       {/* Right category rail */}
       {roomConfirmed && (
-        <View style={[styles.sideRail, { top: insets.top + 72 }]}>
+        <View style={[styles.sideRail, { top: insets.top + 72 }]} pointerEvents="box-none">
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sideRailContent}>
             {CATEGORY_ICONS.map((entry) => {
               const active = selectedCategory === entry.id;
@@ -186,25 +196,46 @@ export function ARPlannerOverlay({
 
       {/* Item sheet */}
       {roomConfirmed && libraryOpen && (
-        <View style={[styles.itemSheet, { bottom: insets.bottom + 88 }]}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.itemRow}>
-            {filteredItems.map((item) => {
-              const selected = selectedLibraryItem === item.id;
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  style={[styles.itemCard, selected && styles.itemCardSelected]}
-                  onPress={() => onSelectItem(item.id)}
-                >
-                  <View style={[styles.itemSwatch, { backgroundColor: item.color }]} />
-                  <Text style={styles.itemName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  <Text style={styles.itemPrice}>{item.price}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+        <View style={[styles.itemSheet, { bottom: insets.bottom + 88 }]} pointerEvents="box-none">
+          {catalogLoading ? (
+            <View style={styles.catalogState}>
+              <ActivityIndicator size="small" color="#2563EB" />
+              <Text style={styles.catalogStateText}>Loading catalog…</Text>
+            </View>
+          ) : catalogError ? (
+            <View style={styles.catalogState}>
+              <Text style={styles.catalogStateText}>{catalogError}</Text>
+            </View>
+          ) : filteredItems.length === 0 ? (
+            <View style={styles.catalogState}>
+              <Text style={styles.catalogStateText}>No furniture in this category</Text>
+            </View>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.itemRow}>
+              {filteredItems.map((item) => {
+                const selected = selectedLibraryItem === item.id;
+                return (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[styles.itemCard, selected && styles.itemCardSelected]}
+                    onPress={() => onSelectItem(item.id)}
+                  >
+                    {item.thumbnail ? (
+                      <Image source={{ uri: item.thumbnail }} style={styles.itemThumbnail} />
+                    ) : (
+                      <View style={[styles.itemSwatch, { backgroundColor: item.color }]} />
+                    )}
+                    <Text style={styles.itemName} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+                    <Text style={styles.itemPrice} numberOfLines={1}>
+                      {item.price || formatDimensionSubtitle(item)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          )}
         </View>
       )}
 
@@ -424,6 +455,24 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: 8,
     marginBottom: 6,
+  },
+  itemThumbnail: {
+    height: 44,
+    borderRadius: 8,
+    marginBottom: 6,
+    backgroundColor: '#E5E7EB',
+  },
+  catalogState: {
+    minHeight: 88,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    gap: 8,
+  },
+  catalogStateText: {
+    color: '#6B7280',
+    fontSize: 12,
+    textAlign: 'center',
   },
   itemName: {
     color: '#1C1B19',

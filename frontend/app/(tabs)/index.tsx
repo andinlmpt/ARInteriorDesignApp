@@ -12,6 +12,8 @@ import { AUTH_USER_STORAGE_KEY } from '@/data/authData';
 import { AnimatedButton, AnimatedCard, FadeInView, SlideInView, ScaleInView } from '@/components/interactive';
 import { getHorizontalPadding, isSmallScreen } from '@/utils/responsive';
 import { Platform } from 'react-native';
+import { AppLogo } from '@/components/ui/AppLogo';
+import { BRAND } from '@/constants/branding';
 
 const { width } = Dimensions.get('window');
 // Responsive card width for 2x2 grid - accounting for padding and gaps
@@ -99,7 +101,7 @@ export default function HomeScreen() {
   const actions = [
     { icon: 'sparkles', label: 'AI Design', route: '/ai-design' as Href, color: t.purple },
     { icon: 'color-wand', label: 'Themes', route: '/explore' as Href, color: t.pink },
-    { icon: 'scan', label: 'AR View', route: '/ar-view' as Href, color: t.accent },
+    { icon: 'scan', label: 'Unity AR', route: '/ar-view' as Href, color: t.accent },
     { icon: 'cube-outline', label: '3D Model', route: '/model-preview' as Href, color: t.orange },
   ];
 
@@ -125,13 +127,11 @@ export default function HomeScreen() {
           <View style={styles.header}>
             <FadeInView delay={100}>
               <View style={styles.brandingSection}>
-                <View style={[styles.logoContainer, { backgroundColor: t.accent + '15' }]}>
-                  <Ionicons name="cube" size={36} color={t.accent} />
-                </View>
+                <AppLogo size={52} circular elevated={false} style={styles.logoContainer} />
                 <View style={styles.brandingText}>
                   <View style={styles.titleRow}>
                     <AppText variant="h2" weight="700" style={[styles.appName, { color: t.textPrimary }]}>
-                      AR Interior Design
+                      {BRAND.name}
                     </AppText>
                     <View style={styles.headerActions}>
                       <Button onPress={toggleTheme} activeScale={0.9}>
@@ -148,7 +148,7 @@ export default function HomeScreen() {
                     </View>
                   </View>
                   <AppText variant="caption" style={[styles.appTagline, { color: t.textSecondary }]}>
-                    Design your space with AR
+                    {BRAND.tagline}
                   </AppText>
                 </View>
               </View>
@@ -351,11 +351,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   logoContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
+    marginRight: spacing.xs,
   },
   brandingText: {
     flex: 1,

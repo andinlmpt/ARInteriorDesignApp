@@ -1,15 +1,23 @@
-import { View, StyleSheet, ScrollView, TouchableOpacity, Alert, Image, TextInput, ActivityIndicator, Platform } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Image, TextInput, ActivityIndicator, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import AuthService from '@/services/AuthService';
 import { AUTH_USER_STORAGE_KEY } from '@/data/authData';
 import * as FileSystem from 'expo-file-system/legacy';
 import { callApi } from '@/services/apiClient';
 import { colors, radii, shadows, spacing } from '@/components/ui/theme';
 import { AppText } from '@/components/ui/Text';
+import { AppDialog, type AppDialogAction } from '@/components/ui/AppDialog';
 import { BackIcon, CameraIcon } from '@/components/ui/Icons';
 import { launchImageLibrary, launchCamera, requestMediaLibraryPermissions, requestCameraPermissions } from '@/utils/imagePicker';
+
+type DialogState = {
+  title: string;
+  message?: string;
+  actions: AppDialogAction[];
+};
 
 export default function EditProfileScreen() {
   const router = useRouter();
@@ -18,6 +26,17 @@ export default function EditProfileScreen() {
   const [profilePicture, setProfilePicture] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [dialog, setDialog] = useState<DialogState | null>(null);
+
+  const closeDialog = () => setDialog(null);
+
+  const showDialog = (title: string, message: string, actions?: AppDialogAction[]) => {
+    setDialog({
+      title,
+      message,
+      actions: actions ?? [{ label: 'OK', tone: 'primary', onPress: closeDialog }],
+    });
+  };
 
   useEffect(() => {
     const loadUserData = async () => {
@@ -39,10 +58,9 @@ export default function EditProfileScreen() {
   const requestPermissions = async () => {
     const hasPermission = await requestMediaLibraryPermissions();
     if (!hasPermission) {
-      Alert.alert(
-        'Permission Required',
-        'We need access to your photos to set a profile picture.',
-        [{ text: 'OK' }]
+      showDialog(
+        'Permission needed',
+        'Allow photo access to set your profile picture.'
       );
       return false;
     }
@@ -51,11 +69,9 @@ export default function EditProfileScreen() {
 
   const convertImageToBase64 = async (uri: string): Promise<string> => {
     try {
-      // Use expo-file-system to read the image file as base64
       const base64 = await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
-      // Determine MIME type from file extension or default to jpeg
       const mimeType = uri.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
       return `data:${mimeType};base64,${base64}`;
     } catch (error) {
@@ -65,6 +81,7 @@ export default function EditProfileScreen() {
   };
 
   const pickImage = async () => {
+    closeDialog();
     const hasPermission = await requestPermissions();
     if (!hasPermission) return;
 
@@ -77,23 +94,21 @@ export default function EditProfileScreen() {
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
-        const uri = result.assets[0].uri;
-        setProfilePicture(uri); // Show preview immediately
-        // Convert to base64 in background (will be used when saving)
+        setProfilePicture(result.assets[0].uri);
       }
     } catch (error) {
       console.error('[EditProfile] Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image. Please try again.');
+      showDialog('Couldn’t pick image', 'Please try again.');
     }
   };
 
   const takePhoto = async () => {
+    closeDialog();
     const hasPermission = await requestCameraPermissions();
     if (!hasPermission) {
-      Alert.alert(
-        'Permission Required',
-        'We need access to your camera to take a photo.',
-        [{ text: 'OK' }]
+      showDialog(
+        'Permission needed',
+        'Allow camera access to take a profile photo.'
       );
       return;
     }
@@ -106,31 +121,39 @@ export default function EditProfileScreen() {
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
-        const uri = result.assets[0].uri;
-        setProfilePicture(uri); // Show preview immediately
+        setProfilePicture(result.assets[0].uri);
       }
     } catch (error) {
       console.error('[EditProfile] Error taking photo:', error);
-      Alert.alert('Error', 'Failed to take photo. Please try again.');
+      showDialog('Couldn’t take photo', 'Please try again.');
     }
   };
 
   const showImagePickerOptions = () => {
-    Alert.alert(
-      'Change Profile Picture',
-      'Choose an option',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Take Photo', onPress: takePhoto },
-        { text: 'Choose from Library', onPress: pickImage },
-        ...(profilePicture ? [{ text: 'Remove Photo', style: 'destructive', onPress: () => setProfilePicture(null) }] : []),
-      ]
-    );
+    setDialog({
+      title: 'Change photo',
+      message: 'Choose how you’d like to update your profile picture.',
+      actions: [
+        { label: 'Take photo', tone: 'primary', onPress: takePhoto },
+        { label: 'Choose from library', tone: 'secondary', onPress: pickImage },
+        ...(profilePicture
+          ? [{
+              label: 'Remove photo',
+              tone: 'danger' as const,
+              onPress: () => {
+                setProfilePicture(null);
+                closeDialog();
+              },
+            }]
+          : []),
+        { label: 'Cancel', tone: 'ghost', onPress: closeDialog },
+      ],
+    });
   };
 
   const handleSave = async () => {
     if (!name.trim()) {
-      Alert.alert('Error', 'Please enter your name.');
+      showDialog('Name required', 'Please enter your name before saving.');
       return;
     }
 
@@ -138,7 +161,7 @@ export default function EditProfileScreen() {
     try {
       const userData = await AsyncStorage.getItem(AUTH_USER_STORAGE_KEY);
       if (!userData) {
-        Alert.alert('Error', 'User data not found. Please login again.');
+        showDialog('Session expired', 'Please sign in again.');
         return;
       }
 
@@ -146,34 +169,28 @@ export default function EditProfileScreen() {
       const userId = user.id;
 
       if (!userId) {
-        Alert.alert('Error', 'User ID not found. Please login again.');
+        showDialog('Session expired', 'Please sign in again.');
         return;
       }
 
-      // Convert profile picture to base64 if it's a local URI
       let profilePictureBase64: string | null = null;
       if (profilePicture) {
-        // Check if it's already a base64 data URL (from database or web picker)
         if (profilePicture.startsWith('data:image/')) {
           profilePictureBase64 = profilePicture;
         } else if (Platform.OS === 'web') {
-          // On web, if it's not a data URL, it might be a blob URL - try to convert it
-          // For web, the image picker should already return a data URL
           profilePictureBase64 = profilePicture;
         } else {
-          // Convert local URI to base64 (native platforms)
           try {
             profilePictureBase64 = await convertImageToBase64(profilePicture);
           } catch (error) {
             console.error('[EditProfile] Failed to convert image:', error);
-            Alert.alert('Error', 'Failed to process image. Please try again.');
+            showDialog('Couldn’t process image', 'Please try another photo.');
             setSaving(false);
             return;
           }
         }
       }
 
-      // Update user in database
       try {
         const response = await callApi<{ success: boolean; data: { user: any } }>(
           `/users/${userId}`,
@@ -187,7 +204,6 @@ export default function EditProfileScreen() {
         );
 
         if (response.success && response.data?.user) {
-          // Update local storage with response from backend
           const updatedUser = {
             ...user,
             name: response.data.user.name || name.trim(),
@@ -195,16 +211,27 @@ export default function EditProfileScreen() {
             profilePicture: response.data.user.profilePicture || profilePictureBase64,
           };
           await AsyncStorage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(updatedUser));
-          
-          Alert.alert('Success', 'Profile updated successfully!', [
-            { text: 'OK', onPress: () => router.back() }
-          ]);
+          await AuthService.cacheProfilePicture(userId, updatedUser.profilePicture ?? null);
+
+          setDialog({
+            title: 'Profile updated',
+            message: 'Your changes have been saved.',
+            actions: [
+              {
+                label: 'Done',
+                tone: 'primary',
+                onPress: () => {
+                  closeDialog();
+                  router.back();
+                },
+              },
+            ],
+          });
         } else {
           throw new Error('Update failed');
         }
       } catch (apiError: any) {
         console.error('[EditProfile] API error:', apiError);
-        // Fallback to local storage if API fails
         const updatedUser = {
           ...user,
           name: name.trim(),
@@ -212,15 +239,25 @@ export default function EditProfileScreen() {
           profilePicture: profilePictureBase64,
         };
         await AsyncStorage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(updatedUser));
-        Alert.alert(
-          'Warning',
-          'Profile saved locally. Could not sync with server. Please check your connection.',
-          [{ text: 'OK', onPress: () => router.back() }]
-        );
+        await AuthService.cacheProfilePicture(userId, profilePictureBase64);
+        setDialog({
+          title: 'Saved on this device',
+          message: 'Could not sync with the server. Check your connection — your photo is kept locally for now.',
+          actions: [
+            {
+              label: 'OK',
+              tone: 'primary',
+              onPress: () => {
+                closeDialog();
+                router.back();
+              },
+            },
+          ],
+        });
       }
     } catch (error) {
       console.error('[EditProfile] Failed to save profile:', error);
-      Alert.alert('Error', 'Failed to save profile. Please try again.');
+      showDialog('Couldn’t save', 'Please try again.');
     } finally {
       setSaving(false);
     }
@@ -329,6 +366,14 @@ export default function EditProfileScreen() {
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      <AppDialog
+        visible={!!dialog}
+        title={dialog?.title ?? ''}
+        message={dialog?.message}
+        actions={dialog?.actions}
+        onRequestClose={closeDialog}
+      />
     </View>
   );
 }

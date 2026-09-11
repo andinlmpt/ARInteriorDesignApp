@@ -54,6 +54,9 @@ public class SpawnFurnitureRequest
     public float width;
     public float height;
     public float depth;
+
+    /// <summary>Exact reference label from the product sheet, e.g. L 90" × W 32" × H 32".</summary>
+    public string dimensionLabel;
 }
 
 /// <summary>Scan coverage/quality snapshot returned by GetScanStatus and pushed on scanProgress.</summary>
@@ -83,6 +86,103 @@ public class ScanStatusPayload
 
     /// <summary>Short machine-readable hint for the RN copy, e.g. "moveAround", "findFloor", "scanWalls".</summary>
     public string hint;
+}
+
+/// <summary>Floor outline vertices sent after room scan confirm.</summary>
+[Serializable]
+public class RoomPolygonPayload
+{
+    public ARDesignVec3[] points;
+}
+
+/// <summary>
+/// Payload for roomScanConfirmed — scan status plus computed room dimensions (metres).
+/// </summary>
+[Serializable]
+public class RoomConfirmedPayload
+{
+    public string phase;
+    public float progress;
+    public bool readyToConfirm;
+    public bool confirmed;
+    public int planeCount;
+    public int horizontalPlaneCount;
+    public int verticalPlaneCount;
+    public int meshChunkCount;
+    public int pointCount;
+    public float horizontalAreaSqm;
+    public float verticalAreaSqm;
+    public float lookAroundCoverage;
+    public string hint;
+
+    /// <summary>Room width in metres (X axis).</summary>
+    public float width;
+    /// <summary>Room length/depth in metres (Z axis).</summary>
+    public float depth;
+    /// <summary>Wall height in metres (Y axis).</summary>
+    public float height;
+    public float floorAreaSqm;
+    public float wallHeight;
+    /// <summary>Human-readable label, e.g. L 4.2m × W 3.1m × H 2.5m.</summary>
+    public string dimensionLabel;
+    public ARDesignVec3 boundsMin;
+    public ARDesignVec3 boundsMax;
+    public int cornerCount;
+    public RoomPolygonPayload floorPolygon;
+
+    public RoomMeasurementSaveRequest ToSaveRequest()
+    {
+        return new RoomMeasurementSaveRequest
+        {
+            width = width,
+            depth = depth,
+            height = height,
+            floorAreaSqm = floorAreaSqm,
+            wallHeight = wallHeight,
+            dimensionLabel = dimensionLabel ?? string.Empty,
+            boundsMin = boundsMin,
+            boundsMax = boundsMax,
+            floorPolygon = floorPolygon?.points ?? System.Array.Empty<ARDesignVec3>(),
+            scanMetadata = new RoomScanMetadataPayload
+            {
+                planeCount = planeCount,
+                meshChunkCount = meshChunkCount,
+                horizontalAreaSqm = horizontalAreaSqm,
+                verticalAreaSqm = verticalAreaSqm,
+                cornerCount = cornerCount,
+                source = "unity-ar",
+            },
+        };
+    }
+}
+
+[Serializable]
+public class RoomScanMetadataPayload
+{
+    public int planeCount;
+    public int meshChunkCount;
+    public float horizontalAreaSqm;
+    public float verticalAreaSqm;
+    public int cornerCount;
+    public string source;
+}
+
+/// <summary>Body for POST /api/v1/room-measurements.</summary>
+[Serializable]
+public class RoomMeasurementSaveRequest
+{
+    public string projectId;
+    public string name;
+    public float width;
+    public float depth;
+    public float height;
+    public float floorAreaSqm;
+    public float wallHeight;
+    public string dimensionLabel;
+    public ARDesignVec3 boundsMin;
+    public ARDesignVec3 boundsMax;
+    public ARDesignVec3[] floorPolygon;
+    public RoomScanMetadataPayload scanMetadata;
 }
 
 /// <summary>One placed furniture instance.</summary>

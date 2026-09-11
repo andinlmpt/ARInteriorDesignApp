@@ -42,6 +42,11 @@ const userSchema = new mongoose.Schema({
     type: String, // base64 data URL from device camera/gallery
     select: false, // exclude from default queries to avoid large payloads
   },
+  role: {
+    type: String,
+    enum: ['user', 'admin'],
+    default: 'user',
+  },
   preferences: {
     theme: { type: String, enum: ['light', 'dark', 'system'], default: 'system' },
     notifications: { type: Boolean, default: true },

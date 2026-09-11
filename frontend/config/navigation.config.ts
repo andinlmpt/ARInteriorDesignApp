@@ -20,7 +20,12 @@ export type ScreenName =
   | 'layout-3d'
   | 'model-preview'
   | 'room-view'
-  | 'create-project';
+  | 'room-measurements'
+  | 'create-project'
+  | 'projects'
+  | 'about-us'
+  | 'help-support'
+  | 'terms-privacy';
 
 // Screen configuration type
 export interface ScreenConfig {
@@ -152,6 +157,12 @@ export const NAVIGATION_SCREENS: Record<string, ScreenConfig[]> = {
         orientation: 'portrait',
       },
     },
+    {
+      name: 'room-measurements',
+      options: {
+        ...ANIMATION_PRESETS.slideRight,
+      },
+    },
   ],
 
   // Utility Screens
@@ -160,6 +171,30 @@ export const NAVIGATION_SCREENS: Record<string, ScreenConfig[]> = {
       name: 'create-project',
       options: {
         ...ANIMATION_PRESETS.card,
+      },
+    },
+    {
+      name: 'projects',
+      options: {
+        ...ANIMATION_PRESETS.slideRight,
+      },
+    },
+    {
+      name: 'about-us',
+      options: {
+        ...ANIMATION_PRESETS.slideRight,
+      },
+    },
+    {
+      name: 'help-support',
+      options: {
+        ...ANIMATION_PRESETS.slideRight,
+      },
+    },
+    {
+      name: 'terms-privacy',
+      options: {
+        ...ANIMATION_PRESETS.slideRight,
       },
     },
   ],

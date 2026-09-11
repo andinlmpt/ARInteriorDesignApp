@@ -2,18 +2,18 @@ import 'dotenv/config';
 
 const existingConfig = {
   expo: {
-    name: 'AR Interior Design',
+    name: 'Maharlika Furniture',
     slug: 'ARInteriorDesinApp',
     version: '1.0.0',
     orientation: 'portrait',
     scheme: 'arinteriordesinapp',
     userInterfaceStyle: 'automatic',
     newArchEnabled: true,
-    icon: './assets/images/splash.png',
+    icon: './assets/images/icon.png',
     splash: {
       image: './assets/images/splash.png',
       resizeMode: 'contain',
-      backgroundColor: '#FAF9F7',
+      backgroundColor: '#FFFFFF',
     },
     ios: {
       supportsTablet: true,
@@ -21,13 +21,13 @@ const existingConfig = {
     android: {
       package: 'com.arinteriordesign.app',
       adaptiveIcon: {
-        foregroundImage: './assets/images/splash.png',
-        backgroundColor: '#FAF9F7',
+        foregroundImage: './assets/images/icon.png',
+        backgroundColor: '#FFFFFF',
       },
     },
     web: {
       output: 'static',
-      favicon: './assets/images/splash.png',
+      favicon: './assets/images/icon.png',
     },
     plugins: [
       'expo-router',

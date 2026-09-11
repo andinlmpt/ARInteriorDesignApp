@@ -21,6 +21,12 @@ public class PlacedFurniture : MonoBehaviour
     /// <summary>Real-world size in metres requested by RN. Zero when unspecified.</summary>
     public Vector3 RequestedDimensions { get; private set; }
 
+    /// <summary>Authoritative catalog size in metres (width=x, height=y, depth=z).</summary>
+    public Vector3 CatalogDimensions { get; private set; }
+
+    /// <summary>Exact label from the product reference sheet.</summary>
+    public string DimensionLabel { get; private set; }
+
     /// <summary>Local scale that makes the model match RequestedDimensions. This is 1.0x.</summary>
     public Vector3 TrueScale { get; private set; } = Vector3.one;
 
@@ -68,14 +74,21 @@ public class PlacedFurniture : MonoBehaviour
         Vector3 requestedDimensions,
         Vector3 trueScale,
         Bounds localBounds,
-        ARDesignLayoutModeController.ViewMode placementSpace)
+        ARDesignLayoutModeController.ViewMode placementSpace,
+        Vector3 catalogDimensions,
+        string dimensionLabel)
     {
         InstanceId = instanceId;
         ModelId = modelId;
         RequestedDimensions = requestedDimensions;
+        CatalogDimensions = catalogDimensions;
+        DimensionLabel = dimensionLabel ?? string.Empty;
         TrueScale = trueScale;
         LocalBounds = localBounds;
         PlacementSpace = placementSpace;
+
+        var label = GetComponent<FurnitureDimensionLabel>() ?? gameObject.AddComponent<FurnitureDimensionLabel>();
+        label.Setup(this, DimensionLabel);
     }
 
     public void BindWorldAnchor(ARAnchor anchor)

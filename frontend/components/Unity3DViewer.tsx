@@ -271,7 +271,7 @@ const UnitySetupInstructions: React.FC<UnitySetupInstructionsProps> = ({
             4. Set EXPO_PUBLIC_UNITY_BUILD_URL in .env file
           </Text>
           <Text style={styles.instructionsSubtext}>
-            5. See docs/UNITY_SETUP.md for detailed instructions
+            5. Rebuild the Unity WebGL player and update EXPO_PUBLIC_UNITY_BUILD_URL
           </Text>
         </>
       ) : (

@@ -14,7 +14,9 @@ build/
 .env.local
 .env.*.local
 backend/.env
+backend/uploads/
 frontend/.env
+admin/.env
 
 # OS files
 .DS_Store
@@ -63,6 +65,8 @@ InteriorDesignViewer/[Rr]ecordings/
 InteriorDesignViewer/.utmp/
 InteriorDesignViewer/Assets/_Recovery/
 InteriorDesignViewer/Assets/_App/Furniture/Baked/
+# Large furniture meshes are hosted on GCS — do not commit binary GLBs.
+InteriorDesignViewer/Assets/_App/Furniture/GLB/**/*.glb
 InteriorDesignViewer_BurstDebugInformation_DoNotShip/
 _reference-*/
 

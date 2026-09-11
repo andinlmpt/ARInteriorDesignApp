@@ -21,14 +21,18 @@ import {
   ARPlannerOverlay,
   type PlannerTool,
 } from '@/components/ar-view/ARPlannerOverlay';
+import { RoomMeasurementSaveModal } from '@/components/ar-view/RoomMeasurementSaveModal';
 import { mapFurnitureIdToUnity } from '@/config/unity-furniture-map';
-import { FURNITURE_LIBRARY } from '@/data/furnitureLibrary';
-import type { FurnitureCategory } from '@/types/ar-view';
+import { useFurnitureCatalog } from '@/hooks/useFurnitureCatalog';
+import type { FurnitureCategory, FurnitureLibraryItem } from '@/types/ar-view';
 import type {
   HistoryStatePayload,
   LayoutPayload,
+  RoomConfirmedPayload,
   ScanStatusPayload,
 } from '@/types/unity-bridge';
+import { RoomMeasurementService } from '@/services/RoomMeasurementService';
+import { projectService } from '@/services/ProjectService';
 import { colors, spacing, radii } from '@/components/ui/theme';
 import { isUnityViewAvailable } from '@/utils/unityAvailability';
 
@@ -62,7 +66,11 @@ export function ARViewUnityScreen() {
     : params.furniture;
   const unityRef = useRef<UnityARViewerHandle>(null);
   const autoSelectedRef = useRef(false);
+  const pendingSpawnRef = useRef<string | null>(null);
+  const placementUnlockedRef = useRef(false);
+  const measurementFlowCompleteRef = useRef(false);
   const unityAvailable = isUnityViewAvailable();
+  const { items: catalogItems, loading: catalogLoading, error: catalogError } = useFurnitureCatalog();
 
   const [selectedCategory, setSelectedCategory] = useState<FurnitureCategory | 'all'>('all');
   const [selectedLibraryItem, setSelectedLibraryItem] = useState<string | null>(
@@ -83,6 +91,16 @@ export function ARViewUnityScreen() {
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [activeTool, setActiveTool] = useState<PlannerTool>('place');
+  const [measurementModalVisible, setMeasurementModalVisible] = useState(false);
+  const [confirmedPayload, setConfirmedPayload] = useState<RoomConfirmedPayload | null>(null);
+  const [savingMeasurement, setSavingMeasurement] = useState(false);
+  const [measurementSaved, setMeasurementSaved] = useState(false);
+  const [measurementError, setMeasurementError] = useState<string | null>(null);
+  const [placementUnlocked, setPlacementUnlocked] = useState(false);
+
+  useEffect(() => {
+    placementUnlockedRef.current = placementUnlocked;
+  }, [placementUnlocked]);
 
   useEffect(() => {
     if (!unityAvailable) return;
@@ -103,27 +121,43 @@ export function ARViewUnityScreen() {
     return () => clearTimeout(timer);
   }, [unityAvailable, unityReady]);
 
-  const spawnCatalogItem = useCallback((itemId: string) => {
-    const item = FURNITURE_LIBRARY.find((entry) => entry.id === itemId);
-    const unityId = mapFurnitureIdToUnity(itemId);
+  const spawnCatalogItem = useCallback((itemId: string, items: FurnitureLibraryItem[]) => {
+    const item = items.find((entry) => entry.id === itemId);
+    if (!item) {
+      pendingSpawnRef.current = itemId;
+      setStatusMessage(`Furniture "${itemId}" is not in the catalog yet`);
+      return;
+    }
+
+    const glbUrl = typeof item.model3D?.url === 'string' ? item.model3D.url : undefined;
     unityRef.current?.spawnFurniture({
       modelId: itemId,
-      catalogId: unityId,
-      width: item?.dimensions.width ?? 0.6,
-      height: item?.dimensions.height ?? 0.6,
-      depth: item?.dimensions.length ?? 0.6,
+      catalogId: mapFurnitureIdToUnity(itemId),
+      glbUrl,
+      width: item.dimensions.width,
+      height: item.dimensions.height,
+      depth: item.dimensions.length,
     });
   }, []);
+
+  useEffect(() => {
+    if (!placementUnlocked || catalogLoading || catalogItems.length === 0) return;
+    const pendingId = pendingSpawnRef.current;
+    if (!pendingId) return;
+
+    pendingSpawnRef.current = null;
+    spawnCatalogItem(pendingId, catalogItems);
+  }, [placementUnlocked, catalogLoading, catalogItems, spawnCatalogItem]);
 
   const handleSelectItem = useCallback(
     (itemId: string) => {
       setSelectedLibraryItem(itemId);
       setActiveTool('place');
-      spawnCatalogItem(itemId);
-      setStatusMessage('Placing… drag to move, pinch to scale, twist to rotate');
+      spawnCatalogItem(itemId, catalogItems);
+      setStatusMessage('Aim at the floor — tap when the white reticle appears');
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     },
-    [spawnCatalogItem]
+    [catalogItems, spawnCatalogItem]
   );
 
   const handleUnityReady = useCallback(() => {
@@ -148,28 +182,107 @@ export function ARViewUnityScreen() {
   const handleScanStatus = useCallback((payload: ScanStatusPayload) => {
     setScanProgress(payload.progress ?? 0);
     setScanReady(Boolean(payload.readyToConfirm));
-    setRoomConfirmed(Boolean(payload.confirmed));
-    setStatusMessage(scanHintMessage(payload));
+    if (!placementUnlockedRef.current) {
+      setRoomConfirmed(Boolean(payload.confirmed));
+      setStatusMessage(scanHintMessage(payload));
+    }
   }, []);
 
   const handleRoomConfirmed = useCallback(
-    (payload: ScanStatusPayload) => {
+    (payload: RoomConfirmedPayload) => {
+      if (measurementFlowCompleteRef.current) return;
+
       setRoomConfirmed(true);
       setScanProgress(1);
       setScanReady(true);
-      setStatusMessage(scanHintMessage({ ...payload, hint: 'confirmed' }));
+      setPlacementUnlocked(false);
+      setMeasurementSaved(false);
+      setMeasurementError(null);
+      setConfirmedPayload(payload);
+      setMeasurementModalVisible(true);
+      setStatusMessage('Room measured — save or continue to furniture');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
 
       if (selectedLibraryItem) {
-        spawnCatalogItem(selectedLibraryItem);
+        pendingSpawnRef.current = selectedLibraryItem;
       }
     },
-    [selectedLibraryItem, spawnCatalogItem]
+    [selectedLibraryItem]
   );
+
+  const handleSaveMeasurement = useCallback(async () => {
+    if (!confirmedPayload || savingMeasurement || measurementSaved) return;
+    if (
+      confirmedPayload.width <= 0 ||
+      confirmedPayload.depth <= 0 ||
+      confirmedPayload.height <= 0
+    ) {
+      setMeasurementError('Room dimensions are missing. Try scanning again.');
+      return;
+    }
+
+    setSavingMeasurement(true);
+    setMeasurementError(null);
+
+    try {
+      const saved = await RoomMeasurementService.save({
+        width: confirmedPayload.width,
+        depth: confirmedPayload.depth,
+        height: confirmedPayload.height,
+        floorAreaSqm: confirmedPayload.floorAreaSqm,
+        wallHeight: confirmedPayload.wallHeight,
+        dimensionLabel: confirmedPayload.dimensionLabel,
+        boundsMin: confirmedPayload.boundsMin,
+        boundsMax: confirmedPayload.boundsMax,
+        floorPolygon: confirmedPayload.floorPolygon?.points,
+        scanMetadata: {
+          planeCount: confirmedPayload.planeCount,
+          meshChunkCount: confirmedPayload.meshChunkCount,
+          horizontalAreaSqm: confirmedPayload.horizontalAreaSqm,
+          verticalAreaSqm: confirmedPayload.verticalAreaSqm,
+          cornerCount: confirmedPayload.cornerCount,
+          source: 'unity-ar',
+        },
+        name: 'Room scan',
+      });
+      setMeasurementSaved(true);
+      setStatusMessage(
+        saved.dimensionLabel
+          ? `Room saved — ${saved.dimensionLabel}`
+          : 'Room size saved to your account'
+      );
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } catch {
+      setMeasurementError('Could not save. Check Wi‑Fi and that the backend is running.');
+    } finally {
+      setSavingMeasurement(false);
+    }
+  }, [confirmedPayload, measurementSaved, savingMeasurement]);
+
+  const handleContinueFromMeasurement = useCallback(() => {
+    if (savingMeasurement) return;
+
+    measurementFlowCompleteRef.current = true;
+    setMeasurementModalVisible(false);
+    setPlacementUnlocked(true);
+    placementUnlockedRef.current = true;
+    setRoomConfirmed(true);
+    setStatusMessage('Room locked. Aim at the floor and tap to place furniture');
+
+    if (selectedLibraryItem) {
+      if (catalogLoading || catalogItems.length === 0) {
+        pendingSpawnRef.current = selectedLibraryItem;
+      } else {
+        spawnCatalogItem(selectedLibraryItem, catalogItems);
+      }
+    }
+  }, [selectedLibraryItem, catalogItems, catalogLoading, savingMeasurement, spawnCatalogItem]);
 
   const handleLayoutChanged = useCallback((payload: LayoutPayload) => {
     setPlacedModelIds((payload.furniture ?? []).map((item) => item.modelId));
-    setRoomConfirmed(Boolean(payload.roomConfirmed));
+    if (!placementUnlockedRef.current) {
+      setRoomConfirmed(Boolean(payload.roomConfirmed));
+    }
   }, []);
 
   const handleHistoryChanged = useCallback((payload: HistoryStatePayload) => {
@@ -182,9 +295,17 @@ export function ARViewUnityScreen() {
   }, []);
 
   const handleRescan = useCallback(() => {
+    measurementFlowCompleteRef.current = false;
     setRoomConfirmed(false);
     setScanProgress(0);
     setScanReady(false);
+    setPlacementUnlocked(false);
+    placementUnlockedRef.current = false;
+    setMeasurementModalVisible(false);
+    setConfirmedPayload(null);
+    setMeasurementSaved(false);
+    setMeasurementError(null);
+    setSavingMeasurement(false);
     setPlacedModelIds([]);
     setCanUndo(false);
     setCanRedo(false);
@@ -223,7 +344,7 @@ export function ARViewUnityScreen() {
           onLayoutChanged={handleLayoutChanged}
           onHistoryChanged={handleHistoryChanged}
           onFurnitureInstancePlaced={() => {
-            setStatusMessage('Furniture placed');
+            setStatusMessage('Placed — drag to move, pinch to scale, twist to rotate');
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
           }}
           onExportComplete={(payload) => {
@@ -232,6 +353,18 @@ export function ARViewUnityScreen() {
                 ? `Exported ${payload.fileName} (${Math.round(payload.byteLength / 1024)} KB)`
                 : `Export failed: ${payload.error || 'unknown error'}`
             );
+            if (payload.success) {
+              void projectService
+                .saveUnityLayoutExport(payload)
+                .then(() => {
+                  setStatusMessage(
+                    `Saved to Projects · ${payload.fileName} (${Math.round(payload.byteLength / 1024)} KB)`
+                  );
+                })
+                .catch((err) => {
+                  console.warn('[ARViewUnity] Failed to save export to Projects:', err);
+                });
+            }
           }}
           onUnityError={(payload) => {
             setStatusMessage(payload.message || payload.code);
@@ -287,7 +420,11 @@ export function ARViewUnityScreen() {
 
       {unityAvailable && unityReady && !unityTimedOut && (
         <ARPlannerOverlay
-          roomConfirmed={roomConfirmed}
+          catalogItems={catalogItems}
+          catalogLoading={catalogLoading}
+          catalogError={catalogError}
+          roomConfirmed={placementUnlocked}
+          scanModalOpen={measurementModalVisible}
           scanProgress={scanProgress}
           scanReady={scanReady}
           statusMessage={statusMessage}
@@ -312,6 +449,16 @@ export function ARViewUnityScreen() {
           onBack={handleBack}
         />
       )}
+
+      <RoomMeasurementSaveModal
+        visible={measurementModalVisible}
+        payload={confirmedPayload}
+        saving={savingMeasurement}
+        saved={measurementSaved}
+        error={measurementError}
+        onSave={handleSaveMeasurement}
+        onContinue={handleContinueFromMeasurement}
+      />
     </View>
   );
 }

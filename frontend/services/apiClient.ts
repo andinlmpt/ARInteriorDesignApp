@@ -237,14 +237,24 @@ export async function callApi<T>(
          lastError.message?.includes('connection timed out') ||
          lastError.message?.includes('ETIMEDOUT'));
 
-      if ((isAbort || isNetwork) && attempt < MAX_RETRIES) {
+      // Network flakes: retry. Hard timeouts: do not burn 4×15s waiting on a dead Mongo path.
+      if (isNetwork && !isAbort && attempt < MAX_RETRIES) {
         await sleep(2 ** attempt * 500);
         attempt += 1;
         continue;
       }
 
+      if (isAbort) {
+        const timeoutError = new Error(
+          `Request timed out contacting ${baseUrl}. Is the backend running and MongoDB reachable?`
+        );
+        (timeoutError as any).isTimeout = true;
+        (timeoutError as any).name = 'TimeoutError';
+        throw timeoutError;
+      }
+
       // Enhance error message for connection errors (but don't log to console - service will handle fallback)
-      if (isNetwork && !isAbort) {
+      if (isNetwork) {
         const connectionError = new Error(`Connection refused: Backend server at ${baseUrl} is not available`);
         (connectionError as any).isConnectionError = true;
         throw connectionError;

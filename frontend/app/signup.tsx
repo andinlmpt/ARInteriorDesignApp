@@ -5,12 +5,14 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { emailExists, createUser, AUTH_USER_STORAGE_KEY } from '@/data/authData';
+import { AUTH_USER_STORAGE_KEY } from '@/data/authData';
 import AuthService from '@/services/AuthService';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, radii } from '@/components/ui/theme';
 import { AnimatedButton, FadeInView, SlideInView } from '@/components/interactive';
 import { getHorizontalPadding, isSmallScreen, getResponsiveFontSize } from '@/utils/responsive';
+import { AppLogo } from '@/components/ui/AppLogo';
+import { BrandHeader } from '@/components/ui/BrandHeader';
 
 const { width, height } = Dimensions.get('window');
 
@@ -212,18 +214,6 @@ export default function SignUpScreen() {
       return;
     }
 
-    if (emailExists(trimmedEmail)) {
-      Alert.alert(
-        'Email Already Registered',
-        'This email is already registered. Would you like to sign in instead?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Sign In', onPress: () => router.replace('/login') },
-        ]
-      );
-      return;
-    }
-
     setIsLoading(true);
 
     try {
@@ -274,12 +264,12 @@ export default function SignUpScreen() {
       >
         {/* Logo and Branding */}
         <View style={styles.topBranding}>
-          <FadeInView delay={100} style={{ alignItems: 'center', width: '100%' }}>
-            <View style={[styles.logoContainer, { backgroundColor: '#FFFFFF' }]}>
-              <Ionicons name="cube" size={48} color={accentColor} />
-            </View>
-            <Text style={[styles.topAppName, { color: '#1E3A8A' }]}>AR Interior Design</Text>
-            <Text style={[styles.topAppTagline, { color: '#1E40AF' }]}>Create your account</Text>
+          <FadeInView delay={100} style={styles.brandingWrap}>
+            <AppLogo size={112} elevated style={styles.logoContainer} />
+            <BrandHeader
+              titleStyle={styles.topAppName}
+              taglineStyle={styles.topAppTagline}
+            />
           </FadeInView>
         </View>
 
@@ -453,6 +443,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: getHorizontalPadding(spacing.md),
   },
+  brandingWrap: {
+    width: '100%',
+    alignItems: 'center',
+  },
   contentWrapper: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -475,17 +469,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   logoContainer: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    alignItems: 'center',
-    justifyContent: 'center',
     marginBottom: spacing.md,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
   },
   topAppName: {
     fontSize: getResponsiveFontSize(isSmallScreen ? 24 : 28),
@@ -493,11 +477,15 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
     letterSpacing: 0.5,
     textAlign: 'center',
+    width: '100%',
+    color: '#1E3A8A',
   },
   topAppTagline: {
     fontSize: getResponsiveFontSize(isSmallScreen ? 14 : 16),
     fontWeight: '500',
     textAlign: 'center',
+    width: '100%',
+    color: '#1E40AF',
   },
   titleContainer: {
     marginBottom: isSmallScreen ? spacing.lg : spacing.xl,

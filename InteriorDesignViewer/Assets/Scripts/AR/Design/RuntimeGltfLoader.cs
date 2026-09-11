@@ -3,6 +3,9 @@ using UnityEngine;
 #if GLTFAST_PRESENT
 using System.Threading.Tasks;
 using GLTFast;
+using GLTFast.Materials;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
 #endif
 
 /// <summary>
@@ -59,8 +62,19 @@ public class RuntimeGltfLoader : MonoBehaviour
 
         try
         {
-            var import = new GltfImport();
-            var loadTask = import.Load(url);
+            var urpAsset = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
+            IMaterialGenerator materialGenerator = urpAsset != null
+                ? new UniversalRPMaterialGenerator(urpAsset)
+                : null;
+
+            var importSettings = new ImportSettings
+            {
+                GenerateMipMaps = true,
+                AnisotropicFilterLevel = 4,
+            };
+
+            var import = new GltfImport(materialGenerator: materialGenerator);
+            var loadTask = import.Load(url, importSettings);
             var timeoutTask = Task.Delay(TimeSpan.FromSeconds(timeoutSeconds));
 
             if (await Task.WhenAny(loadTask, timeoutTask) == timeoutTask)
@@ -82,6 +96,8 @@ public class RuntimeGltfLoader : MonoBehaviour
                 onComplete(null, $"glTFast failed to instantiate {url}");
                 return;
             }
+
+            GltfUrpMaterialFixer.Apply(root);
 
             onComplete(root, null);
         }

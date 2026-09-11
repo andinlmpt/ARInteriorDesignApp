@@ -48,8 +48,14 @@ public class FurniturePlacementController : MonoBehaviour
     [SerializeField] private RuntimeGltfLoader gltfLoader;
     [Tooltip("Used when neither a GLB URL nor a catalog prefab resolves. Validates the placement pipeline on its own.")]
     [SerializeField] private GameObject placeholderPrefab;
+    [Tooltip("When remote-catalog-only is active, allow falling back to bundled Resources prefabs if GLB download fails.")]
+    [SerializeField] private bool allowLocalPrefabFallback = false;
 
     [Header("Placement behaviour")]
+    [Tooltip("Show the white floor reticle while a model is armed. Off = tap the floor directly to place.")]
+    [SerializeField] private bool usePlacementIndicator = true;
+    [Tooltip("After room confirm, allow floor taps on the right portion of the screen even when Unity UI is under the finger (catalog is on the left).")]
+    [SerializeField] private float floorTapScreenXMin = 0.34f;
     [Tooltip("In Planner mode, drop the model as soon as the catalog selects it. Live AR always waits for a floor tap.")]
     [SerializeField] private bool placeImmediatelyOnSpawn = true;
     [Tooltip("Metres in front of the camera used by immediate placement (live AR only).")]
@@ -105,6 +111,8 @@ public class FurniturePlacementController : MonoBehaviour
 
     PendingModel pending;
     int nextInstanceIndex = 1;
+    int activeGlbLoads;
+    Vector2? deferredPlacementTap;
 
     void Awake()
     {
@@ -119,6 +127,9 @@ public class FurniturePlacementController : MonoBehaviour
         if (arCamera == null) arCamera = Camera.main;
 
         EnsureFurnitureParentInSessionSpace();
+
+        if (placementIndicator != null)
+            placementIndicator.gameObject.SetActive(usePlacementIndicator);
     }
 
     void OnEnable()
@@ -195,8 +206,9 @@ public class FurniturePlacementController : MonoBehaviour
         if (arCamera == null) return;
 
         var canPlace = CanPlace();
+        var awaitingPlacement = pending != null || activeGlbLoads > 0;
 
-        if (canPlace && pending != null)
+        if (usePlacementIndicator && canPlace && awaitingPlacement)
         {
             placementIndicator?.SetMinDepthBelowCamera(IsRoomConfirmed() ? 0.22f : minDepthBelowCamera);
             if (Touch.activeTouches.Count >= 1)
@@ -204,19 +216,24 @@ public class FurniturePlacementController : MonoBehaviour
             else
                 placementIndicator?.StartTracking();
         }
-        else if (pending == null && Selected == null)
+        else if (!usePlacementIndicator || (!awaitingPlacement && Selected == null))
             placementIndicator?.StopTracking();
 
         if (SuppressTapInput) return;
-        if (!TryGetTapPosition(out var tapPoint)) return;
+        if (!TryGetPlacementTap(out var tapPoint)) return;
 
-        // Selecting an existing piece always wins over dropping a new one —
-        // otherwise you can never re-select a chair that sits on the floor.
         if (TrySelectAtScreenPoint(tapPoint)) return;
 
         if (!canPlace)
         {
             Select(null);
+            return;
+        }
+
+        if (activeGlbLoads > 0 && pending == null)
+        {
+            deferredPlacementTap = tapPoint;
+            Debug.Log("[FurniturePlacementController] Model loading — tap will place when the download finishes.");
             return;
         }
 
@@ -226,11 +243,12 @@ public class FurniturePlacementController : MonoBehaviour
             return;
         }
 
-        if (!TryGetFloorPose(tapPoint, out var pose))
+        if (!TryGetPlacementPose(tapPoint, out var pose))
+        {
+            Debug.Log("[FurniturePlacementController] No floor under tap — wait for the white reticle, then tap the floor.");
             return;
+        }
 
-        // Seat on the same plane the white reticle is showing.
-        pose.position = WithIndicatorFloorY(pose.position);
         CommitPending(pose);
     }
 
@@ -254,6 +272,8 @@ public class FurniturePlacementController : MonoBehaviour
             return;
         }
 
+        deferredPlacementTap = null;
+
         if (CountInCurrentSpace() >= maxInstances)
         {
             SpawnFailed?.Invoke("instanceLimit", $"Scene already holds the maximum of {maxInstances} items.");
@@ -261,21 +281,37 @@ public class FurniturePlacementController : MonoBehaviour
         }
 
         var dimensions = ResolveDimensions(request);
+        EnsureGlbUrlFromCatalog(request);
 
         if (!string.IsNullOrWhiteSpace(request.glbUrl))
         {
             if (gltfLoader == null || !RuntimeGltfLoader.IsSupported)
             {
                 Debug.LogWarning("[FurniturePlacementController] glTFast unavailable — falling back to catalog/placeholder.");
+                if (catalog != null && catalog.RemoteCatalogOnly && !allowLocalPrefabFallback)
+                {
+                    SpawnFailed?.Invoke("remoteOnly",
+                        "Remote furniture requires glTFast. Rebuild with glTFast enabled or disable remote-catalog-only mode.");
+                    return;
+                }
                 ArmFromPrefab(request, dimensions);
                 return;
             }
 
+            activeGlbLoads++;
             gltfLoader.Load(request.glbUrl, (model, error) =>
             {
+                activeGlbLoads = Mathf.Max(0, activeGlbLoads - 1);
+
                 if (model == null)
                 {
                     Debug.LogWarning($"[FurniturePlacementController] GLB load failed: {error}");
+                    if (catalog != null && catalog.RemoteCatalogOnly && !allowLocalPrefabFallback)
+                    {
+                        SpawnFailed?.Invoke("glbLoadFailed",
+                            $"Could not download '{ResolveModelId(request)}'. Check Wi‑Fi and the GCS URL.");
+                        return;
+                    }
                     ArmFromPrefab(request, dimensions);
                     return;
                 }
@@ -285,8 +321,11 @@ public class FurniturePlacementController : MonoBehaviour
                 {
                     modelId = ResolveModelId(request),
                     dimensions = dimensions,
+                    catalogDimensions = ResolveCatalogDimensions(request),
+                    dimensionLabel = ResolveDimensionLabel(request),
                     instanceTemplate = model,
                 });
+                TryConsumeDeferredPlacementTap();
             });
             return;
         }
@@ -360,6 +399,8 @@ public class FurniturePlacementController : MonoBehaviour
         {
             modelId = ResolveModelId(request),
             dimensions = dimensions,
+            catalogDimensions = ResolveCatalogDimensions(request),
+            dimensionLabel = ResolveDimensionLabel(request),
             prefab = prefab,
             forcedInstanceId = snapshot.instanceId,
             forcedPose = new Pose(snapshot.position, Quaternion.Euler(0f, snapshot.rotationY, 0f)),
@@ -495,14 +536,35 @@ public class FurniturePlacementController : MonoBehaviour
         FlattenUpright(furniture.transform);
     }
 
-    Vector3 WithIndicatorFloorY(Vector3 position)
+    Vector3 ResolveFloorHeight(Vector3 position)
     {
-        if (!ShouldUseLiveFloorHits() || placementIndicator == null || !placementIndicator.IsVisible)
+        if (usePlacementIndicator && ShouldUseLiveFloorHits()
+            && placementIndicator != null && placementIndicator.IsLockedOnFloor)
+        {
+            position.y = placementIndicator.WorldPosition.y;
             return position;
+        }
 
-        position.y = placementIndicator.WorldPosition.y;
+        if (usePlacementIndicator && ShouldUseLiveFloorHits()
+            && placementIndicator != null && placementIndicator.IsVisible)
+        {
+            position.y = placementIndicator.WorldPosition.y;
+            return position;
+        }
+
+        if (ShouldUseLiveFloorHits() && TryGetHorizontalPlaneYUnderPoint(position, out var liveY))
+        {
+            position.y = liveY;
+            return position;
+        }
+
+        if (TryGetStableFloorY(position, out var stableY))
+            position.y = stableY;
+
         return position;
     }
+
+    Vector3 WithIndicatorFloorY(Vector3 position) => ResolveFloorHeight(position);
 
     void SeatOnFloor(GameObject instance, float localFootY, Vector3 floorPoint)
     {
@@ -659,8 +721,29 @@ public class FurniturePlacementController : MonoBehaviour
 
     // ── Spawn plumbing ────────────────────────────────────────────────────────
 
+    void EnsureGlbUrlFromCatalog(SpawnFurnitureRequest request)
+    {
+        if (request == null || !string.IsNullOrWhiteSpace(request.glbUrl) || catalog == null)
+            return;
+
+        var url = catalog.GetGlbUrl(ResolveModelId(request));
+        if (!string.IsNullOrWhiteSpace(url))
+            request.glbUrl = url;
+    }
+
     void ArmFromPrefab(SpawnFurnitureRequest request, Vector3 dimensions)
     {
+        if (catalog != null && catalog.RemoteCatalogOnly && !allowLocalPrefabFallback)
+        {
+            var url = catalog.GetGlbUrl(ResolveModelId(request));
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                SpawnFailed?.Invoke("remoteOnly",
+                    "This item streams from the cloud. Wait for the catalog to finish loading, then try again.");
+                return;
+            }
+        }
+
         var prefab = ResolvePrefab(request);
         if (prefab == null)
         {
@@ -673,6 +756,8 @@ public class FurniturePlacementController : MonoBehaviour
         {
             modelId = ResolveModelId(request),
             dimensions = dimensions,
+            catalogDimensions = ResolveCatalogDimensions(request),
+            dimensionLabel = ResolveDimensionLabel(request),
             prefab = prefab,
         });
     }
@@ -685,10 +770,80 @@ public class FurniturePlacementController : MonoBehaviour
 
         // Live AR: wait for a floor tap so feet land on the real surface.
         // Planner: drop immediately on the stylized room floor.
-        if (!ShouldPlaceImmediately()) return;
+        if (!ShouldPlaceImmediately())
+        {
+            TryConsumeDeferredPlacementTap();
+            return;
+        }
         if (!TryGetImmediatePlacementPose(out var pose)) return;
 
         CommitPending(pose);
+    }
+
+    void TryConsumeDeferredPlacementTap()
+    {
+        if (pending == null || !deferredPlacementTap.HasValue) return;
+
+        var tapPoint = deferredPlacementTap.Value;
+        deferredPlacementTap = null;
+
+        if (!TryGetPlacementPose(tapPoint, out var pose)) return;
+
+        CommitPending(pose);
+    }
+
+    bool TryGetPlacementPose(Vector2 screenPoint, out Pose pose)
+    {
+        pose = default;
+
+        if (TryGetFloorPose(screenPoint, out pose))
+        {
+            SnapPoseToIndicatorFloor(ref pose, screenPoint);
+            return true;
+        }
+
+        if (usePlacementIndicator && placementIndicator != null && placementIndicator.IsLockedOnFloor)
+        {
+            if (TryProjectScreenPointOntoFloorHeight(screenPoint, placementIndicator.WorldPosition.y, out var projected))
+            {
+                pose = new Pose(projected, Quaternion.identity);
+                return true;
+            }
+
+            pose = placementIndicator.CurrentPose;
+            pose.position = ClampToRoom(pose.position);
+            return true;
+        }
+
+        return false;
+    }
+
+    void SnapPoseToIndicatorFloor(ref Pose pose, Vector2 screenPoint)
+    {
+        if (!usePlacementIndicator || placementIndicator == null || !placementIndicator.IsLockedOnFloor)
+            return;
+
+        if (TryProjectScreenPointOntoFloorHeight(screenPoint, placementIndicator.WorldPosition.y, out var snapped))
+            pose.position = snapped;
+        else
+            pose.position.y = placementIndicator.WorldPosition.y;
+    }
+
+    bool TryProjectScreenPointOntoFloorHeight(Vector2 screenPoint, float floorY, out Vector3 position)
+    {
+        position = default;
+        if (arCamera == null) return false;
+
+        var ray = arCamera.ScreenPointToRay(screenPoint);
+        if (Mathf.Abs(ray.direction.y) < 0.02f) return false;
+
+        var t = (floorY - ray.origin.y) / ray.direction.y;
+        if (t < 0.02f || t > 120f) return false;
+
+        position = ray.GetPoint(t);
+        position.y = floorY;
+        position = ClampToRoom(position);
+        return true;
     }
 
     bool ShouldPlaceImmediately()
@@ -760,17 +915,24 @@ public class FurniturePlacementController : MonoBehaviour
         var authoredSize = localBounds.size;
         if (authoredSize.x < 0.01f) authoredSize = model.dimensions;
         var space = model.hasForcedSpace ? model.forcedSpace : CurrentPlacementSpace;
-        placed.Initialize(instanceId, model.modelId, authoredSize, trueScale, localBounds, space);
+
+        var catalogDims = model.catalogDimensions;
+        if (catalogDims.x <= 0.01f && catalog != null)
+            catalogDims = catalog.GetCatalogDimensions(model.modelId);
+        if (catalogDims.x <= 0.01f)
+            catalogDims = model.dimensions;
+
+        var dimensionLabel = model.dimensionLabel;
+        if (string.IsNullOrWhiteSpace(dimensionLabel) && catalog != null)
+            dimensionLabel = catalog.GetDimensionLabel(model.modelId);
+
+        placed.Initialize(instanceId, model.modelId, authoredSize, trueScale, localBounds, space, catalogDims, dimensionLabel);
         placed.gameObject.SetActive(space == CurrentPlacementSpace);
 
         // Footprint-aware clamp after we know real dimensions.
         var safe = ClampFurnitureInsideRoom(placed, instance.transform.position);
-        var floorY = WithIndicatorFloorY(new Vector3(safe.x, position.y, safe.z)).y;
-        if (ShouldUseLiveFloorHits() && placementIndicator != null && placementIndicator.IsVisible)
-            floorY = placementIndicator.WorldPosition.y;
-        else if (ShouldUseLiveFloorHits() && TryGetHorizontalPlaneYUnderPoint(safe, out var liveY))
-            floorY = liveY;
-        else if (TryGetStableFloorY(safe, out var stableY))
+        var floorY = ResolveFloorHeight(safe).y;
+        if (TryGetStableFloorY(safe, out var stableY) && !ShouldUseLiveFloorHits())
             floorY = stableY;
 
         SeatOnFloor(instance, localBounds.min.y, new Vector3(safe.x, floorY, safe.z));
@@ -798,6 +960,7 @@ public class FurniturePlacementController : MonoBehaviour
             Destroy(pending.instanceTemplate);
 
         pending = null;
+        deferredPlacementTap = null;
     }
 
     Vector3 ResolveDimensions(SpawnFurnitureRequest request)
@@ -806,9 +969,43 @@ public class FurniturePlacementController : MonoBehaviour
         if (dimensions.x > 0f && dimensions.y > 0f && dimensions.z > 0f)
             return dimensions;
 
+        if (catalog != null)
+        {
+            var catalogDims = catalog.GetCatalogDimensions(ResolveModelId(request));
+            if (catalogDims.x > 0f && catalogDims.y > 0f && catalogDims.z > 0f)
+                return catalogDims;
+        }
+
         Debug.LogWarning($"[FurniturePlacementController] '{ResolveModelId(request)}' arrived without real-world " +
                          "dimensions — falling back to defaults. Pass width/height/depth from the RN catalog.");
         return defaultDimensions;
+    }
+
+    Vector3 ResolveCatalogDimensions(SpawnFurnitureRequest request)
+    {
+        if (catalog != null)
+        {
+            var catalogDims = catalog.GetCatalogDimensions(ResolveModelId(request));
+            if (catalogDims.x > 0f && catalogDims.y > 0f && catalogDims.z > 0f)
+                return catalogDims;
+        }
+
+        return ResolveDimensions(request);
+    }
+
+    string ResolveDimensionLabel(SpawnFurnitureRequest request)
+    {
+        if (!string.IsNullOrWhiteSpace(request.dimensionLabel))
+            return request.dimensionLabel.Trim();
+
+        if (catalog != null)
+        {
+            var label = catalog.GetDimensionLabel(ResolveModelId(request));
+            if (!string.IsNullOrWhiteSpace(label))
+                return label;
+        }
+
+        return null;
     }
 
     GameObject ResolvePrefab(SpawnFurnitureRequest request)
@@ -1066,16 +1263,11 @@ public class FurniturePlacementController : MonoBehaviour
 
         var live = ShouldUseLiveFloorHits();
 
-        if (live && placementIndicator != null && placementIndicator.IsVisible)
+        // Direct tap placement — raycast at the finger first (no reticle required).
+        if (live && raycastManager != null && TryRaycastPlanes(screenPoint, out pose))
         {
-            Vector3 point;
-            if (raycastManager != null && TryRaycastPlanes(screenPoint, out pose))
-                point = pose.position;
-            else
-                point = placementIndicator.WorldPosition;
-
-            point.y = placementIndicator.WorldPosition.y;
-            pose = new Pose(ClampToRoom(point), Quaternion.identity);
+            SnapPoseToIndicatorFloor(ref pose, screenPoint);
+            pose.position = ClampToRoom(pose.position);
             return true;
         }
 
@@ -1092,16 +1284,16 @@ public class FurniturePlacementController : MonoBehaviour
             }
         }
 
-        if (live && placementIndicator != null && placementIndicator.IsLockedOnFloor)
-        {
-            pose = placementIndicator.CurrentPose;
-            pose.position = ClampToRoom(pose.position);
-            return true;
-        }
-
-        // Planner / fallback: frozen room mesh colliders.
         if (IsRoomConfirmed() && TryRaycastConfirmedRoom(screenPoint, out pose))
             return true;
+
+        if (IsRoomConfirmed() && TryProjectOntoConfirmedFloorPlane(screenPoint, out var projected))
+        {
+            if (live && TryGetHorizontalPlaneYUnderPoint(projected, out var liveY))
+                projected.y = liveY;
+            pose = new Pose(ClampToRoom(projected), Quaternion.identity);
+            return true;
+        }
 
         if (!live && raycastManager != null && TryRaycastPlanes(screenPoint, out pose))
         {
@@ -1109,12 +1301,10 @@ public class FurniturePlacementController : MonoBehaviour
             return true;
         }
 
-        if (IsRoomConfirmed() && TryProjectOntoConfirmedFloorPlane(screenPoint, out var projected))
+        if (usePlacementIndicator && live && placementIndicator != null && placementIndicator.IsLockedOnFloor)
         {
-            // In live AR, prefer any known AR floor Y over the scan floorY.
-            if (live && TryGetArFloorHeightAtWorldPoint(projected, out var liveY))
-                projected.y = liveY;
-            pose = new Pose(ClampToRoom(projected), Quaternion.identity);
+            pose = placementIndicator.CurrentPose;
+            pose.position = ClampToRoom(pose.position);
             return true;
         }
 
@@ -1128,6 +1318,13 @@ public class FurniturePlacementController : MonoBehaviour
         // Never use physics against the scanned room mesh / AR mesh chunks —
         // those colliders often sit higher than the live AR plane the reticle uses,
         // which is what made sofas hover above the white floor outline.
+        // Match the white reticle plane so furniture never floats above the floor outline.
+        if (placementIndicator != null && placementIndicator.IsLockedOnFloor)
+        {
+            floorY = placementIndicator.WorldPosition.y;
+            return true;
+        }
+
         if (placementIndicator != null && placementIndicator.IsVisible)
         {
             floorY = placementIndicator.WorldPosition.y;
@@ -1534,6 +1731,48 @@ public class FurniturePlacementController : MonoBehaviour
 
     // ── Input ─────────────────────────────────────────────────────────────────
 
+    bool TryGetPlacementTap(out Vector2 screenPoint)
+    {
+        screenPoint = default;
+
+        if (Touch.activeTouches.Count == 1)
+        {
+            var touch = Touch.activeTouches[0];
+            if (touch.phase != TouchPhase.Began) return false;
+            if (ShouldAcceptPlacementTap(touch.screenPosition, touch.touchId))
+            {
+                screenPoint = touch.screenPosition;
+                return true;
+            }
+        }
+
+#if UNITY_EDITOR
+        if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
+        {
+            var point = Mouse.current.position.ReadValue();
+            if (ShouldAcceptPlacementTap(point, -1))
+            {
+                screenPoint = point;
+                return true;
+            }
+        }
+#endif
+
+        return false;
+    }
+
+    bool ShouldAcceptPlacementTap(Vector2 screenPoint, int pointerId)
+    {
+        if (!IsPointerOverUI(pointerId)) return true;
+
+        // Catalog/tools sit on the left — still allow placing on the visible floor.
+        if ((pending != null || activeGlbLoads > 0) && IsRoomConfirmed()
+            && screenPoint.x >= Screen.width * Mathf.Clamp01(floorTapScreenXMin))
+            return true;
+
+        return false;
+    }
+
     static bool TryGetTapPosition(out Vector2 screenPoint)
     {
         screenPoint = default;
@@ -1572,6 +1811,8 @@ public class FurniturePlacementController : MonoBehaviour
     {
         public string modelId;
         public Vector3 dimensions;
+        public Vector3 catalogDimensions;
+        public string dimensionLabel;
         public GameObject prefab;
 
         /// <summary>Already-instantiated GLB root. Consumed directly rather than cloned.</summary>

@@ -12,17 +12,21 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://shilapuk_db_user:<
 
 let isConnected = false;
 
+/** True when a real Atlas URI is configured (not the placeholder). */
+export function isMongoConfigured() {
+  return Boolean(MONGODB_URI) && !MONGODB_URI.includes('<db_password>');
+}
+
 /**
  * Connect to MongoDB
  */
 export async function connectMongoDB() {
-  if (isConnected) {
+  if (isConnected && mongoose.connection.readyState === 1) {
     console.log('[MongoDB] Already connected');
     return;
   }
 
-  // Check if password placeholder exists
-  if (MONGODB_URI.includes('<db_password>')) {
+  if (!isMongoConfigured()) {
     console.warn('[MongoDB] ⚠️  WARNING: Connection string has <db_password> placeholder!');
     console.warn('[MongoDB] Skipping MongoDB connection - using in-memory database only');
     console.warn('');
@@ -31,16 +35,12 @@ export async function connectMongoDB() {
     console.warn('MONGODB_DB_NAME=ARINTERIORDESIGNAPP');
     console.warn('');
     isConnected = false;
-    return; // Skip connection instead of throwing error
+    return;
   }
 
   try {
     const dbName = process.env.MONGODB_DB_NAME || 'ARINTERIORDESIGNAPP';
 
-    // Build connection string
-    // Handle connection strings that may or may not have query parameters
-    // Build connection string
-    // Handle connection strings that may or may not have query parameters
     let connectionString;
     let uriPart = MONGODB_URI;
     let queryPart = '';
@@ -49,20 +49,23 @@ export async function connectMongoDB() {
       [uriPart, queryPart] = MONGODB_URI.split('?');
     }
 
-    // Remove trailing slash from URI part
     uriPart = uriPart.endsWith('/') ? uriPart.slice(0, -1) : uriPart;
 
-    // Parse existing params
     const params = new URLSearchParams(queryPart);
-
-    // Add required params if missing
     if (!params.has('retryWrites')) params.set('retryWrites', 'true');
     if (!params.has('w')) params.set('w', 'majority');
 
     connectionString = `${uriPart}/${dbName}?${params.toString()}`;
 
+    if (mongoose.connection.readyState === 1) {
+      isConnected = true;
+      return;
+    }
+
     await mongoose.connect(connectionString, {
       serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 10000,
+      maxPoolSize: 10,
     });
 
     isConnected = true;
@@ -71,7 +74,6 @@ export async function connectMongoDB() {
   } catch (error) {
     console.error('[MongoDB] ❌ Connection error:', error.message);
 
-    // Provide helpful error messages for common issues
     if (error.code === 'ECONNREFUSED' || error.message.includes('ECONNREFUSED')) {
       console.error('');
       console.error('Possible causes:');
@@ -103,7 +105,7 @@ export async function connectMongoDB() {
  * Disconnect from MongoDB
  */
 export async function disconnectMongoDB() {
-  if (!isConnected) {
+  if (!isConnected && mongoose.connection.readyState === 0) {
     return;
   }
 
@@ -118,13 +120,62 @@ export async function disconnectMongoDB() {
 }
 
 /**
- * Check if MongoDB is connected
+ * Check if MongoDB is connected — trust mongoose readyState over a stale cache flag.
  */
 export function isMongoDBConnected() {
-  return isConnected && mongoose.connection.readyState === 1;
+  if (mongoose.connection.readyState === 1) {
+    isConnected = true;
+    return true;
+  }
+  return false;
 }
 
-// Handle connection events
+/**
+ * Ensure a live Mongo connection when Atlas is configured.
+ * Prevents auth from silently falling back to ephemeral hardcoded users.
+ */
+export async function ensureMongoConnection() {
+  if (!isMongoConfigured()) return false;
+  if (isMongoDBConnected()) return true;
+
+  try {
+    await connectMongoDB();
+    return isMongoDBConnected();
+  } catch (error) {
+    console.error('[MongoDB] ensureMongoConnection failed:', error.message);
+    return false;
+  }
+}
+
+/** Only clear the cache when mongoose is actually down. */
+export function markMongoDisconnected() {
+  if (mongoose.connection.readyState !== 1) {
+    isConnected = false;
+  }
+}
+
+/**
+ * Race a promise against a timeout so API handlers never hang forever
+ * when Atlas drops mid-request.
+ */
+export async function withMongoTimeout(promise, timeoutMs = 8000, label = 'MongoDB operation') {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error(`${label} timed out after ${timeoutMs}ms`);
+          err.code = 'MONGO_TIMEOUT';
+          reject(err);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 mongoose.connection.on('error', (err) => {
   console.error('[MongoDB] Connection error:', err);
   isConnected = false;
@@ -137,6 +188,11 @@ mongoose.connection.on('disconnected', () => {
 
 mongoose.connection.on('reconnected', () => {
   console.log('[MongoDB] Reconnected');
+  isConnected = true;
+});
+
+mongoose.connection.on('connected', () => {
+  console.log('[MongoDB] Connected');
   isConnected = true;
 });
 

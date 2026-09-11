@@ -9,7 +9,12 @@
     "dev": "node --watch src/server.js",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch",
-    "test:coverage": "NODE_OPTIONS=--experimental-vm-modules jest --coverage"
+    "test:coverage": "NODE_OPTIONS=--experimental-vm-modules jest --coverage",
+    "seed:furniture": "node scripts/seed-furniture.mjs",
+    "seed:furniture:generate": "node scripts/generate-furniture-seed.mjs",
+    "seed:furniture:inventory": "node scripts/parse-inventory-docx.mjs && node scripts/sync-furniture-from-inventory.mjs",
+    "seed:furniture:thumbnails": "node scripts/sync-furniture-thumbnails.mjs",
+    "seed:admin": "node scripts/seed-admin.mjs"
   },
   "keywords": [
     "api",
@@ -32,6 +37,7 @@
     "mongodb": "^7.0.0",
     "mongoose": "^8.0.3",
     "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

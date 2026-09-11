@@ -70,7 +70,7 @@ export async function authenticate(req, res, next) {
             id: dbUser._id.toString(),
             email: dbUser.email,
             name: dbUser.name,
-            role: 'user', // Default role
+            role: dbUser.role || decoded.role || 'user',
           };
         }
       }
@@ -159,7 +159,7 @@ export async function optionalAuth(req, res, next) {
             id: dbUser._id.toString(),
             email: dbUser.email,
             name: dbUser.name,
-            role: 'user',
+            role: dbUser.role || decoded.role || 'user',
           };
         }
       }

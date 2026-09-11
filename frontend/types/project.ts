@@ -14,6 +14,9 @@ export type RoomType =
 
 export type ProjectStatus = 'draft' | 'in-progress' | 'completed';
 
+/** How the project was created / last updated. */
+export type ProjectSource = 'manual' | 'unity-export';
+
 export type DesignStyle = 
   | 'Modern'
   | 'Contemporary'
@@ -32,6 +35,16 @@ export interface ProjectDimensions {
   height: number; // in meters
 }
 
+/** Metadata for a Unity ARDesignScene 3D layout export (.glb). */
+export interface UnityLayoutExportMeta {
+  path: string;
+  fileName: string;
+  byteLength: number;
+  furnitureCount: number;
+  roomMeshCount: number;
+  exportedAt: number;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -48,6 +61,9 @@ export interface Project {
     max: number;
   };
   tags?: string[];
+  source?: ProjectSource;
+  /** Absolute file path / metadata when exported from Unity. */
+  unityExport?: UnityLayoutExportMeta;
 }
 
 export interface CreateProjectInput {

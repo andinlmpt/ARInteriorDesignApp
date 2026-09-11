@@ -3,7 +3,13 @@
  * Handles project creation, storage, and management with AsyncStorage persistence
  */
 
-import { Project, CreateProjectInput, ProjectStatus } from '../types/project';
+import {
+  Project,
+  CreateProjectInput,
+  ProjectStatus,
+  UnityLayoutExportMeta,
+} from '../types/project';
+import type { ExportResultPayload } from '@/types/unity-bridge';
 import { getJson, setJson, removeKey } from '@/utils/storage';
 
 const STORAGE_KEY = 'userProjects';
@@ -215,6 +221,53 @@ class ProjectService {
 
       return nameMatch || descMatch || tagMatch || roomMatch;
     }).sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  /**
+   * Persist a successful Unity 3D layout export as a project (Profile → Projects).
+   */
+  async saveUnityLayoutExport(payload: ExportResultPayload): Promise<Project> {
+    await this.initialize();
+
+    if (!payload.success || !payload.path) {
+      throw new Error(payload.error || 'Unity export failed');
+    }
+
+    const exportedAt = Date.now();
+    const stamp = new Date(exportedAt).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const name = payload.fileName?.replace(/\.glb$/i, '') || `Room design ${stamp}`;
+
+    const unityExport: UnityLayoutExportMeta = {
+      path: payload.path,
+      fileName: payload.fileName || 'room-design.glb',
+      byteLength: payload.byteLength || 0,
+      furnitureCount: payload.furnitureCount || 0,
+      roomMeshCount: payload.roomMeshCount || 0,
+      exportedAt,
+    };
+
+    const project: Project = {
+      id: `unity-export-${exportedAt}-${Math.random().toString(36).substring(2, 9)}`,
+      name,
+      description: `AR layout export · ${unityExport.furnitureCount} furniture · ${Math.round(unityExport.byteLength / 1024)} KB`,
+      roomType: 'Living Room',
+      status: 'completed',
+      createdAt: exportedAt,
+      updatedAt: exportedAt,
+      tags: ['unity', 'export', '3d-layout'],
+      source: 'unity-export',
+      unityExport,
+    };
+
+    this.projects.push(project);
+    await this.persist();
+    console.log('[ProjectService] Saved Unity layout export:', project.id);
+    return project;
   }
 
   /**

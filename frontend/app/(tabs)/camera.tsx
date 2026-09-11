@@ -22,12 +22,13 @@ export default function CameraScreen() {
         </View>
         <Text style={styles.title}>AR Furniture Placement</Text>
         <Text style={styles.subtitle}>
-          Visualize and place furniture items in your room in real-time AR
+          ARDesignScene is developed in Unity (Build and Run). React Native integration
+          will be enabled once Unity features are complete.
         </Text>
-        
+
         <TouchableOpacity style={styles.startButton} onPress={goToARView} activeOpacity={0.8}>
-          <Ionicons name="cube-outline" size={20} color="#FFFFFF" style={styles.buttonIcon} />
-          <Text style={styles.startButtonText}>Place Furniture in AR</Text>
+          <Ionicons name="information-circle-outline" size={20} color="#FFFFFF" style={styles.buttonIcon} />
+          <Text style={styles.startButtonText}>How to run AR in Unity</Text>
         </TouchableOpacity>
       </View>
     </View>

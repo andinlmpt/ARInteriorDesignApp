@@ -26,6 +26,10 @@ import { authenticate } from './middleware/auth.js';
 import aiDesignController from './controllers/aiDesignController.js';
 import ideaRoutes from './routes/ideas.js';
 import trainingRoutes from './routes/training.js';
+import furnitureRoutes from './routes/furniture.js';
+import adminRoutes from './routes/admin.js';
+import roomMeasurementRoutes from './routes/roomMeasurements.js';
+import { UPLOAD_ROOT } from './services/uploadService.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/logger.js';
 import { initDatabase } from './db/database.js';
@@ -49,11 +53,17 @@ app.use(sentryTracingHandler());
 app.use(helmet({
   contentSecurityPolicy: NODE_ENV === 'production' ? undefined : false,
   crossOriginEmbedderPolicy: false,
+  // Allow admin (5173) and mobile clients to display /uploads images.
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:8081', 'http://localhost:19006'],
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || [
+    'http://localhost:8081',
+    'http://localhost:19006',
+    'http://localhost:5173',
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
@@ -90,6 +100,9 @@ app.use('/api/', limiter);
 const publicPath = join(__dirname, '..', 'public');
 app.use(express.static(publicPath));
 
+// Uploaded furniture assets (GLB + thumbnails)
+app.use('/uploads', express.static(UPLOAD_ROOT));
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({
@@ -109,6 +122,9 @@ app.use('/api/v1/images', imageRoutes);
 app.use('/api/v1/designs', designRoutes);
 app.use('/api/v1/ideas', ideaRoutes);
 app.use('/api/v1/training', trainingRoutes);
+app.use('/api/v1/furniture', furnitureRoutes);
+app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/room-measurements', roomMeasurementRoutes);
 
 // Strict new route requested by user
 app.post('/api/v1/design/generate', authenticate, aiDesignController.generateLayout);
@@ -133,6 +149,9 @@ app.get('/api', (req, res) => {
       designs: '/api/v1/designs',
       ideas: '/api/v1/ideas',
       training: '/api/v1/training',
+      furniture: '/api/v1/furniture',
+      admin: '/api/v1/admin',
+      roomMeasurements: '/api/v1/room-measurements',
     },
     webView: '/',
   });

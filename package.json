@@ -5,9 +5,12 @@
   "scripts": {
     "start": "npm start --prefix frontend",
     "start:frontend": "npm start --prefix frontend",
-    "start:backend": "npm start --prefix backend",
-    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
+    "start:backend": "npm run dev --prefix backend",
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install && cd ../admin && npm install",
+    "start:admin": "npm run dev --prefix admin",
     "dev": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"blue,green\" \"npm run start:backend\" \"npm run start:frontend\"",
+    "dev:admin": "concurrently --names \"BACKEND,ADMIN\" --prefix-colors \"blue,magenta\" \"npm run start:backend\" \"npm run start:admin\"",
+    "dev:all": "concurrently --names \"BACKEND,FRONTEND,ADMIN\" --prefix-colors \"blue,green,magenta\" \"npm run start:backend\" \"npm run start:frontend\" \"npm run start:admin\"",
     "start:all": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"blue,green\" \"npm run start:backend\" \"npm run start:frontend\"",
     "serve:unity": "node scripts/serve-unity.mjs",
     "unity:decompress": "node scripts/decompress-unity-build.mjs"

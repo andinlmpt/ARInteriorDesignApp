@@ -29,8 +29,8 @@ public class ARDesignLighting : MonoBehaviour
     [Tooltip("How quickly the light follows the estimate. Raw estimates flicker frame to frame.")]
     [SerializeField] private float smoothing = 6f;
     [Tooltip("Floor on brightness so a dim room does not render furniture as a silhouette.")]
-    [SerializeField] private float minIntensity = 0.55f;
-    [SerializeField] private float maxIntensity = 2f;
+    [SerializeField] private float minIntensity = 0.45f;
+    [SerializeField] private float maxIntensity = 1.15f;
 
     Light directionalLight;
     float targetIntensity = 1f;
@@ -114,7 +114,7 @@ public class ARDesignLighting : MonoBehaviour
         if (estimation.averageBrightness.HasValue)
         {
             targetIntensity = Mathf.Clamp(
-                estimation.averageBrightness.Value * 2f, minIntensity, maxIntensity);
+                estimation.averageBrightness.Value * 1.15f, minIntensity, maxIntensity);
         }
         else if (estimation.mainLightIntensityLumens.HasValue)
         {

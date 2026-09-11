@@ -1,16 +1,17 @@
-import { View, StyleSheet, Alert, KeyboardAvoidingView, ScrollView, Platform, TouchableOpacity, TextInput, Text, Animated, Dimensions } from 'react-native';
+import { View, StyleSheet, KeyboardAvoidingView, ScrollView, Platform, TouchableOpacity, TextInput, Text, Animated, Dimensions } from 'react-native';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { validateLogin, AUTH_USER_STORAGE_KEY } from '@/data/authData';
 import AuthService from '@/services/AuthService';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, radii } from '@/components/ui/theme';
 import { AnimatedButton, FadeInView, SlideInView } from '@/components/interactive';
 import { getHorizontalPadding, isSmallScreen, getResponsiveFontSize } from '@/utils/responsive';
+import { AppLogo } from '@/components/ui/AppLogo';
+import { BrandHeader } from '@/components/ui/BrandHeader';
+import { AppDialog, type AppDialogAction } from '@/components/ui/AppDialog';
 
 const { width, height } = Dimensions.get('window');
 
@@ -168,10 +169,24 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [dialog, setDialog] = useState<{
+    title: string;
+    message?: string;
+    actions: AppDialogAction[];
+  } | null>(null);
   const router = useRouter();
   const { colors, statusBarStyle } = useTheme();
+
+  const closeDialog = () => setDialog(null);
+
+  const showDialog = (title: string, message: string, actions?: AppDialogAction[]) => {
+    setDialog({
+      title,
+      message,
+      actions: actions ?? [{ label: 'OK', tone: 'primary', onPress: closeDialog }],
+    });
+  };
 
   // Use sage accent colors matching the interior design palette
   const accentColor = colors.accent;
@@ -185,46 +200,54 @@ export default function LoginScreen() {
     const trimmedPassword = password.trim();
 
     if (!trimmedEmail || !trimmedPassword) {
-      Alert.alert('Missing Information', 'Please fill in all fields');
+      showDialog('Missing information', 'Please fill in your email and password.');
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(trimmedEmail)) {
-      Alert.alert('Invalid Email', 'Please enter a valid email address');
+      showDialog('Invalid email', 'Please enter a valid email address.');
       return;
     }
 
     if (trimmedPassword.length < 6) {
-      Alert.alert('Invalid Password', 'Password must be at least 6 characters');
+      showDialog('Invalid password', 'Password must be at least 6 characters.');
       return;
     }
 
     setIsLoading(true);
 
     try {
-      // Use AuthService for actual backend authentication
       const response = await AuthService.login(trimmedEmail, trimmedPassword);
 
       if (response && response.user) {
-        if (rememberMe) {
-          await AsyncStorage.setItem('remember_email', trimmedEmail);
-        }
-
-        router.replace('/(tabs)');
-
-        setTimeout(() => {
-          Alert.alert('Welcome Back', `Hello ${response.user.name}, ready to design?`);
-        }, 500);
+        const displayName = response.user.name || 'there';
+        setDialog({
+          title: 'Welcome back',
+          message: `Hello ${displayName}, ready to design?`,
+          actions: [
+            {
+              label: 'Continue',
+              tone: 'primary',
+              onPress: () => {
+                closeDialog();
+                router.replace('/(tabs)');
+              },
+            },
+          ],
+        });
       }
     } catch (error: any) {
       console.error('[Login] Failed to authenticate user', error);
-      const errorMessage = error.details?.message || error.message || 'Unable to sign in. Please check your connection and try again.';
-      Alert.alert('Login Failed', errorMessage);
+      const errorMessage =
+        error.details?.message ||
+        error.message ||
+        'Unable to sign in. Please check your connection and try again.';
+      showDialog('Sign-in failed', errorMessage);
     } finally {
       setIsLoading(false);
     }
-  }, [email, isLoading, password, router, rememberMe]);
+  }, [email, isLoading, password, router]);
 
   const handleSignUp = useCallback(() => {
     router.push('/signup');
@@ -247,12 +270,12 @@ export default function LoginScreen() {
       >
         {/* Logo and Branding */}
         <View style={styles.topBranding}>
-          <FadeInView delay={100} style={{ alignItems: 'center', width: '100%' }}>
-            <View style={[styles.logoContainer, { backgroundColor: '#FFFFFF' }]}>
-              <Ionicons name="cube" size={48} color={accentColor} />
-            </View>
-            <Text style={[styles.topAppName, { color: '#1E3A8A' }]}>AR Interior Design</Text>
-            <Text style={[styles.topAppTagline, { color: '#1E40AF' }]}>Design your space with AR</Text>
+          <FadeInView delay={100} style={styles.brandingWrap}>
+            <AppLogo size={112} elevated style={styles.logoContainer} />
+            <BrandHeader
+              titleStyle={styles.topAppName}
+              taglineStyle={styles.topAppTagline}
+            />
           </FadeInView>
         </View>
 
@@ -312,31 +335,14 @@ export default function LoginScreen() {
                   />
                 </TouchableOpacity>
               </View>
-            </View>
-
-            {/* Remember Me & Forgot Password */}
-            <View style={styles.optionsRow}>
               <TouchableOpacity
-                style={styles.rememberMeContainer}
-                onPress={() => setRememberMe(!rememberMe)}
+                style={styles.forgotPasswordButton}
                 activeOpacity={0.7}
+                onPress={() => {}}
               >
-                <View style={[
-                  styles.checkbox,
-                  rememberMe && { backgroundColor: accentColor, borderColor: accentColor }
-                ]}>
-                  {rememberMe && <Ionicons name="checkmark" size={14} color="#FFFFFF" />}
-                </View>
-                <Text style={[styles.rememberMeText, { color: '#1F2937' }]}>Remember Me</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => {
-                  Alert.alert('Password Reset', 'Password reset functionality coming soon!');
-                }}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.forgotPassword, { color: accentColor }]}>Forgot Password?</Text>
+                <Text style={[styles.forgotPasswordText, { color: colors.accent }]}>
+                  Forgot password?
+                </Text>
               </TouchableOpacity>
             </View>
 
@@ -366,6 +372,15 @@ export default function LoginScreen() {
           </FadeInView>
         </View>
       </ScrollView>
+
+      <AppDialog
+        visible={!!dialog}
+        title={dialog?.title ?? ''}
+        message={dialog?.message}
+        actions={dialog?.actions}
+        onRequestClose={closeDialog}
+        dismissOnBackdrop={dialog?.title !== 'Welcome back'}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -383,6 +398,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: getHorizontalPadding(spacing.md),
   },
+  brandingWrap: {
+    width: '100%',
+    alignItems: 'center',
+  },
   contentWrapper: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -398,17 +417,7 @@ const styles = StyleSheet.create({
     minHeight: height * 0.7 + 50,
   },
   logoContainer: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    alignItems: 'center',
-    justifyContent: 'center',
     marginBottom: spacing.md,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
   },
   topAppName: {
     fontSize: getResponsiveFontSize(isSmallScreen ? 24 : 28),
@@ -416,11 +425,15 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
     letterSpacing: 0.5,
     textAlign: 'center',
+    width: '100%',
+    color: '#1E3A8A',
   },
   topAppTagline: {
     fontSize: getResponsiveFontSize(isSmallScreen ? 14 : 16),
     fontWeight: '500',
     textAlign: 'center',
+    width: '100%',
+    color: '#1E40AF',
   },
   titleContainer: {
     marginBottom: isSmallScreen ? spacing.lg : spacing.xl,
@@ -458,32 +471,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     paddingVertical: spacing.xs,
   },
-  optionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.xl,
+  forgotPasswordButton: {
+    alignSelf: 'flex-end',
+    marginTop: spacing.sm,
   },
-  rememberMeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: '#CBD5E1',
-    marginRight: spacing.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rememberMeText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  forgotPassword: {
-    fontSize: 14,
+  forgotPasswordText: {
+    fontSize: 13,
     fontWeight: '600',
   },
   loginButton: {

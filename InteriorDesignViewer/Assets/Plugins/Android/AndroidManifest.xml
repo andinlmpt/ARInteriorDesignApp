@@ -9,6 +9,7 @@
     tools:replace="android:required" />
   <application
     android:hardwareAccelerated="true"
+    android:usesCleartextTraffic="true"
     tools:replace="android:hardwareAccelerated">
     <activity
       android:name="com.unity3d.player.UnityPlayerGameActivity"

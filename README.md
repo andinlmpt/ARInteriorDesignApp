@@ -111,13 +111,9 @@ npm run dev
 
 ## 📚 Documentation
 
-Detailed documentation can be found in the `/docs` folder:
-
 - [Getting Started Guide](frontend/GETTING_STARTED.md)
-- [3D Models Setup](docs/3D_MODELS_GUIDE.md)
-- [Unity Integration](docs/UNITY_INTEGRATION.md)
-- [System Architecture](docs/HOW_THE_SYSTEM_WORKS.md)
-- [Database Schema](docs/MONGODB_DOCUMENT_MODEL.md)
+- [Frontend README](frontend/README.md)
+- [Backend README](backend/README.md)
 
 ## 🧪 Testing
 

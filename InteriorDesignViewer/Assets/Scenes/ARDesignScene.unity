@@ -289,6 +289,9 @@ GameObject:
   - component: {fileID: 521325908}
   - component: {fileID: 521325907}
   - component: {fileID: 521325906}
+  - component: {fileID: 521325921}
+  - component: {fileID: 521325922}
+  - component: {fileID: 521325923}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -308,152 +311,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 15061a21447471846841bd74249e2820, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FurnitureCatalog
-  entries:
-  - id: bahrain-accent-chair
-    displayName: Bahrain Accent Chair
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 1.3699985
-    height: 1.3208
-    depth: 1.5200179
-    resourcePath: Furniture/bahrain-accent-chair
-  - id: cyprus-accent-chair
-    displayName: Cyprus Accent Chair
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 1.4561979
-    height: 1.3208
-    depth: 1.2109115
-    resourcePath: Furniture/cyprus-accent-chair
-  - id: divan-love-seat
-    displayName: Divan Love Seat
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 1.7812885
-    height: 0.5588
-    depth: 0.54228127
-    resourcePath: Furniture/divan-love-seat
-  - id: indonesia-love-seats
-    displayName: Indonesia Love Seats
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 2.0495536
-    height: 1.1176
-    depth: 0.962605
-    resourcePath: Furniture/indonesia-love-seats
-  - id: iraq-love-seat
-    displayName: Iraq Love Seat
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 1.5737212
-    height: 1.1176
-    depth: 0.96356076
-    resourcePath: Furniture/iraq-love-seat
-  - id: korea-love-seat
-    displayName: Korea Love Seat
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 2.1231837
-    height: 1.1176
-    depth: 1.0842342
-    resourcePath: Furniture/korea-love-seat
-  - id: maldives-love-seats
-    displayName: Maldives Love Seats
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 1.6729261
-    height: 1.1176
-    depth: 1.0775589
-    resourcePath: Furniture/maldives-love-seats
-  - id: bahamas-sofa
-    displayName: Bahamas Sofa
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 2.1404572
-    height: 0.8128
-    depth: 2.135004
-    resourcePath: Furniture/bahamas-sofa
-  - id: canada-sofa
-    displayName: Canada Sofa
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 1.9886601
-    height: 0.81279993
-    depth: 0.8648292
-    resourcePath: Furniture/canada-sofa
-  - id: croatia-sofa
-    displayName: Croatia Sofa
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 1.9665589
-    height: 0.81279993
-    depth: 0.8147877
-    resourcePath: Furniture/croatia-sofa
-  - id: cuba-sofa
-    displayName: Cuba Sofa
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 1.9841475
-    height: 0.81279993
-    depth: 0.85863
-    resourcePath: Furniture/cuba-sofa
-  - id: israel-sofa
-    displayName: Israel Sofa
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 2.1006806
-    height: 0.81279993
-    depth: 2.1045659
-    resourcePath: Furniture/israel-sofa
-  - id: kuwait-sofa
-    displayName: Kuwait Sofa
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 2.8852882
-    height: 0.83820003
-    depth: 2.419281
-    resourcePath: Furniture/kuwait-sofa
-  - id: malaysian-sofa
-    displayName: Malaysian Sofa
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 2.282339
-    height: 0.81280005
-    depth: 2.286764
-    resourcePath: Furniture/malaysian-sofa
-  - id: russia-sofa
-    displayName: Russia Sofa
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 2.198091
-    height: 0.81279993
-    depth: 2.7650187
-    resourcePath: Furniture/russia-sofa
-  - id: turkey-sofa
-    displayName: Turkey Sofa
-    prefab: {fileID: 0}
-    icon: {fileID: 0}
-    category: seating
-    width: 2.0051525
-    height: 0.8128
-    depth: 2.458198
-    resourcePath: Furniture/turkey-sofa
+  entries: []
   defaultPrefab: {fileID: 0}
+  remoteCatalogOnly: 1
 --- !u!4 &521325905
 Transform:
   m_ObjectHideFlags: 0
@@ -682,9 +542,6 @@ MonoBehaviour:
   requireTouchOnSelection: 1
   selectionPickRadiusPx: 96
   fallbackMoveSpeed: 0.004
-  scaleSensitivity: 1
-  minScaleMultiplier: 0.5
-  maxScaleMultiplier: 1.5
   rotationSensitivity: 1
   twistDeadZone: 0.05
 --- !u!114 &521325916
@@ -711,6 +568,9 @@ MonoBehaviour:
   catalog: {fileID: 521325902}
   gltfLoader: {fileID: 521325917}
   placeholderPrefab: {fileID: 1569265646217197593, guid: bc9c90310f3956e40ab05a9e5a0f41d2, type: 3}
+  allowLocalPrefabFallback: 0
+  usePlacementIndicator: 1
+  floorTapScreenXMin: 0.34
   placeImmediatelyOnSpawn: 1
   placeDistanceInFront: 1.6
   spawnClearance: 0.55
@@ -803,6 +663,54 @@ MonoBehaviour:
   minPlaneArea: 0.08
   statusPushInterval: 0.4
   cornerBuilder: {fileID: 521325907}
+--- !u!114 &521325921
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5448ff80c8e916045aabe971ead9bd30, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RemoteFurnitureCatalogLoader
+  catalog: {fileID: 521325902}
+  catalogUi: {fileID: 521325909}
+  catalogUrl: http://192.168.1.7:3000/api/v1/furniture
+  loadOnStart: 1
+  requestTimeoutSeconds: 20
+--- !u!114 &521325922
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 25d49cc3be2eaa24d95482be20718f03, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RoomMeasurementSync
+  scanController: {fileID: 521325920}
+  saveUrl: http://192.168.1.7:3000/api/v1/room-measurements
+  saveOnConfirm: 0
+  requestTimeoutSeconds: 15
+--- !u!114 &521325923
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f8e7d6c5b4a39281706f5e4d3c2b1a09, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RoomMeasurementSaveModal
+  scanController: {fileID: 521325920}
+  measurementSync: {fileID: 521325922}
+  enableNativeModal: 1
 --- !u!1 &535005051
 GameObject:
   m_ObjectHideFlags: 0

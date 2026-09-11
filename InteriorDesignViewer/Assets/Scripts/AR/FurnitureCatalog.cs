@@ -20,6 +20,15 @@ public class FurnitureEntry
 
     [Tooltip("Resources.Load path, e.g. Furniture/bahrain-accent-chair. Used so the scene does not serialize huge GLB prefabs.")]
     public string resourcePath;
+
+    [Tooltip("Remote GLB URL from MongoDB/GCS. When set, placement loads this instead of a bundled prefab.")]
+    public string glbUrl;
+
+    [Tooltip("Optional thumbnail URL for the catalog UI.")]
+    public string thumbnailUrl;
+
+    [Tooltip("Exact reference label from the product sheet, e.g. L 90\" × W 32\" × H 32\".")]
+    public string dimensionLabel;
 }
 
 /// <summary>
@@ -35,7 +44,26 @@ public class FurnitureCatalog : MonoBehaviour
     [SerializeField] private List<FurnitureEntry> entries = new();
     [SerializeField] private GameObject defaultPrefab;
 
+    [Header("Catalog source")]
+    [Tooltip("When enabled, bundled scene prefabs are ignored. Metadata comes from FurnitureDimensions.json; GLB URLs come from MongoDB/GCS via RemoteFurnitureCatalogLoader.")]
+    [SerializeField] private bool remoteCatalogOnly = true;
+
     public IReadOnlyList<FurnitureEntry> Entries => entries;
+    public bool RemoteCatalogOnly => remoteCatalogOnly;
+
+    void Awake()
+    {
+        if (remoteCatalogOnly)
+            entries.Clear();
+
+        EnsureBundledResourceEntries();
+        ApplyBundledDimensionLabels();
+    }
+
+    public void ClearEntries()
+    {
+        entries.Clear();
+    }
 
     public GameObject GetPrefab(string id)
     {
@@ -82,6 +110,11 @@ public class FurnitureCatalog : MonoBehaviour
     public GameObject ResolvePrefab(FurnitureEntry entry)
     {
         if (entry == null) return null;
+
+        // Remote catalog: always stream GLBs from GCS — never pull bundled prefabs into memory.
+        if (remoteCatalogOnly && !string.IsNullOrWhiteSpace(entry.glbUrl))
+            return null;
+
         if (entry.prefab != null) return entry.prefab;
 
         var path = string.IsNullOrWhiteSpace(entry.resourcePath)
@@ -128,6 +161,65 @@ public class FurnitureCatalog : MonoBehaviour
     }
 
     public Sprite GetIcon(string id) => GetIcon(GetEntry(id));
+
+    public string GetGlbUrl(string id)
+    {
+        var entry = GetEntry(id);
+        return entry != null ? entry.glbUrl : null;
+    }
+
+    public string GetDimensionLabel(string id)
+    {
+        var entry = GetEntry(id);
+        return entry != null ? entry.dimensionLabel : null;
+    }
+
+    /// <summary>Catalog width (x), height (y), depth (z) in metres.</summary>
+    public Vector3 GetCatalogDimensions(string id)
+    {
+        return GetDefaultDimensions(id);
+    }
+
+    /// <summary>
+    /// Merges remote catalog items from the backend. Existing ids are updated in place.
+    /// </summary>
+    public void MergeRemoteEntries(IEnumerable<FurnitureEntry> remoteEntries)
+    {
+        if (remoteEntries == null) return;
+
+        foreach (var remote in remoteEntries)
+        {
+            if (remote == null || string.IsNullOrWhiteSpace(remote.id))
+                continue;
+
+            var existing = GetEntry(remote.id);
+            if (existing != null)
+            {
+                existing.displayName = string.IsNullOrWhiteSpace(remote.displayName) ? existing.displayName : remote.displayName;
+                existing.category = string.IsNullOrWhiteSpace(remote.category) ? existing.category : remote.category;
+                existing.glbUrl = remote.glbUrl;
+                existing.thumbnailUrl = remote.thumbnailUrl;
+                existing.dimensionLabel = remote.dimensionLabel;
+                if (remote.width > 0.01f) existing.width = remote.width;
+                if (remote.height > 0.01f) existing.height = remote.height;
+                if (remote.depth > 0.01f) existing.depth = remote.depth;
+                continue;
+            }
+
+            entries.Add(new FurnitureEntry
+            {
+                id = remote.id,
+                displayName = remote.displayName,
+                category = remote.category,
+                glbUrl = remote.glbUrl,
+                thumbnailUrl = remote.thumbnailUrl,
+                dimensionLabel = remote.dimensionLabel,
+                width = remote.width > 0.01f ? remote.width : 0.6f,
+                height = remote.height > 0.01f ? remote.height : 0.6f,
+                depth = remote.depth > 0.01f ? remote.depth : 0.6f,
+            });
+        }
+    }
 
     public Vector3 GetDefaultDimensions(string id)
     {
@@ -207,4 +299,146 @@ public class FurnitureCatalog : MonoBehaviour
     {
         return entry != null && !string.IsNullOrWhiteSpace(entry.id);
     }
+
+    /// <summary>
+    /// Registers catalog entries from bundled FurnitureDimensions.json (metadata only).
+    /// Does NOT load prefabs — those stay lazy via <see cref="ResolvePrefab"/>.
+    /// Loading all Resources/Furniture prefabs at once OOMs mobile devices.
+    /// </summary>
+    public int EnsureBundledResourceEntries()
+    {
+        var asset = Resources.Load<TextAsset>(DimensionDataResource);
+        if (asset == null)
+        {
+            Debug.Log("[FurnitureCatalog] No bundled FurnitureDimensions.json — using scene entries only.");
+            return 0;
+        }
+
+        FurnitureDimensionDatabase db;
+        try
+        {
+            db = JsonUtility.FromJson<FurnitureDimensionDatabase>(asset.text);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[FurnitureCatalog] Failed to parse {DimensionDataResource}: {e.Message}");
+            return 0;
+        }
+
+        if (db?.furniture == null || db.furniture.Length == 0)
+            return 0;
+
+        var added = 0;
+        foreach (var record in db.furniture)
+        {
+            if (record == null || string.IsNullOrWhiteSpace(record.id))
+                continue;
+
+            var id = record.id.Trim().ToLowerInvariant();
+            if (GetEntry(id) != null)
+                continue;
+
+            var displayName = !string.IsNullOrWhiteSpace(record.displayName)
+                ? record.displayName.Trim()
+                : HumanizeId(id);
+
+            entries.Add(new FurnitureEntry
+            {
+                id = id,
+                displayName = displayName,
+                category = InferCategory(id, displayName),
+                resourcePath = $"{DefaultResourceFolder}/{id}",
+                dimensionLabel = record.label ?? string.Empty,
+                width = record.width > 0.01f ? record.width : 0.6f,
+                height = record.height > 0.01f ? record.height : 0.6f,
+                depth = record.length > 0.01f ? record.length : 0.6f,
+            });
+            added++;
+        }
+
+        if (added > 0)
+            Debug.Log($"[FurnitureCatalog] Registered {added} bundled catalog entries (total {entries.Count}, prefabs lazy-loaded).");
+
+        return added;
+    }
+
+    const string DimensionDataResource = "FurnitureDimensions";
+
+    void ApplyBundledDimensionLabels()
+    {
+        var asset = Resources.Load<TextAsset>(DimensionDataResource);
+        if (asset == null)
+        {
+            Debug.Log("[FurnitureCatalog] No bundled FurnitureDimensions.json — inch labels will be derived from catalog metres.");
+            return;
+        }
+
+        FurnitureDimensionDatabase db;
+        try
+        {
+            db = JsonUtility.FromJson<FurnitureDimensionDatabase>(asset.text);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"[FurnitureCatalog] Failed to parse {DimensionDataResource}: {e.Message}");
+            return;
+        }
+
+        if (db?.furniture == null || db.furniture.Length == 0)
+            return;
+
+        var applied = 0;
+        foreach (var record in db.furniture)
+        {
+            if (record == null || string.IsNullOrWhiteSpace(record.id))
+                continue;
+
+            var entry = GetEntry(record.id.Trim().ToLowerInvariant());
+            if (entry == null)
+                continue;
+
+            if (!string.IsNullOrWhiteSpace(record.label))
+                entry.dimensionLabel = record.label.Trim();
+
+            if (record.width > 0.01f) entry.width = record.width;
+            if (record.height > 0.01f) entry.height = record.height;
+            if (record.length > 0.01f) entry.depth = record.length;
+
+            applied++;
+        }
+
+        Debug.Log($"[FurnitureCatalog] Applied bundled dimension labels to {applied} items.");
+    }
+
+    static string HumanizeId(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return id;
+        var words = id.Replace('-', ' ').Replace('_', ' ').Split(' ');
+        for (var i = 0; i < words.Length; i++)
+        {
+            if (words[i].Length == 0) continue;
+            words[i] = char.ToUpperInvariant(words[i][0]) + words[i].Substring(1);
+        }
+        return string.Join(" ", words);
+    }
+}
+
+[System.Serializable]
+public class FurnitureDimensionRecord
+{
+    public string id;
+    public string displayName;
+    public string label;
+    public float width;
+    public float height;
+    public float length;
+    public int lengthIn;
+    public int widthIn;
+    public int heightIn;
+}
+
+[System.Serializable]
+public class FurnitureDimensionDatabase
+{
+    public FurnitureDimensionRecord[] furniture;
 }

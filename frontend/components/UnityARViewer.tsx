@@ -9,6 +9,7 @@ import {
   type LayoutPayload,
   type PlacedFurniturePayload,
   type ScanStatusPayload,
+  type RoomConfirmedPayload,
   type SelectionPayload,
   type SpawnFurnitureRequest,
   type UnityErrorPayload,
@@ -52,7 +53,7 @@ interface UnityARViewerProps {
   // ARDesignScene events
   onFurnitureInstancePlaced?: (payload: PlacedFurniturePayload) => void;
   onScanStatus?: (payload: ScanStatusPayload) => void;
-  onRoomScanConfirmed?: (payload: ScanStatusPayload) => void;
+  onRoomScanConfirmed?: (payload: RoomConfirmedPayload) => void;
   onFurnitureSelected?: (payload: SelectionPayload) => void;
   onFurnitureRemoved?: (instanceId: string) => void;
   onLayoutChanged?: (payload: LayoutPayload) => void;
@@ -185,7 +186,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
           }
 
           case 'roomScanConfirmed': {
-            const payload = parseUnityPayload<ScanStatusPayload>(msg);
+            const payload = parseUnityPayload<RoomConfirmedPayload>(msg);
             if (payload) onRoomScanConfirmed?.(payload);
             break;
           }

@@ -104,7 +104,7 @@ export default function HelpSupportScreen() {
                 Can I save my projects?
               </AppText>
               <AppText variant="body" color="textMuted" style={styles.faqAnswer}>
-                Yes! All your projects are automatically saved and can be accessed from the "My Projects" tab.
+                Yes! Export a 3D layout from Unity AR and it will appear under Profile → Projects. You can also create projects manually.
               </AppText>
             </View>
             <View style={styles.faqSection}>

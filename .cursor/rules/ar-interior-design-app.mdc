@@ -287,16 +287,3 @@ cd backend && npm test
 5. **Never hardcode API URLs** — use the `apiClient.ts` service.
 6. **Never hardcode colors** — use the theme system via `useTheme()`.
 7. **Keep .env secrets out of code** — use environment variables.
-
----
-
-## Documentation
-
-Extensive docs are in `docs/`:
-- `HOW_THE_SYSTEM_WORKS.md` — Full system architecture
-- `SYSTEM_FLOW_DIAGRAM.md` — Process flows
-- `MONGODB_DOCUMENT_MODEL.md` — Database schema docs
-- `3D_MODELS_GUIDE.md` — 3D model integration guide
-- `UNITY_INTEGRATION.md` — Unity3D integration docs
-- `COMPLETE_PROCESS_FLOWCHART.md` — End-to-end process flow
-- `ERD_DATABASE_DIAGRAM.md` — Entity relationship diagrams

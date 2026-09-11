@@ -1,5 +1,6 @@
 /**
- * AR View route — Unity AR on native. Web AR is not supported.
+ * AR View route — Unity AR embed is opt-in via EXPO_PUBLIC_UNITY_AR_ENABLED.
+ * Default: Unity-only development notice (Build & Run in Unity).
  */
 
 import React from 'react';
@@ -7,7 +8,9 @@ import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { ARViewErrorBoundary } from '@/components/ar-view/ARViewErrorBoundary';
+import { ARViewUnityDevNotice } from '@/components/ar-view/ARViewUnityDevNotice';
 import { ARViewUnityScreen } from '@/components/ar-view/ARViewUnityScreen';
+import { UNITY_AR_EMBED_ENABLED } from '@/config/unity-ar.config';
 import { colors, spacing, radii } from '@/components/ui/theme';
 
 function ARViewWebUnsupported() {
@@ -16,10 +19,10 @@ function ARViewWebUnsupported() {
   return (
     <View style={webStyles.container}>
       <Ionicons name="phone-portrait-outline" size={48} color={colors.accent} />
-      <Text style={webStyles.title}>AR requires the mobile app</Text>
+      <Text style={webStyles.title}>AR requires a mobile device</Text>
       <Text style={webStyles.message}>
-        Furniture placement runs in Unity on iOS and Android. Open this project in the Expo dev
-        client on a device to use AR.
+        AR furniture placement is developed in Unity for iOS and Android. Use Unity Build
+        &amp; Run on a device, or enable React Native Unity embed when integration is ready.
       </Text>
       <TouchableOpacity
         style={webStyles.backButton}
@@ -38,7 +41,13 @@ export default function ARViewRoute() {
 
   return (
     <ARViewErrorBoundary>
-      {isNative ? <ARViewUnityScreen /> : <ARViewWebUnsupported />}
+      {!isNative ? (
+        <ARViewWebUnsupported />
+      ) : UNITY_AR_EMBED_ENABLED ? (
+        <ARViewUnityScreen />
+      ) : (
+        <ARViewUnityDevNotice />
+      )}
     </ARViewErrorBoundary>
   );
 }

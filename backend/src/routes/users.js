@@ -1,7 +1,7 @@
 import express from 'express';
 import { authenticate } from '../middleware/auth.js';
 import User from '../models/User.js';
-import { isMongoDBConnected } from '../db/mongodb.js';
+import { isMongoDBConnected, withMongoTimeout, ensureMongoConnection, isMongoConfigured } from '../db/mongodb.js';
 import {
   findUserByEmail,
   findUserById,
@@ -13,6 +13,24 @@ const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+
+const DB_UNAVAILABLE = {
+  error: 'Service unavailable',
+  message:
+    'Could not reach the account database. Check your connection and try again in a moment.',
+};
+
+async function requireAuthStore() {
+  if (!isMongoConfigured()) {
+    return { mode: 'hardcoded' };
+  }
+
+  const ok = await ensureMongoConnection();
+  if (!ok) {
+    return { mode: 'unavailable' };
+  }
+  return { mode: 'mongo' };
+}
 
 // Simple JWT implementation (fallback if jsonwebtoken not available)
 async function createToken(payload) {
@@ -55,13 +73,12 @@ async function verifyToken(token) {
 
 /**
  * POST /api/v1/users/signup
- * Register a new user (using MongoDB)
+ * Register a new user (using MongoDB when configured)
  */
 router.post('/signup', async (req, res, next) => {
   try {
     const { email, password, name } = req.body;
 
-    // Validation
     if (!email || !password) {
       return res.status(400).json({
         error: 'Validation error',
@@ -76,10 +93,26 @@ router.post('/signup', async (req, res, next) => {
       });
     }
 
-    // Use MongoDB if connected, otherwise fallback to hardcoded users
-    if (isMongoDBConnected()) {
-      // Check if user already exists in MongoDB
-      const existingUser = await User.findOne({ email: email.toLowerCase() });
+    const store = await requireAuthStore();
+    if (store.mode === 'unavailable') {
+      return res.status(503).json(DB_UNAVAILABLE);
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    if (store.mode === 'mongo') {
+      let existingUser;
+      try {
+        existingUser = await withMongoTimeout(
+          User.findOne({ email: normalizedEmail }).exec(),
+          8000,
+          'Signup email lookup'
+        );
+      } catch (dbError) {
+        console.error('[Signup] MongoDB lookup failed:', dbError.message);
+        return res.status(503).json(DB_UNAVAILABLE);
+      }
+
       if (existingUser) {
         return res.status(409).json({
           error: 'User already exists',
@@ -87,54 +120,67 @@ router.post('/signup', async (req, res, next) => {
         });
       }
 
-      // Create new user in MongoDB
       const user = new User({
-        email: email.toLowerCase(),
-        password, // Will be hashed by pre-save hook
+        email: normalizedEmail,
+        password,
         name: name || undefined,
       });
 
-      await user.save();
+      try {
+        await withMongoTimeout(user.save(), 10000, 'Signup user save');
+      } catch (dbError) {
+        if (dbError.code === 11000) {
+          return res.status(409).json({
+            error: 'User already exists',
+            message: 'An account with this email already exists',
+          });
+        }
+        console.error('[Signup] MongoDB save failed:', dbError.message);
+        return res.status(503).json(DB_UNAVAILABLE);
+      }
 
-      // Generate JWT token
-      const token = await createToken({ userId: user._id.toString(), email: user.email });
+      const token = await createToken({
+        userId: user._id.toString(),
+        email: user.email,
+        role: user.role || 'user',
+      });
 
-      res.status(201).json({
+      return res.status(201).json({
         message: 'User created successfully',
         user: {
           id: user._id.toString(),
           email: user.email,
           name: user.name,
-          createdAt: user.createdAt,
-        },
-        token,
-      });
-    } else {
-      // Fallback to hardcoded users if MongoDB is not connected
-      const existingUser = findUserByEmail(email);
-      if (existingUser) {
-        return res.status(409).json({
-          error: 'User already exists',
-          message: 'An account with this email already exists',
-        });
-      }
-
-      const user = createUser(email, password, name);
-      const token = await createToken({ userId: user.id, email: user.email });
-
-      res.status(201).json({
-        message: 'User created successfully',
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
+          role: user.role || 'user',
           createdAt: user.createdAt,
         },
         token,
       });
     }
+
+    // Hardcoded fallback only when Mongo is not configured
+    const existingUser = findUserByEmail(normalizedEmail);
+    if (existingUser) {
+      return res.status(409).json({
+        error: 'User already exists',
+        message: 'An account with this email already exists',
+      });
+    }
+
+    const user = createUser(normalizedEmail, password, name);
+    const token = await createToken({ userId: user.id, email: user.email });
+
+    res.status(201).json({
+      message: 'User created successfully',
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        createdAt: user.createdAt,
+      },
+      token,
+    });
   } catch (error) {
-    // Handle MongoDB duplicate key error
     if (error.code === 11000) {
       return res.status(409).json({
         error: 'User already exists',
@@ -147,13 +193,12 @@ router.post('/signup', async (req, res, next) => {
 
 /**
  * POST /api/v1/users/login
- * Login user and get JWT token (using MongoDB)
+ * Login user and get JWT token
  */
 router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
-    // Validation
     if (!email || !password) {
       return res.status(400).json({
         error: 'Validation error',
@@ -161,72 +206,96 @@ router.post('/login', async (req, res, next) => {
       });
     }
 
-    // Use MongoDB if connected, otherwise fallback to hardcoded users
-    if (isMongoDBConnected()) {
-      // Find user in MongoDB (include password for comparison)
-      const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+    const store = await requireAuthStore();
+    if (store.mode === 'unavailable') {
+      return res.status(503).json(DB_UNAVAILABLE);
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const candidatePassword = String(password);
+
+    if (store.mode === 'mongo') {
+      let user;
+      try {
+        user = await withMongoTimeout(
+          User.findOne({ email: normalizedEmail })
+            .select('+password')
+            .maxTimeMS(5000)
+            .exec(),
+          8000,
+          'Login user lookup'
+        );
+      } catch (dbError) {
+        console.error('[Login] MongoDB lookup failed:', dbError.message);
+        return res.status(503).json(DB_UNAVAILABLE);
+      }
 
       if (!user) {
+        console.warn(`[Login] No Mongo user for ${normalizedEmail}`);
         return res.status(401).json({
           error: 'Authentication failed',
           message: 'Invalid email or password',
         });
       }
 
-      // Verify password using bcrypt
-      const isPasswordValid = await user.comparePassword(password);
+      const isPasswordValid = await user.comparePassword(candidatePassword);
       if (!isPasswordValid) {
+        console.warn(`[Login] Bad password for Mongo user ${normalizedEmail}`);
         return res.status(401).json({
           error: 'Authentication failed',
           message: 'Invalid email or password',
         });
       }
 
-      // Generate JWT token
-      const token = await createToken({ userId: user._id.toString(), email: user.email });
+      const token = await createToken({
+        userId: user._id.toString(),
+        email: user.email,
+        role: user.role || 'user',
+      });
 
-      res.json({
+      return res.json({
         message: 'Login successful',
         user: {
           id: user._id.toString(),
           email: user.email,
           name: user.name,
-          createdAt: user.createdAt,
-        },
-        token,
-      });
-    } else {
-      // Fallback to hardcoded users if MongoDB is not connected
-      const user = findUserByEmail(email);
-
-      if (!user) {
-        return res.status(401).json({
-          error: 'Authentication failed',
-          message: 'Invalid email or password',
-        });
-      }
-
-      const isPasswordValid = verifyPassword(user, password);
-      if (!isPasswordValid) {
-        return res.status(401).json({
-          error: 'Authentication failed',
-          message: 'Invalid email or password',
-        });
-      }
-
-      const token = await createToken({ userId: user.id, email: user.email });
-
-      res.json({
-        message: 'Login successful',
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
+          role: user.role || 'user',
           createdAt: user.createdAt,
         },
         token,
       });
     }
+
+    // Hardcoded fallback only when Mongo is not configured
+    const user = findUserByEmail(normalizedEmail);
+
+    if (!user) {
+      return res.status(401).json({
+        error: 'Authentication failed',
+        message: 'Invalid email or password',
+      });
+    }
+
+    const isPasswordValid = verifyPassword(user, candidatePassword);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        error: 'Authentication failed',
+        message: 'Invalid email or password',
+      });
+    }
+
+    const token = await createToken({ userId: user.id, email: user.email });
+
+    res.json({
+      message: 'Login successful',
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        createdAt: user.createdAt,
+      },
+      token,
+    });
   } catch (error) {
     next(error);
   }
@@ -372,6 +441,7 @@ router.get('/me', authenticate, async (req, res, next) => {
         id: user._id.toString(),
         email: user.email,
         name: user.name,
+        role: user.role || 'user',
         bio: user.bio,
         phoneNumber: user.phoneNumber,
         avatar: user.avatar,

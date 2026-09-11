@@ -110,6 +110,24 @@ export interface ScanStatusPayload {
   hint: ScanHint | string;
 }
 
+/** Payload of the `roomScanConfirmed` event — includes computed room dimensions. */
+export interface RoomConfirmedPayload extends ScanStatusPayload {
+  /** Room width in metres (X). */
+  width: number;
+  /** Room length/depth in metres (Z). */
+  depth: number;
+  /** Wall height in metres (Y). */
+  height: number;
+  floorAreaSqm: number;
+  wallHeight: number;
+  /** e.g. L 4.2m × W 3.1m × H 2.5m */
+  dimensionLabel: string;
+  boundsMin?: UnityVec3;
+  boundsMax?: UnityVec3;
+  cornerCount?: number;
+  floorPolygon?: { points?: UnityVec3[] };
+}
+
 /** Payload of the `furniturePlaced` event and of each entry in `layoutChanged`. */
 export interface PlacedFurniturePayload {
   instanceId: string;

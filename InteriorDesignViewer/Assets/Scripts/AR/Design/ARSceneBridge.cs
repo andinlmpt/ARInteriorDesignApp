@@ -350,17 +350,7 @@ public class ARSceneBridge : MonoBehaviour
 
         roomMeshVisualizer?.RebuildFromSnapshot(scanController.ConfirmedRoom);
 
-        var room = scanController.ConfirmedRoom;
-        var payload = new ScanStatusPayload
-        {
-            phase = "confirmed",
-            progress = 1f,
-            readyToConfirm = true,
-            confirmed = true,
-            planeCount = room?.planeCount ?? 0,
-            meshChunkCount = room?.meshChunkCount ?? 0,
-            hint = "confirmed",
-        };
+        var payload = RoomMeasurementPayloadBuilder.Build(scanController);
 
         UnityMessageBridge.SendToApp(EventScanConfirmed, JsonUtility.ToJson(payload));
     }

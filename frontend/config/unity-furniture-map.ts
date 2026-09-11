@@ -1,6 +1,6 @@
 /**
  * Maps React Native furniture catalog IDs to Unity FurnitureCatalog entry IDs.
- * Keep in sync with Managers → Furniture Catalog in ARDesignScene.unity.
+ * MongoDB catalog IDs pass through unchanged; legacy demo IDs keep their aliases.
  */
 
 const UNITY_FURNITURE_ID_MAP: Record<string, string> = {
@@ -42,8 +42,6 @@ const UNITY_FURNITURE_ID_MAP: Record<string, string> = {
   rug: 'coffee-table',
 };
 
-const DEFAULT_UNITY_FURNITURE_ID = 'sofa';
-
 export function mapFurnitureIdToUnity(catalogId: string): string {
-  return UNITY_FURNITURE_ID_MAP[catalogId] ?? DEFAULT_UNITY_FURNITURE_ID;
+  return UNITY_FURNITURE_ID_MAP[catalogId] ?? catalogId;
 }

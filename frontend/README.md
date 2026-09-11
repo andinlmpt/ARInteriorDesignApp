@@ -110,7 +110,6 @@ npx expo start --port 8082
 ## 📚 Documentation
 
 - **Getting Started Guide**: See [GETTING_STARTED.md](./GETTING_STARTED.md) for detailed instructions
-- **Unity Integration**: See [docs/UNITY_SETUP.md](./docs/UNITY_SETUP.md) for 3D visualization setup
 - **Backend Setup**: See [backend/README.md](./backend/README.md) for backend configuration
 
 ## 🏗️ Backend (Optional)

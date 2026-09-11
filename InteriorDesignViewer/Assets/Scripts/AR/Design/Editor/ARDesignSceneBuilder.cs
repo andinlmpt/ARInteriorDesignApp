@@ -132,6 +132,48 @@ public static class ARDesignSceneBuilder
         EditorUtility.DisplayDialog("AR Design", $"Furniture Catalog now has {count} items.", "OK");
     }
 
+    [MenuItem("AR Interior/AR Design/Add Remote Furniture Catalog Loader", false, 45)]
+    public static void AddRemoteFurnitureCatalogLoaderMenu()
+    {
+        var managers = GameObject.Find("Managers");
+        if (managers == null)
+        {
+            EditorUtility.DisplayDialog("AR Design", "Open ARDesignScene first.", "OK");
+            return;
+        }
+
+        var catalog = managers.GetComponent<FurnitureCatalog>();
+        var catalogUi = managers.GetComponent<ARDesignFurnitureCatalogUI>();
+        var loader = managers.GetComponent<RemoteFurnitureCatalogLoader>()
+            ?? managers.AddComponent<RemoteFurnitureCatalogLoader>();
+
+        var so = new SerializedObject(loader);
+        if (catalog != null) so.FindProperty("catalog").objectReferenceValue = catalog;
+        if (catalogUi != null) so.FindProperty("catalogUi").objectReferenceValue = catalogUi;
+        so.ApplyModifiedPropertiesWithoutUndo();
+
+        EditorSceneManager.MarkSceneDirty(managers.scene);
+        Selection.activeGameObject = managers;
+        EditorUtility.DisplayDialog(
+            "AR Design",
+            "Remote Furniture Catalog Loader added to Managers.\n\n" +
+            "Set Catalog Url to your backend, e.g.:\n" +
+            "http://192.168.1.7:3000/api/v1/furniture",
+            "OK");
+    }
+
+    [MenuItem("AR Interior/AR Design/Allow HTTP for Local Backend", false, 46)]
+    public static void AllowHttpForLocalBackend()
+    {
+        PlayerSettings.insecureHttpOption = InsecureHttpOption.AlwaysAllowed;
+        Debug.Log("[AR Interior] Player Settings → Allow downloads over HTTP = Always Allowed.");
+        EditorUtility.DisplayDialog(
+            "AR Design",
+            "HTTP downloads are now allowed so Unity can reach your LAN backend " +
+            "(http://YOUR_IP:3000/api/v1/furniture).\n\nRebuild and redeploy to the device.",
+            "OK");
+    }
+
     /// <summary>
     /// Fills Managers ▸ FurnitureCatalog from the project's furniture prefabs so
     /// the side rail always has plenty to place after a room confirm.
@@ -357,6 +399,9 @@ public static class ARDesignSceneBuilder
         var bridge = Ensure<ARSceneBridge>(managers);
         var scanHud = Ensure<ARDesignScanHUD>(managers);
         var catalogUi = Ensure<ARDesignFurnitureCatalogUI>(managers);
+        var remoteCatalogLoader = Ensure<RemoteFurnitureCatalogLoader>(managers);
+        var roomMeasurementSync = Ensure<RoomMeasurementSync>(managers);
+        var roomMeasurementModal = Ensure<RoomMeasurementSaveModal>(managers);
         var edgeVisualizer = Ensure<ARDesignEdgeVisualizer>(managers);
         var cornerBuilder = Ensure<ARDesignCornerRoomBuilder>(managers);
         var layoutMode = Ensure<ARDesignLayoutModeController>(managers);
@@ -469,6 +514,23 @@ public static class ARDesignSceneBuilder
             so.Set("layoutHistory", layoutHistory);
             so.Set("layoutMode", layoutMode);
             so.Set("exportManager", roomExport);
+        });
+
+        Wire(remoteCatalogLoader, so =>
+        {
+            so.Set("catalog", catalog);
+            so.Set("catalogUi", catalogUi);
+        });
+
+        Wire(roomMeasurementSync, so =>
+        {
+            so.Set("scanController", scanController);
+        });
+
+        Wire(roomMeasurementModal, so =>
+        {
+            so.Set("scanController", scanController);
+            so.Set("measurementSync", roomMeasurementSync);
         });
 
         Wire(roomExport, so =>
