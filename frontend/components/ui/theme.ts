@@ -120,7 +120,7 @@ const createShadow = (
     };
   }
   return {
-    shadowColor: '#1F1F1F',
+    shadowColor: '#0C295F',
     shadowOffset: { width: 0, height: offsetY },
     shadowOpacity: opacity,
     shadowRadius: blur,

@@ -73,6 +73,14 @@ public class RoomScanController : MonoBehaviour
     [Header("Corner outline")]
     [SerializeField] private ARDesignCornerRoomBuilder cornerBuilder;
 
+    [Header("Modes")]
+    [Tooltip("AR Furniture scene: skip height/width measurement and unlock placement immediately.")]
+    [SerializeField] private bool furniturePlacementOnly = false;
+
+    [Header("Standalone")]
+    [Tooltip("Measurement scene: begin scanning automatically when the scene loads.")]
+    [SerializeField] private bool autoStartScanOnLoad = false;
+
     /// <summary>Fired on every phase transition.</summary>
     public event Action<ScanPhase> PhaseChanged;
 
@@ -80,6 +88,7 @@ public class RoomScanController : MonoBehaviour
     public event Action<ScanStatusPayload> StatusChanged;
 
     public ScanPhase Phase { get; private set; } = ScanPhase.Idle;
+    public bool IsFurniturePlacementOnly => furniturePlacementOnly;
     public bool IsConfirmed => Phase == ScanPhase.Confirmed;
     public RoomGeometrySnapshot ConfirmedRoom { get; private set; }
     public ARDesignCornerRoomBuilder CornerBuilder => cornerBuilder;
@@ -117,6 +126,68 @@ public class RoomScanController : MonoBehaviour
     {
         if (cornerBuilder != null)
             cornerBuilder.CornersChanged -= OnCornersChanged;
+    }
+
+    void Start()
+    {
+        if (furniturePlacementOnly)
+        {
+            BeginFurniturePlacementOnly();
+            return;
+        }
+
+        if (autoStartScanOnLoad && Phase == ScanPhase.Idle)
+            StartRoomScan();
+    }
+
+    /// <summary>
+    /// Furniture-only mode: no height/width outline. Unlocks the catalog and
+    /// live floor placement as soon as the scene loads.
+    /// </summary>
+    public void BeginFurniturePlacementOnly()
+    {
+        furniturePlacementOnly = true;
+
+        if (cornerBuilder != null)
+            cornerBuilder.enabled = false;
+
+        ConfirmedRoom?.Dispose();
+        ConfirmedRoom = null;
+        floorPolygon.Clear();
+
+        Array.Clear(yawBuckets, 0, yawBuckets.Length);
+        scanStartTime = Time.unscaledTime;
+        cachedProgress = 1f;
+
+        // Keep horizontal floor detection for tap-to-place; skip vertical scan UI.
+        if (planeManager != null)
+        {
+            planeManager.requestedDetectionMode = PlaneDetectionMode.Horizontal;
+            planeManager.enabled = true;
+        }
+
+        if (pointCloudManager != null)
+            pointCloudManager.enabled = false;
+        if (meshManager != null)
+            meshManager.enabled = false;
+
+        var origin = arCamera != null ? arCamera.transform.position : Vector3.zero;
+        var floorY = origin.y - 1.5f;
+        const float half = 12f;
+        var openFloor = new List<Vector3>(4)
+        {
+            new(origin.x - half, floorY, origin.z - half),
+            new(origin.x + half, floorY, origin.z - half),
+            new(origin.x + half, floorY, origin.z + half),
+            new(origin.x - half, floorY, origin.z + half),
+        };
+
+        CaptureFloorPolygon(openFloor);
+        ConfirmedRoom = RoomGeometryBuilder.CaptureFromFloorCorners(openFloor, 2.5f);
+
+        Debug.Log("[RoomScanController] Furniture placement only — measurement HUD skipped.");
+        SetPhase(ScanPhase.Confirmed);
+        PushStatus();
     }
 
     void OnCornersChanged()
@@ -158,6 +229,12 @@ public class RoomScanController : MonoBehaviour
     /// <summary>Begins or restarts the scan phase, discarding any previously confirmed room.</summary>
     public void StartRoomScan()
     {
+        if (furniturePlacementOnly)
+        {
+            BeginFurniturePlacementOnly();
+            return;
+        }
+
         ConfirmedRoom?.Dispose();
         ConfirmedRoom = null;
         floorPolygon.Clear();
@@ -568,6 +645,12 @@ public class RoomScanController : MonoBehaviour
         if (Phase == ScanPhase.Idle) return "idle";
         if (cornerBuilder != null)
         {
+            if (cornerBuilder.IsInHeightPhase)
+            {
+                if (!cornerBuilder.HasHeightBase) return "tapFloorHeight";
+                return "extrudeHeight";
+            }
+
             if (cornerBuilder.CanConfirm) return "readyToConfirm";
             if (cornerCount == 0) return "tapFirstCorner";
             if (cornerCount == 1) return "tapNextCorner";

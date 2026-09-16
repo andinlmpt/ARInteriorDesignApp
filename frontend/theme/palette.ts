@@ -1,72 +1,72 @@
 /**
  * Interior Design App — official color palette
- * Reference: Warm Ivory + Muted Sage + Natural Sand (minimalist interior aesthetic)
+ * Derived from Maharlika logo: Deep Navy + Warm Peach + White
  */
 
 export const lightPalette = {
-  background: '#FAF9F7',       // Warm Ivory
-  surfacePrimary: '#FFFFFF',   // Pure White — cards
-  surfaceSecondary: '#F2F1EE', // Soft Linen
-  surfaceTertiary: '#E6E4E1',  // Mist Gray — subtle fills
-  accent: '#7A8F7B',         // Muted Sage — primary
-  accentLight: '#CDB9A6',    // Natural Sand — secondary accent
-  accentDark: '#617364',      // Deep Sage — pressed / strong CTA
-  accentSoft: '#F0EBE4',      // Sand tint — chips, icon pills
-  success: '#6F8B62',         // Moss Green
-  warning: '#D7B26A',         // Soft Gold
-  danger: '#C77A6A',          // Muted Clay
-  textPrimary: '#1F1F1F',     // Soft Black
-  textSecondary: '#7A7A78',   // Stone Gray
-  textMuted: '#9A9A98',
-  border: '#E6E4E1',          // Mist Gray
-  outline: '#D4D2CF',
-  overlay: 'rgba(31, 31, 31, 0.72)',
-  gradientStart: '#7A8F7B',
-  gradientEnd: '#617364',
+  background: '#FFFFFF',       // Pure White
+  surfacePrimary: '#FFFFFF',   // Cards / elevated surfaces
+  surfaceSecondary: '#F4F6FA', // Soft navy-tinted fill
+  surfaceTertiary: '#E8ECF3',  // Subtle fills / chips
+  accent: '#0C295F',           // Deep Navy — primary brand / CTAs
+  accentLight: '#E69868',      // Warm Peach — secondary accent
+  accentDark: '#081E47',       // Darker navy — pressed / strong CTA
+  accentSoft: '#FDF0E8',       // Soft peach tint — chips, icon pills
+  success: '#2F6B4F',
+  warning: '#E69868',          // Peach doubles as warm warning
+  danger: '#C45C4A',
+  textPrimary: '#142338',      // Navy-tinted ink — readable body + brand feel
+  textSecondary: '#5A6B85',
+  textMuted: '#8A96A8',
+  border: '#E8ECF3',
+  outline: '#D0D7E4',
+  overlay: 'rgba(12, 41, 95, 0.72)',
+  gradientStart: '#0C295F',
+  gradientEnd: '#E69868',
   // Home screen & legacy keys
   card: '#FFFFFF',
-  hover: '#F2F1EE',
-  line: '#E6E4E1',
-  primary: '#1F1F1F',
-  secondary: '#7A7A78',
-  muted: '#9A9A98',
-  green: '#6F8B62',
-  orange: '#D7B26A',
-  pink: '#CDB9A6',
-  purple: '#7A8F7B',
+  hover: '#F4F6FA',
+  line: '#E8ECF3',
+  primary: '#0C295F',
+  secondary: '#5A6B85',
+  muted: '#8A96A8',
+  green: '#2F6B4F',
+  orange: '#E69868',
+  pink: '#E69868',
+  purple: '#0C295F',
 } as const;
 
-/** Warm dark mode — derived from the same sage/linen family */
+/** Dark mode — navy-anchored surfaces with peach accents for contrast */
 export const darkPalette = {
-  background: '#1C1B19',
-  surfacePrimary: '#262422',
-  surfaceSecondary: '#1C1B19',
-  surfaceTertiary: '#2E2C28',
-  accent: '#9AAD9B',
-  accentLight: '#CDB9A6',
-  accentDark: '#7A8F7B',
-  accentSoft: '#9AAD9B18',
-  success: '#7FA872',
-  warning: '#E0C07E',
-  danger: '#D49084',
-  textPrimary: '#FAF9F7',
-  textSecondary: '#B8B6B2',
-  textMuted: '#8A8885',
-  border: '#3A3835',
-  outline: '#4A4844',
+  background: '#081628',
+  surfacePrimary: '#0F2138',
+  surfaceSecondary: '#081628',
+  surfaceTertiary: '#1A2F4A',
+  accent: '#E69868',           // Peach reads clearly on dark navy
+  accentLight: '#F0B088',
+  accentDark: '#0C295F',
+  accentSoft: '#E6986822',
+  success: '#4C9B72',
+  warning: '#E69868',
+  danger: '#E07A6A',
+  textPrimary: '#FFFFFF',
+  textSecondary: '#B8C4D6',
+  textMuted: '#8494AB',
+  border: '#1F3350',
+  outline: '#2A4160',
   overlay: 'rgba(0, 0, 0, 0.82)',
-  gradientStart: '#9AAD9B',
-  gradientEnd: '#617364',
-  card: '#262422',
-  hover: '#2E2C28',
-  line: '#3A3835',
-  primary: '#FAF9F7',
-  secondary: '#B8B6B2',
-  muted: '#8A8885',
-  green: '#7FA872',
-  orange: '#E0C07E',
-  pink: '#CDB9A6',
-  purple: '#9AAD9B',
+  gradientStart: '#0C295F',
+  gradientEnd: '#E69868',
+  card: '#0F2138',
+  hover: '#1A2F4A',
+  line: '#1F3350',
+  primary: '#FFFFFF',
+  secondary: '#B8C4D6',
+  muted: '#8494AB',
+  green: '#4C9B72',
+  orange: '#E69868',
+  pink: '#F0B088',
+  purple: '#5B8FD4',
 } as const;
 
 export type AppPalette = typeof lightPalette;

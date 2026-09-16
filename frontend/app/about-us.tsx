@@ -47,11 +47,11 @@ export default function AboutUsScreen() {
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.brandBlock}>
-            <AppLogo size={96} circular elevated />
+            <AppLogo size={96} circular={false} elevated={false} />
             <AppText variant="h2" style={[styles.brandName, { color: BRAND.colors.navy }]}>
               {BRAND.fullName}
             </AppText>
-            <AppText variant="body" style={[styles.tagline, { color: '#1E40AF' }]}>
+            <AppText variant="body" style={[styles.tagline, { color: BRAND.colors.orange }]}>
               {BRAND.tagline}
             </AppText>
           </View>

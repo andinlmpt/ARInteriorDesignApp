@@ -14,6 +14,8 @@
     "seed:furniture:generate": "node scripts/generate-furniture-seed.mjs",
     "seed:furniture:inventory": "node scripts/parse-inventory-docx.mjs && node scripts/sync-furniture-from-inventory.mjs",
     "seed:furniture:thumbnails": "node scripts/sync-furniture-thumbnails.mjs",
+    "seed:furniture:unity-icons": "node scripts/sync-unity-furniture-icons.mjs",
+    "seed:furniture:icons": "node scripts/sync-furniture-thumbnails.mjs && node scripts/sync-unity-furniture-icons.mjs",
     "seed:admin": "node scripts/seed-admin.mjs"
   },
   "keywords": [

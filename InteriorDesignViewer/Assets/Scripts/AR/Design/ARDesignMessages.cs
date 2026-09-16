@@ -232,6 +232,25 @@ public class ExportResultPayload
     public string error;
 }
 
+/// <summary>
+/// Result of an AR Furniture photo capture. The PNG is written to disk (and optionally
+/// the device gallery); RN reads bytes by path — same pattern as exportComplete.
+/// </summary>
+[Serializable]
+public class ARPhotoCapturedPayload
+{
+    public bool success;
+
+    /// <summary>Absolute path under Application.persistentDataPath.</summary>
+    public string path;
+
+    public string fileName;
+    public long byteLength;
+    public string mimeType;
+    public bool gallerySaved;
+    public string error;
+}
+
 /// <summary>Emitted whenever the selection changes (instanceId empty means "nothing selected").</summary>
 [Serializable]
 public class SelectionPayload

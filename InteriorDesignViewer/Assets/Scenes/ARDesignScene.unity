@@ -363,7 +363,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 521325901}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c9d8e7f6a5b44321b0c1d2e3f4a5b6c7, type: 3}
   m_Name: 
@@ -446,7 +446,8 @@ MonoBehaviour:
   placementIndicator: {fileID: 1330154966}
   cornerBuilder: {fileID: 521325907}
   spawnSampleOnConfirm: 0
-  enableNativeHud: 1
+  measurementOnlyMode: 0
+  enableNativeHud: 0
 --- !u!114 &521325911
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -564,7 +565,7 @@ MonoBehaviour:
   furnitureParent: {fileID: 2036794215}
   layoutMode: {fileID: 521325906}
   scanController: {fileID: 521325920}
-  requireConfirmedRoom: 1
+  requireConfirmedRoom: 0
   catalog: {fileID: 521325902}
   gltfLoader: {fileID: 521325917}
   placeholderPrefab: {fileID: 1569265646217197593, guid: bc9c90310f3956e40ab05a9e5a0f41d2, type: 3}
@@ -663,6 +664,8 @@ MonoBehaviour:
   minPlaneArea: 0.08
   statusPushInterval: 0.4
   cornerBuilder: {fileID: 521325907}
+  furniturePlacementOnly: 1
+  autoStartScanOnLoad: 0
 --- !u!114 &521325921
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -710,7 +713,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::RoomMeasurementSaveModal
   scanController: {fileID: 521325920}
   measurementSync: {fileID: 521325922}
-  enableNativeModal: 1
+  enableNativeModal: 0
 --- !u!1 &535005051
 GameObject:
   m_ObjectHideFlags: 0

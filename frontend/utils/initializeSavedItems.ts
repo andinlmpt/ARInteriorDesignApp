@@ -1,6 +1,6 @@
 /**
  * Initialize Saved Items with Sample Data
- * This can be called on first app launch or for demo purposes
+ * Seeds a few furniture favorites into MongoDB once per install (via API).
  */
 
 import { savedItemsService } from '@/services/SavedItemsService';

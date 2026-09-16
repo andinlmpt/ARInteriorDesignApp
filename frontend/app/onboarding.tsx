@@ -94,7 +94,7 @@ export default function OnboardingScreen() {
       <StatusBar style="dark" />
 
       <View style={styles.topBar}>
-        <AppLogo size={44} circular />
+        <AppLogo size={44} circular={false} elevated={false} />
         <TouchableOpacity style={styles.skipButton} onPress={goToLogin} disabled={isNavigating}>
           <AppText variant="caption" style={styles.skipText}>
             Skip

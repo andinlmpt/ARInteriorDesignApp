@@ -268,12 +268,7 @@ public static class AppSceneBootstrap
 
     static void CreateMeasurementScene(MeasurementPrefabs prefabs)
     {
-        ARRoomMeasurementSceneFix.BuildFromTemplate(new ARRoomMeasurementSceneFix.MeasurementPrefabs
-        {
-            pointMarker = prefabs.pointMarker,
-            line = prefabs.line,
-            label = prefabs.label,
-        }, promptOverwrite: true);
+        ARMeasurementSceneBuilder.BuildSceneBatch();
     }
 
     static TMP_Text CreateHudText(Transform parent, string name, Vector2 anchor, Vector2 size, float fontSize, string text)
@@ -307,7 +302,7 @@ public static class AppSceneBootstrap
         rect.anchoredPosition = Vector2.zero;
 
         var image = go.AddComponent<Image>();
-        image.color = new Color(0.478f, 0.561f, 0.482f, 0.92f); // accent #7A8F7B Muted Sage
+        image.color = new Color(0.047f, 0.161f, 0.373f, 1f); // Navy #0C295F
 
         var sprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
         if (sprite != null)
@@ -360,7 +355,7 @@ public static class AppSceneBootstrap
 
         var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
 
-        // Style the Main Camera to use solid Warm Ivory background instead of skybox
+        // Style the Main Camera — light page; navy is reserved for the menu buttons
         var mainCam = Camera.main;
         if (mainCam != null)
         {
@@ -374,7 +369,7 @@ public static class AppSceneBootstrap
         canvasGo.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         canvasGo.AddComponent<GraphicRaycaster>();
 
-        // Create gradient background panel matching the login page aesthetic
+        // Flat light page background (no vignette sprite)
         var bgGo = new GameObject("BackgroundPanel");
         bgGo.transform.SetParent(canvasGo.transform, false);
         var bgRect = bgGo.AddComponent<RectTransform>();
@@ -383,16 +378,19 @@ public static class AppSceneBootstrap
         bgRect.offsetMin = Vector2.zero;
         bgRect.offsetMax = Vector2.zero;
         var bgImg = bgGo.AddComponent<Image>();
-        bgImg.color = Color.white;
-        var gradient = bgGo.AddComponent<UIGradient>();
-        gradient.ColorTop = new Color(0.773f, 0.827f, 0.780f, 1f);    // Soft Sage #C5D3C7
-        gradient.ColorBottom = new Color(0.980f, 0.976f, 0.969f, 1f); // Warm Ivory #FAF9F7
+        bgImg.color = new Color(0.980f, 0.976f, 0.969f, 1f); // Warm Ivory #FAF9F7
+        var bgSprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+        if (bgSprite != null)
+        {
+            bgImg.sprite = bgSprite;
+            bgImg.type = Image.Type.Sliced;
+        }
         bgGo.transform.SetAsFirstSibling();
 
         var controllerGo = new GameObject("MainMenuController");
         var controller = controllerGo.AddComponent<MainMenuController>();
 
-        // Title text using Soft Black #1F1F1F centered and offset upwards
+        // Title text — dark for contrast on light page
         var title = CreateHudText(canvasGo.transform, "Title", new Vector2(0.5f, 0.5f),
             new Vector2(500f, 60f), 34, "AR Interior Design");
         title.rectTransform.anchoredPosition = new Vector2(0f, 180f);
@@ -401,17 +399,19 @@ public static class AppSceneBootstrap
 
         // Place Furniture button offset 50px above center
         var furnitureBtn = CreateHudButton(canvasGo.transform, "FurnitureButton", new Vector2(0.5f, 0.5f),
-            new Vector2(360f, 64f), "Place Furniture");
+            new Vector2(360f, 64f), "AR Furniture");
         furnitureBtn.GetComponent<RectTransform>().anchoredPosition = new Vector2(0f, 50f);
 
         // Measure Room button offset 50px below center
         var measureBtn = CreateHudButton(canvasGo.transform, "MeasurementButton", new Vector2(0.5f, 0.5f),
-            new Vector2(360f, 64f), "Measure Room");
+            new Vector2(360f, 64f), "AR Measurement");
         measureBtn.GetComponent<RectTransform>().anchoredPosition = new Vector2(0f, -50f);
 
         var controllerSo = new SerializedObject(controller);
         controllerSo.FindProperty("furnitureButton").objectReferenceValue = furnitureBtn.GetComponent<Button>();
         controllerSo.FindProperty("measurementButton").objectReferenceValue = measureBtn.GetComponent<Button>();
+        controllerSo.FindProperty("furnitureSceneName").stringValue = "ARDesignScene";
+        controllerSo.FindProperty("measurementSceneName").stringValue = "ARRoomMeasurement";
         controllerSo.ApplyModifiedPropertiesWithoutUndo();
 
         var eventSystemGo = new GameObject("EventSystem");
@@ -423,7 +423,11 @@ public static class AppSceneBootstrap
 
     static void ConfigureBuildSettings()
     {
-        var furniturePath = File.Exists(FurnitureScenePath) ? FurnitureScenePath : FurnitureFallbackPath;
+        var furniturePath = File.Exists("Assets/Scenes/ARDesignScene.unity")
+            ? "Assets/Scenes/ARDesignScene.unity"
+            : File.Exists(FurnitureScenePath)
+                ? FurnitureScenePath
+                : FurnitureFallbackPath;
         var orderedPaths = new List<string>
         {
             MainMenuScenePath,

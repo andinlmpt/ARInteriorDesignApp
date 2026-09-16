@@ -85,10 +85,10 @@ export default function HelpSupportScreen() {
             </AppText>
             <View style={styles.faqSection}>
               <AppText variant="body" style={styles.faqQuestion}>
-                How do I create a new project?
+                How do I start designing?
               </AppText>
               <AppText variant="body" color="textMuted" style={styles.faqAnswer}>
-                Tap the + button in the bottom navigation, then select "By Camera" or "AR View" to start.
+                Use Quick Actions on Home — AR View, AI Design, or room measurement — to begin.
               </AppText>
             </View>
             <View style={styles.faqSection}>
@@ -104,7 +104,7 @@ export default function HelpSupportScreen() {
                 Can I save my projects?
               </AppText>
               <AppText variant="body" color="textMuted" style={styles.faqAnswer}>
-                Yes! Export a 3D layout from Unity AR and it will appear under Profile → Projects. You can also create projects manually.
+                Yes! Export a 3D layout from Unity AR and it will appear under Profile → Projects.
               </AppText>
             </View>
             <View style={styles.faqSection}>

@@ -75,6 +75,8 @@ export class FurnitureModelLoader {
         modelUri = downloadResult.uri;
       } else if (modelUrl.startsWith('file://')) {
         modelUri = modelUrl;
+      } else if (modelUrl.startsWith('/')) {
+        modelUri = `file://${modelUrl}`;
       }
 
       if (!modelUri) {

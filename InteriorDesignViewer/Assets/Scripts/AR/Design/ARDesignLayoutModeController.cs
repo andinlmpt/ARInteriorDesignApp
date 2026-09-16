@@ -165,6 +165,31 @@ public class ARDesignLayoutModeController : MonoBehaviour
         SetViewMode(viewMode == ViewMode.RealRoom ? ViewMode.Planner : ViewMode.RealRoom);
     }
 
+    /// <summary>Standalone measurement scene: top-down 2D plan vs isometric 3D shell.</summary>
+    public void ApplyMeasurementViewPreset(bool topDown)
+    {
+        if (!sessionActive)
+        {
+            if (scanController == null || !scanController.IsConfirmed)
+                return;
+            EnterLayoutMode();
+        }
+
+        viewMode = ViewMode.Planner;
+        CaptureOrbitFromRoom();
+        pitch = topDown ? 89f : 35f;
+        yaw = topDown ? 0f : yaw;
+
+        if (topDown && scanController?.ConfirmedRoom != null && scanController.ConfirmedRoom.hasBounds)
+        {
+            var size = scanController.ConfirmedRoom.bounds.size;
+            distance = Mathf.Clamp(Mathf.Max(size.x, size.z) * 1.2f, minDistance, maxDistance);
+        }
+
+        ApplyCurrentView();
+        ViewModeChanged?.Invoke(viewMode);
+    }
+
     void SetViewMode(ViewMode mode, bool force)
     {
         if (!sessionActive && (scanController == null || !scanController.IsConfirmed))

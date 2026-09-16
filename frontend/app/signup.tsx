@@ -99,7 +99,7 @@ const AbstractPattern = ({ style }: { style?: any }) => {
     <View style={[{ position: 'absolute', top: 0, left: 0, right: 0, height: '40%', overflow: 'hidden' }, style]}>
       {/* Base gradient */}
       <LinearGradient
-        colors={['#F0EBE4', '#F2F1EE', '#7A8F7B', '#FAF9F7']}
+        colors={['#FDF0E8', '#F4F6FA', '#0C295F', '#FFFFFF']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.4 }}
@@ -118,7 +118,7 @@ const AbstractPattern = ({ style }: { style?: any }) => {
         }}
       >
         <LinearGradient
-          colors={['#CDB9A6', 'transparent', '#F0EBE4']}
+          colors={['#E69868', 'transparent', '#FDF0E8']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{ flex: 1, borderRadius: width }}
@@ -137,7 +137,7 @@ const AbstractPattern = ({ style }: { style?: any }) => {
         }}
       >
         <LinearGradient
-          colors={['transparent', '#7A8F7B', '#9AAD9B', 'transparent']}
+          colors={['transparent', '#0C295F', '#3E5A8C', 'transparent']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{ flex: 1, borderRadius: width }}
@@ -156,7 +156,7 @@ const AbstractPattern = ({ style }: { style?: any }) => {
         }}
       >
         <LinearGradient
-          colors={['#F2F1EE', '#CDB9A6', 'transparent']}
+          colors={['#F4F6FA', '#E69868', 'transparent']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{ flex: 1, borderRadius: width }}
@@ -265,7 +265,7 @@ export default function SignUpScreen() {
         {/* Logo and Branding */}
         <View style={styles.topBranding}>
           <FadeInView delay={100} style={styles.brandingWrap}>
-            <AppLogo size={112} elevated style={styles.logoContainer} />
+            <AppLogo size={112} circular={false} elevated={false} style={styles.logoContainer} />
             <BrandHeader
               titleStyle={styles.topAppName}
               taglineStyle={styles.topAppTagline}
@@ -478,14 +478,14 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     textAlign: 'center',
     width: '100%',
-    color: '#1E3A8A',
+    color: '#0C295F',
   },
   topAppTagline: {
     fontSize: getResponsiveFontSize(isSmallScreen ? 14 : 16),
     fontWeight: '500',
     textAlign: 'center',
     width: '100%',
-    color: '#1E40AF',
+    color: '#E69868',
   },
   titleContainer: {
     marginBottom: isSmallScreen ? spacing.lg : spacing.xl,

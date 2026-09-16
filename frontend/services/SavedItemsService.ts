@@ -1,9 +1,9 @@
 /**
  * Saved Items Service
- * Handles saved furniture items, designs, and favorites with AsyncStorage persistence
+ * Persists Saved-tab favorites to MongoDB via the backend API.
  */
 
-import { getJson, setJson, removeKey } from '@/utils/storage';
+import { callApi, ApiError } from './apiClient';
 
 export type SavedItemType = 'furniture' | 'design' | 'project' | 'theme';
 
@@ -21,170 +21,141 @@ export interface SavedItem {
   updatedAt: number;
 }
 
-const STORAGE_KEY = 'savedItems';
-const MAX_SAVED_ITEMS = 500;
+interface SavedItemsListResponse {
+  success: boolean;
+  count: number;
+  items: SavedItem[];
+}
+
+interface SavedItemResponse {
+  success: boolean;
+  item: SavedItem;
+}
+
+interface SavedItemsStatsResponse {
+  success: boolean;
+  stats: {
+    total: number;
+    byType: Record<SavedItemType, number>;
+  };
+}
+
+interface BulkDeleteResponse {
+  success: boolean;
+  deletedCount: number;
+}
 
 class SavedItemsService {
-  private items: SavedItem[] = [];
-  private initialized: boolean = false;
-
   /**
-   * Initialize items from storage
-   */
-  private async initialize(): Promise<void> {
-    if (this.initialized) return;
-
-    try {
-      const stored = await getJson<SavedItem[]>(STORAGE_KEY, []);
-      if (Array.isArray(stored)) {
-        this.items = stored;
-      }
-    } catch (error) {
-      console.warn('[SavedItemsService] Failed to load items from storage:', error);
-      this.items = [];
-    } finally {
-      this.initialized = true;
-    }
-  }
-
-  /**
-   * Persist items to storage
-   */
-  private async persist(): Promise<void> {
-    try {
-      // Keep only the most recent items to avoid storage bloat
-      const itemsToSave = this.items
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, MAX_SAVED_ITEMS);
-      await setJson(STORAGE_KEY, itemsToSave);
-    } catch (error) {
-      console.warn('[SavedItemsService] Failed to persist items:', error);
-    }
-  }
-
-  /**
-   * Get all saved items
+   * Get all saved items for the current user
    */
   async getSavedItems(): Promise<SavedItem[]> {
-    await this.initialize();
-    return [...this.items].sort((a, b) => b.updatedAt - a.updatedAt);
+    const response = await callApi<SavedItemsListResponse>('/saved-items');
+    return response.items ?? [];
   }
 
   /**
    * Get saved items by type
    */
   async getSavedItemsByType(type: SavedItemType): Promise<SavedItem[]> {
-    await this.initialize();
-    return this.items
-      .filter(item => item.type === type)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+    const response = await callApi<SavedItemsListResponse>(
+      `/saved-items?type=${encodeURIComponent(type)}`,
+    );
+    return response.items ?? [];
   }
 
   /**
-   * Get a saved item by ID
+   * Get a saved item by logical id
    */
   async getSavedItemById(id: string): Promise<SavedItem | null> {
-    await this.initialize();
-    return this.items.find(item => item.id === id) || null;
+    try {
+      const response = await callApi<SavedItemResponse>(
+        `/saved-items/${encodeURIComponent(id)}`,
+      );
+      return response.item ?? null;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   /**
    * Check if an item is saved
    */
   async isItemSaved(id: string): Promise<boolean> {
-    await this.initialize();
-    return this.items.some(item => item.id === id);
+    const item = await this.getSavedItemById(id);
+    return item !== null;
   }
 
   /**
-   * Save an item
+   * Save (create or update) an item
    */
   async saveItem(item: Omit<SavedItem, 'savedAt' | 'updatedAt'>): Promise<SavedItem> {
-    await this.initialize();
-
-    // Check if item already exists
-    const existingIndex = this.items.findIndex(i => i.id === item.id);
-    const now = Date.now();
-
-    if (existingIndex >= 0) {
-      // Update existing item
-      this.items[existingIndex] = {
-        ...this.items[existingIndex],
-        ...item,
-        updatedAt: now,
-      };
-      await this.persist();
-      return this.items[existingIndex];
-    }
-
-    // Create new item
-    const newItem: SavedItem = {
-      ...item,
-      savedAt: now,
-      updatedAt: now,
-    };
-
-    this.items.push(newItem);
-    await this.persist();
-    return newItem;
+    const response = await callApi<SavedItemResponse>('/saved-items', {
+      method: 'POST',
+      body: {
+        id: item.id,
+        name: item.name,
+        type: item.type,
+        price: item.price,
+        iconName: item.iconName,
+        iconColor: item.iconColor,
+        imageUrl: item.imageUrl,
+        description: item.description,
+        metadata: item.metadata ?? {},
+      },
+    });
+    return response.item;
   }
 
   /**
-   * Remove a saved item
+   * Remove a saved item by logical id
    */
   async removeSavedItem(id: string): Promise<boolean> {
-    await this.initialize();
-
-    const index = this.items.findIndex(item => item.id === id);
-    if (index === -1) return false;
-
-    this.items.splice(index, 1);
-    await this.persist();
-    return true;
+    try {
+      await callApi<{ success: boolean }>(`/saved-items/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   /**
    * Remove multiple saved items
    */
   async removeSavedItems(ids: string[]): Promise<number> {
-    await this.initialize();
-
-    const initialLength = this.items.length;
-    this.items = this.items.filter(item => !ids.includes(item.id));
-    const removedCount = initialLength - this.items.length;
-
-    if (removedCount > 0) {
-      await this.persist();
-    }
-
-    return removedCount;
+    if (ids.length === 0) return 0;
+    const response = await callApi<BulkDeleteResponse>('/saved-items/bulk-delete', {
+      method: 'POST',
+      body: { ids },
+    });
+    return response.deletedCount ?? 0;
   }
 
   /**
-   * Clear all saved items
+   * Clear all saved items for the current user
    */
   async clearAllSavedItems(): Promise<void> {
-    this.items = [];
-    this.initialized = true;
-    await removeKey(STORAGE_KEY);
+    await callApi('/saved-items', { method: 'DELETE' });
   }
 
   /**
    * Search saved items
    */
   async searchSavedItems(query: string): Promise<SavedItem[]> {
-    await this.initialize();
-    const lowerQuery = query.toLowerCase().trim();
-
-    if (!lowerQuery) return [];
-
-    return this.items.filter(item => {
-      const nameMatch = item.name.toLowerCase().includes(lowerQuery);
-      const descMatch = item.description?.toLowerCase().includes(lowerQuery);
-      const typeMatch = item.type.toLowerCase().includes(lowerQuery);
-
-      return nameMatch || descMatch || typeMatch;
-    }).sort((a, b) => b.updatedAt - a.updatedAt);
+    const q = query.trim();
+    if (!q) return [];
+    const response = await callApi<SavedItemsListResponse>(
+      `/saved-items?q=${encodeURIComponent(q)}`,
+    );
+    return response.items ?? [];
   }
 
   /**
@@ -194,23 +165,13 @@ class SavedItemsService {
     total: number;
     byType: Record<SavedItemType, number>;
   }> {
-    await this.initialize();
-
-    const byType: Record<SavedItemType, number> = {
-      furniture: 0,
-      design: 0,
-      project: 0,
-      theme: 0,
-    };
-
-    this.items.forEach(item => {
-      byType[item.type] = (byType[item.type] || 0) + 1;
-    });
-
-    return {
-      total: this.items.length,
-      byType,
-    };
+    const response = await callApi<SavedItemsStatsResponse>('/saved-items/stats');
+    return (
+      response.stats ?? {
+        total: 0,
+        byType: { furniture: 0, design: 0, project: 0, theme: 0 },
+      }
+    );
   }
 }
 

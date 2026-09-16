@@ -15,8 +15,8 @@ interface BrandHeaderProps {
 }
 
 export function BrandHeader({
-  titleColor = '#1E3A8A',
-  taglineColor = '#1E40AF',
+  titleColor = BRAND.colors.navy,
+  taglineColor = BRAND.colors.orange,
   titleStyle,
   taglineStyle,
   style,

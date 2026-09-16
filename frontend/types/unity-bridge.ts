@@ -13,6 +13,7 @@ export type UnityToRNEvent =
   | 'furnitureSelected'
   | 'layoutChanged'
   | 'exportComplete'
+  | 'photoCaptured'
   | 'historyChanged';
 
 export type RNToUnityMethod =
@@ -52,6 +53,7 @@ export type StructuredUnityEvent =
   | 'furnitureSelected'
   | 'layoutChanged'
   | 'exportComplete'
+  | 'photoCaptured'
   | 'historyChanged'
   | 'error';
 
@@ -84,6 +86,12 @@ export type ScanPhase = 'idle' | 'scanning' | 'readyToConfirm' | 'confirmed';
 
 export type ScanHint =
   | 'idle'
+  | 'tapFloorHeight'
+  | 'extrudeHeight'
+  | 'tapFirstCorner'
+  | 'tapNextCorner'
+  | 'tapThirdCorner'
+  | 'tapMoreCorners'
   | 'findFloor'
   | 'moveAround'
   | 'scanWalls'
@@ -173,6 +181,22 @@ export interface ExportResultPayload {
   byteLength: number;
   furnitureCount: number;
   roomMeshCount: number;
+  error: string;
+}
+
+/**
+ * Payload of the `photoCaptured` event (AR Furniture save-photo button).
+ *
+ * `path` is absolute under Unity persistentDataPath — read with `file://` prefix.
+ * Bytes are not sent over the bridge (same approach as exportComplete).
+ */
+export interface ARPhotoCapturedPayload {
+  success: boolean;
+  path: string;
+  fileName: string;
+  byteLength: number;
+  mimeType: string;
+  gallerySaved: boolean;
   error: string;
 }
 

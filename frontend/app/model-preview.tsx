@@ -1,6 +1,7 @@
 /**
- * Model Preview — browse bundled GLB furniture in React Native (expo-gl + three.js).
- * Shows measured Width / Depth / Height. "View in Room" opens AR placement.
+ * Model Preview — browse bundled GLB furniture, or view a Unity-exported room layout.
+ * Catalog mode: Width / Depth / Height + "View in Room".
+ * Export mode: loads the exported .glb from disk after Unity AR export.
  */
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
@@ -11,10 +12,11 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GLView, type ExpoWebGLRenderingContext } from 'expo-gl';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as THREE from 'three';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -27,6 +29,7 @@ import {
   getBundledModelMeta,
   type FurnitureModelAssetKey,
 } from '@/config/furniture-models';
+import { toFileUri, pickUnityExportGlb } from '@/utils/modelPreviewExport';
 
 /** Meters → whole centimeters for product-style labels. */
 function formatCm(meters: number): string {
@@ -56,9 +59,27 @@ function frameCameraToObject(
   camera.updateProjectionMatrix();
 }
 
+function firstParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] || '';
+  return value || '';
+}
+
 export default function ModelPreviewScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{
+    mode?: string | string[];
+    exportUri?: string | string[];
+    exportTitle?: string | string[];
+    furnitureCount?: string | string[];
+    projectId?: string | string[];
+  }>();
   const { colors, statusBarStyle } = useTheme();
+
+  const exportUri = toFileUri(firstParam(params.exportUri));
+  const isExportMode = firstParam(params.mode) === 'export' && Boolean(exportUri);
+  const exportTitle = firstParam(params.exportTitle) || 'Exported layout';
+  const exportFurnitureCount = Number(firstParam(params.furnitureCount) || 0);
+
   const bundledIds = useMemo(() => getBundledFurnitureIds(), []);
   const [selectedId, setSelectedId] = useState<FurnitureModelAssetKey>(
     bundledIds[0] ?? 'accent-chair'
@@ -83,11 +104,14 @@ export default function ModelPreviewScreen() {
     depth: catalogDims.length,
     height: catalogDims.height,
   };
-  const furnitureName = previewItem?.name ?? selectedId;
+  const furnitureName = isExportMode
+    ? exportTitle.replace(/\.glb$/i, '')
+    : previewItem?.name ?? selectedId;
 
   const rafRef = useRef<number | null>(null);
   const modelRef = useRef<THREE.Object3D | null>(null);
   const mountedRef = useRef(true);
+  const sceneKey = isExportMode ? `export:${exportUri}` : selectedId;
 
   React.useEffect(() => {
     mountedRef.current = true;
@@ -103,7 +127,7 @@ export default function ModelPreviewScreen() {
     setMeasuredDims(null);
     setStatus('loading');
     setErrorMessage(null);
-  }, [selectedId]);
+  }, [sceneKey]);
 
   const onContextCreate = useCallback(
     async (gl: ExpoWebGLRenderingContext) => {
@@ -134,25 +158,37 @@ export default function ModelPreviewScreen() {
         fillLight.position.set(-3, 2, -1.5);
         scene.add(fillLight);
 
-        const floor = new THREE.Mesh(
-          new THREE.CircleGeometry(1.6, 64),
-          new THREE.MeshStandardMaterial({
-            color: 0xcfc9bf,
-            roughness: 0.95,
-            metalness: 0,
-          })
-        );
-        floor.rotation.x = -Math.PI / 2;
-        floor.position.y = -0.001;
-        scene.add(floor);
+        if (!isExportMode) {
+          const floor = new THREE.Mesh(
+            new THREE.CircleGeometry(1.6, 64),
+            new THREE.MeshStandardMaterial({
+              color: 0xcfc9bf,
+              roughness: 0.95,
+              metalness: 0,
+            })
+          );
+          floor.rotation.x = -Math.PI / 2;
+          floor.position.y = -0.001;
+          scene.add(floor);
+        }
 
-        const model = await furnitureModelLoader.loadBundledFurniture(selectedId, {
-          width: catalogDims.width,
-          length: catalogDims.length,
-          height: catalogDims.height,
-        });
-        if (!model) {
-          throw new Error(`Failed to load ${selectedId}.glb`);
+        let model: THREE.Object3D | null = null;
+        if (isExportMode) {
+          model = await furnitureModelLoader.loadGLBModel(exportUri, 1.0, {
+            preferTextures: true,
+          });
+          if (!model) {
+            throw new Error(`Failed to load exported layout from ${exportUri}`);
+          }
+        } else {
+          model = await furnitureModelLoader.loadBundledFurniture(selectedId, {
+            width: catalogDims.width,
+            length: catalogDims.length,
+            height: catalogDims.height,
+          });
+          if (!model) {
+            throw new Error(`Failed to load ${selectedId}.glb`);
+          }
         }
 
         let meshCount = 0;
@@ -162,14 +198,14 @@ export default function ModelPreviewScreen() {
             child.visible = true;
           }
         });
-        console.log('[ModelPreview] Mesh count:', meshCount, selectedId);
+        console.log('[ModelPreview] Mesh count:', meshCount, sceneKey);
 
         const box = new THREE.Box3().setFromObject(model);
         const size = box.getSize(new THREE.Vector3());
 
         modelRef.current = model;
         scene.add(model);
-        frameCameraToObject(camera, model);
+        frameCameraToObject(camera, model, isExportMode ? 2.35 : 1.85);
 
         if (mountedRef.current) {
           setMeasuredDims({
@@ -180,11 +216,12 @@ export default function ModelPreviewScreen() {
           setStatus('ready');
         }
 
+        const spinSpeed = isExportMode ? 0.004 : 0.01;
         const animate = () => {
           if (!mountedRef.current) return;
           rafRef.current = requestAnimationFrame(animate);
           if (modelRef.current) {
-            modelRef.current.rotation.y += 0.01;
+            modelRef.current.rotation.y += spinSpeed;
           }
           renderer.render(scene, camera);
           gl.endFrameEXP();
@@ -198,8 +235,35 @@ export default function ModelPreviewScreen() {
         }
       }
     },
-    [catalogDims.height, catalogDims.length, catalogDims.width, selectedId]
+    [
+      catalogDims.height,
+      catalogDims.length,
+      catalogDims.width,
+      exportUri,
+      isExportMode,
+      sceneKey,
+      selectedId,
+    ]
   );
+
+  const goBackSafe = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    // Export opens from AR or Projects; catalog opens from Home.
+    router.replace(isExportMode ? '/projects' : '/(tabs)');
+  }, [isExportMode, router]);
+
+  const openExportedLayout = useCallback(async () => {
+    const result = await pickUnityExportGlb({ saveToProjects: true });
+    if ('cancelled' in result) return;
+    if ('error' in result) {
+      Alert.alert('Could not open export', result.error);
+      return;
+    }
+    router.push(result.href);
+  }, [router]);
 
   const openInRoom = () => {
     router.push({
@@ -213,58 +277,62 @@ export default function ModelPreviewScreen() {
       <StatusBar style={statusBarStyle} />
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={() => router.back()} accessibilityRole="button">
+          <TouchableOpacity onPress={goBackSafe} accessibilityRole="button">
             <Text style={[styles.back, { color: colors.accent }]}>← Back</Text>
           </TouchableOpacity>
-          <Text style={[styles.title, { color: colors.textPrimary }]}>3D Furniture Preview</Text>
+          <Text style={[styles.title, { color: colors.textPrimary }]}>
+            {isExportMode ? 'Exported Layout' : '3D Furniture Preview'}
+          </Text>
           <View style={styles.headerSpacer} />
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.pickerRow}
-          style={styles.pickerScroll}
-        >
-          {bundledIds.map((id) => {
-            const item = getFurnitureById(id);
-            const selected = id === selectedId;
-            return (
-              <TouchableOpacity
-                key={id}
-                style={[
-                  styles.pickerChip,
-                  {
-                    backgroundColor: selected ? colors.accent : colors.surfacePrimary,
-                    borderColor: selected ? colors.accent : colors.border,
-                  },
-                ]}
-                onPress={() => setSelectedId(id)}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-              >
-                <Text
+        {!isExportMode ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.pickerRow}
+            style={styles.pickerScroll}
+          >
+            {bundledIds.map((id) => {
+              const item = getFurnitureById(id);
+              const selected = id === selectedId;
+              return (
+                <TouchableOpacity
+                  key={id}
                   style={[
-                    styles.pickerChipText,
-                    { color: selected ? '#FFFFFF' : colors.textPrimary },
+                    styles.pickerChip,
+                    {
+                      backgroundColor: selected ? colors.accent : colors.surfacePrimary,
+                      borderColor: selected ? colors.accent : colors.border,
+                    },
                   ]}
-                  numberOfLines={1}
+                  onPress={() => setSelectedId(id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
                 >
-                  {item?.name ?? id}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+                  <Text
+                    style={[
+                      styles.pickerChipText,
+                      { color: selected ? '#FFFFFF' : colors.textPrimary },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {item?.name ?? id}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        ) : null}
 
         <View style={styles.canvasWrap}>
-          <GLView key={selectedId} style={styles.gl} onContextCreate={onContextCreate} />
+          <GLView key={sceneKey} style={styles.gl} onContextCreate={onContextCreate} />
 
           {status === 'loading' && (
             <View style={styles.overlay}>
               <ActivityIndicator size="large" color={colors.accent} />
               <Text style={[styles.overlayText, { color: colors.textSecondary }]}>
-                Loading {furnitureName}…
+                {isExportMode ? 'Loading exported layout…' : `Loading ${furnitureName}…`}
               </Text>
             </View>
           )}
@@ -281,11 +349,17 @@ export default function ModelPreviewScreen() {
         <View style={[styles.footer, { backgroundColor: colors.surfacePrimary }]}>
           <Text style={[styles.footerTitle, { color: colors.textPrimary }]}>{furnitureName}</Text>
           <Text style={[styles.footerSub, { color: colors.textSecondary }]}>
-            {status === 'ready'
-              ? 'Exact size from the 3D model — open AR to place it in your room'
-              : status === 'loading'
-                ? 'Preparing WebGL scene…'
-                : 'Check Metro logs for loader errors'}
+            {isExportMode
+              ? status === 'ready'
+                ? `Unity AR export${exportFurnitureCount > 0 ? ` · ${exportFurnitureCount} furniture` : ''}`
+                : status === 'loading'
+                  ? 'Preparing exported room layout…'
+                  : 'Could not open the exported GLB file'
+              : status === 'ready'
+                ? 'Exact size from the 3D model — open AR to place it in your room'
+                : status === 'loading'
+                  ? 'Preparing WebGL scene…'
+                  : 'Check Metro logs for loader errors'}
           </Text>
 
           <View
@@ -314,19 +388,42 @@ export default function ModelPreviewScreen() {
             </View>
           </View>
 
-          <TouchableOpacity
-            style={[
-              styles.arButton,
-              { backgroundColor: colors.accent },
-              status !== 'ready' && styles.arButtonDisabled,
-            ]}
-            onPress={openInRoom}
-            disabled={status !== 'ready'}
-            accessibilityRole="button"
-            accessibilityLabel="View furniture in room with AR"
-          >
-            <Text style={styles.arButtonText}>View in My Room (AR)</Text>
-          </TouchableOpacity>
+          {isExportMode ? (
+            <TouchableOpacity
+              style={[styles.arButton, { backgroundColor: colors.accent }]}
+              onPress={goBackSafe}
+              accessibilityRole="button"
+              accessibilityLabel="Done viewing exported layout"
+            >
+              <Text style={styles.arButtonText}>Done</Text>
+            </TouchableOpacity>
+          ) : (
+            <>
+              <TouchableOpacity
+                style={[
+                  styles.arButton,
+                  { backgroundColor: colors.accent },
+                  status !== 'ready' && styles.arButtonDisabled,
+                ]}
+                onPress={openInRoom}
+                disabled={status !== 'ready'}
+                accessibilityRole="button"
+                accessibilityLabel="View furniture in room with AR"
+              >
+                <Text style={styles.arButtonText}>View in My Room (AR)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.secondaryButton, { borderColor: colors.border }]}
+                onPress={openExportedLayout}
+                accessibilityRole="button"
+                accessibilityLabel="Open a Unity exported GLB layout"
+              >
+                <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>
+                  Open Unity export (.glb)
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       </SafeAreaView>
     </View>
@@ -371,7 +468,7 @@ const styles = StyleSheet.create({
   pickerChip: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-                borderRadius: 999,
+    borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
   },
   pickerChipText: {
@@ -450,5 +547,16 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
+  },
+  secondaryButton: {
+    marginTop: spacing.xs,
+    paddingVertical: spacing.md,
+    borderRadius: radii.md,
+    alignItems: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  secondaryButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
   },
 });

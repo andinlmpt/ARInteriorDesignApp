@@ -8,9 +8,11 @@ export const BRAND = {
   tagline: 'Your vision, Our craft',
   legacyAppName: 'AR Interior Design',
   colors: {
-    navy: '#1E3A8A',
-    orange: '#E87722',
-    olive: '#7A8F7B',
+    navy: '#0C295F',
+    orange: '#E69868',
+    /** Mid navy used as a tertiary brand tone (replaces legacy olive). */
+    olive: '#3E5A8C',
+    white: '#FFFFFF',
   },
 } as const;
 

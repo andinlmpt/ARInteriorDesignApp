@@ -87,7 +87,7 @@ export default function SplashScreen() {
           },
         ]}
       >
-        <AppLogo size={168} circular elevated style={styles.logoContainer} />
+        <AppLogo size={168} circular={false} elevated={false} style={styles.logoContainer} />
         <Animated.View style={[styles.textBlock, { opacity: fadeAnim }]}>
           <Text style={styles.title}>{BRAND.name}</Text>
           <Text style={styles.subtitle}>{BRAND.tagline}</Text>
@@ -127,7 +127,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 16,
-    color: '#1E40AF',
+    color: BRAND.colors.orange,
     fontWeight: '500',
     letterSpacing: 0.2,
     textAlign: 'center',

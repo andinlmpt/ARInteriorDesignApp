@@ -65,15 +65,3 @@ export interface Project {
   /** Absolute file path / metadata when exported from Unity. */
   unityExport?: UnityLayoutExportMeta;
 }
-
-export interface CreateProjectInput {
-  name: string;
-  description?: string;
-  roomType: RoomType;
-  style?: DesignStyle;
-  dimensions?: ProjectDimensions;
-  budget?: {
-    min: number;
-    max: number;
-  };
-}

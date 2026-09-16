@@ -119,6 +119,230 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!1 &78738672
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 78738675}
+  - component: {fileID: 78738674}
+  - component: {fileID: 78738673}
+  m_Layer: 0
+  m_Name: EventSystem
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &78738673
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 78738672}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 01614664b831546d2ae94a42149d80ac, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.InputSystem::UnityEngine.InputSystem.UI.InputSystemUIInputModule
+  m_SendPointerHoverToParent: 1
+  m_MoveRepeatDelay: 0.5
+  m_MoveRepeatRate: 0.1
+  m_XRTrackingOrigin: {fileID: 0}
+  m_ActionsAsset: {fileID: -944628639613478452, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_PointAction: {fileID: -1654692200621890270, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_MoveAction: {fileID: -8784545083839296357, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_SubmitAction: {fileID: 392368643174621059, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_CancelAction: {fileID: 7727032971491509709, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_LeftClickAction: {fileID: 3001919216989983466, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_MiddleClickAction: {fileID: -2185481485913320682, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_RightClickAction: {fileID: -4090225696740746782, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_ScrollWheelAction: {fileID: 6240969308177333660, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_TrackedDevicePositionAction: {fileID: 6564999863303420839, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_TrackedDeviceOrientationAction: {fileID: 7970375526676320489, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_DeselectOnBackgroundClick: 1
+  m_PointerBehavior: 0
+  m_CursorLockBehavior: 0
+  m_ScrollDeltaPerTick: 6
+--- !u!114 &78738674
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 78738672}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c392e42b5098c458856cdf6ecaaaa1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.EventSystems.EventSystem
+  m_FirstSelected: {fileID: 0}
+  m_sendNavigationEvents: 1
+  m_DragThreshold: 10
+--- !u!4 &78738675
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 78738672}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &477532500
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 477532504}
+  - component: {fileID: 477532503}
+  - component: {fileID: 477532502}
+  - component: {fileID: 477532501}
+  m_Layer: 0
+  m_Name: AR Estimated Light
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &477532501
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 477532500}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 474bcb49853aa07438625e644c072ee6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.RenderPipelines.Universal.Runtime::UnityEngine.Rendering.Universal.UniversalAdditionalLightData
+  m_UsePipelineSettings: 1
+  m_AdditionalLightsShadowResolutionTier: 2
+  m_CustomShadowLayers: 0
+  m_LightCookieSize: {x: 1, y: 1}
+  m_LightCookieOffset: {x: 0, y: 0}
+  m_SoftShadowQuality: 0
+  m_RenderingLayersMask:
+    serializedVersion: 0
+    m_Bits: 1
+  m_ShadowRenderingLayersMask:
+    serializedVersion: 0
+    m_Bits: 1
+  m_Version: 4
+  m_LightLayerMask: 1
+  m_ShadowLayerMask: 1
+  m_RenderingLayers: 1
+  m_ShadowRenderingLayers: 1
+--- !u!114 &477532502
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 477532500}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b87d6e2861b664e46a0141c7fd466a77, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ARDesignLighting
+  cameraManager: {fileID: 1122902182}
+  requestedLightEstimation: 31
+  smoothing: 6
+  minIntensity: 0.55
+  maxIntensity: 2
+--- !u!108 &477532503
+Light:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 477532500}
+  m_Enabled: 1
+  serializedVersion: 13
+  m_Type: 1
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_Intensity: 1
+  m_Range: 10
+  m_SpotAngle: 30
+  m_InnerSpotAngle: 21.80208
+  m_CookieSize2D: {x: 0.5, y: 0.5}
+  m_Shadows:
+    m_Type: 2
+    m_Resolution: -1
+    m_CustomResolution: -1
+    m_Strength: 0.6
+    m_Bias: 0.05
+    m_NormalBias: 0.4
+    m_NearPlane: 0.2
+    m_CullingMatrixOverride:
+      e00: 1
+      e01: 0
+      e02: 0
+      e03: 0
+      e10: 0
+      e11: 1
+      e12: 0
+      e13: 0
+      e20: 0
+      e21: 0
+      e22: 1
+      e23: 0
+      e30: 0
+      e31: 0
+      e32: 0
+      e33: 1
+    m_UseCullingMatrixOverride: 0
+  m_Cookie: {fileID: 0}
+  m_DrawHalo: 0
+  m_Flare: {fileID: 0}
+  m_RenderMode: 0
+  m_CullingMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  m_RenderingLayerMask: 1
+  m_Lightmapping: 4
+  m_LightShadowCasterMode: 0
+  m_AreaSize: {x: 1, y: 1}
+  m_BounceIntensity: 1
+  m_ColorTemperature: 6570
+  m_UseColorTemperature: 0
+  m_BoundingSphereOverride: {x: 0, y: 0, z: 0, w: 0}
+  m_UseBoundingSphereOverride: 0
+  m_UseViewFrustumForShadowCasterCull: 1
+  m_ForceVisible: 0
+  m_ShapeRadius: 0.025
+  m_ShadowAngle: 0
+  m_LightUnit: 1
+  m_LuxAtDistance: 1
+  m_EnableSpotReflector: 1
+--- !u!4 &477532504
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 477532500}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.40821794, y: -0.23456973, z: 0.10938166, w: 0.8754261}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &521325901
 GameObject:
   m_ObjectHideFlags: 0
@@ -128,18 +352,16 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 521325905}
-  - component: {fileID: 521325904}
-  - component: {fileID: 521325903}
-  - component: {fileID: 521325902}
-  - component: {fileID: 521325906}
-  - component: {fileID: 521325907}
-  - component: {fileID: 521325908}
-  - component: {fileID: 521325914}
-  - component: {fileID: 521325913}
-  - component: {fileID: 521325912}
-  - component: {fileID: 521325911}
+  - component: {fileID: 521325920}
+  - component: {fileID: 521325919}
+  - component: {fileID: 521325918}
   - component: {fileID: 521325910}
-  - component: {fileID: 521325909}
+  - component: {fileID: 521325908}
+  - component: {fileID: 521325907}
+  - component: {fileID: 521325906}
+  - component: {fileID: 521325922}
+  - component: {fileID: 521325923}
+  - component: {fileID: 521325924}
   m_Layer: 0
   m_Name: Managers
   m_TagString: Untagged
@@ -147,127 +369,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &521325902
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 521325901}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 15061a21447471846841bd74249e2820, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::FurnitureCatalog
-  entries:
-  - id: test-sofa
-    displayName: Sofa
-    prefab: {fileID: 1727103240953327219, guid: 8664b7a56558ba74ca1b72777f738efb, type: 3}
-    icon: {fileID: 21300000, guid: 9964e031a7d4dbc469453febc2bafe8b, type: 3}
-  - id: simple-sofa
-    displayName: Simple Sofa
-    prefab: {fileID: 2154421882036726593, guid: a4d544b18ec2e1340bf910730a01eca4, type: 3}
-    icon: {fileID: 21300000, guid: b9a3cff655ae8b74a94424e2998657cc, type: 3}
-  - id: modern-chair
-    displayName: Modern Chair
-    prefab: {fileID: 4904183919999329595, guid: ff2347ad2d874674eb24fd37b11ab521, type: 3}
-    icon: {fileID: 21300000, guid: f50276c0191a4b4408e3c99147aa1921, type: 3}
-  - id: wood-chair
-    displayName: Wood Chair
-    prefab: {fileID: 3865862790999712217, guid: 6901ad3280ea07a4a989633e36206053, type: 3}
-    icon: {fileID: 21300000, guid: 36bee5234163e404eb38adbfdeb91d54, type: 3}
-  - id: dining-chair
-    displayName: Dining Chair
-    prefab: {fileID: 919132149155446097, guid: b2d2350175ff66640996d7615461e898, type: 3}
-    icon: {fileID: 21300000, guid: 0f61413534f8aaa469de4bc931b6f2e0, type: 3}
-  - id: dining-table
-    displayName: Dining Table
-    prefab: {fileID: 2445882162939207002, guid: c3ffc5fd4312d684b8e9d1362200fb46, type: 3}
-    icon: {fileID: 21300000, guid: d7f5cf647901977429bfcda7467cae97, type: 3}
-  - id: side-table
-    displayName: Side Table
-    prefab: {fileID: 8782459148370197961, guid: 200644434163a8f4ab93ead273fa9bca, type: 3}
-    icon: {fileID: 21300000, guid: 20ee6edd3c9bec5448955f64e91086c2, type: 3}
-  - id: bean-bag
-    displayName: Bean Bag
-    prefab: {fileID: 2520975513715695286, guid: 8bd8b1c107613b641ae7c6093517c941, type: 3}
-    icon: {fileID: 21300000, guid: 494694a5a3421e24ba49d1c1b711101c, type: 3}
-  defaultPrefab: {fileID: 9182342873134279007, guid: fbcc2ebfcc9ec634e9adba269614a354, type: 3}
---- !u!114 &521325903
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 521325901}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 1bfaaa5352c104e4694312188dff09db, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::UnityMessageBridge
-  placer: {fileID: 521325904}
-  catalog: {fileID: 521325902}
---- !u!114 &521325904
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 521325901}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: df988fac490737f4c85f93d49039664f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ARFurniturePlacer
-  raycastManager: {fileID: 1786306641}
-  planeManager: {fileID: 1786306640}
-  anchorManager: {fileID: 1786306642}
-  placementIndicator: {fileID: 1330154966}
-  furnitureParent: {fileID: 1774506373}
-  arCamera: {fileID: 1122902184}
-  furniturePrefab: {fileID: 9182342873134279007, guid: fbcc2ebfcc9ec634e9adba269614a354, type: 3}
-  minDepthBelowCamera: 0.9
-  minFloorArea: 0.25
-  scanMinArea: 0.25
-  scanRequiredDuration: 1.5
-  scanMinAreaGrowth: 0.1
-  OnScanStarted:
-    m_PersistentCalls:
-      m_Calls: []
-  OnScanProgress:
-    m_PersistentCalls:
-      m_Calls: []
-  OnSurfaceReady:
-    m_PersistentCalls:
-      m_Calls: []
-  OnFurniturePlacedEvent:
-    m_PersistentCalls:
-      m_Calls:
-      - m_Target: {fileID: 1786306643}
-        m_TargetAssemblyTypeName: ARFloorGuide, Assembly-CSharp
-        m_MethodName: HidePlanesAfterDelay
-        m_Mode: 1
-        m_Arguments:
-          m_ObjectArgument: {fileID: 0}
-          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
-          m_IntArgument: 0
-          m_FloatArgument: 0
-          m_StringArgument: 
-          m_BoolArgument: 0
-        m_CallState: 2
-  hideIndicatorAfterPlace: 1
-  placeDistanceInFront: 2.5
-  minAutoPlaceDistance: 0.5
-  animateSpawn: 1
-  spawnDuration: 0.45
-  addBlobShadow: 1
-  blobShadowPrefab: {fileID: 8001000000000000001, guid: d5f9b02c3e4a5678901bcdef23456789, type: 3}
-  blobShadowScale: 0.55
-  floorContactInset: 0.02
-  continuousFloorSnapDuration: 8
-  postPlacementCorrectionDelay: 2.5
-  floorCorrectionThreshold: 0.01
-  floorCorrectionSmoothDuration: 0.3
 --- !u!4 &521325905
 Transform:
   m_ObjectHideFlags: 0
@@ -292,17 +393,24 @@ MonoBehaviour:
   m_GameObject: {fileID: 521325901}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e6a0b13d4c5e6789012cdef345678901, type: 3}
+  m_Script: {fileID: 11500000, guid: a1b2c3d4e5f64789a0b1c2d3e4f50617, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ARFurnitureLighting
-  keyColor: {r: 1, g: 0.97, b: 0.92, a: 1}
-  keyIntensity: 1.1
-  keyEuler: {x: 50, y: -35, z: 0}
-  fillColor: {r: 0.78, g: 0.86, b: 1, a: 1}
-  fillIntensity: 0.4
-  fillEuler: {x: 22, y: 130, z: 0}
-  keyLight: {fileID: 0}
-  fillLight: {fileID: 0}
+  m_EditorClassIdentifier: Assembly-CSharp::ARDesignLayoutModeController
+  scanController: {fileID: 521325920}
+  placementController: {fileID: 0}
+  arCamera: {fileID: 1122902184}
+  cameraBackground: {fileID: 1122902181}
+  trackedPoseDriver: {fileID: 1122902180}
+  placementIndicator: {fileID: 1330154966}
+  roomMeshVisualizer: {fileID: 521325918}
+  defaultViewMode: 1
+  orbitSensitivity: 0.18
+  pinchZoomSensitivity: 0.01
+  minDistance: 1.2
+  maxDistance: 12
+  pitchMin: 15
+  pitchMax: 80
+  plannerClearColor: {r: 0.93, g: 0.92, b: 0.9, a: 1}
 --- !u!114 &521325907
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -312,21 +420,34 @@ MonoBehaviour:
   m_GameObject: {fileID: 521325901}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: b626e49182bb8a547a48c71813cfe7dc, type: 3}
+  m_Script: {fileID: 11500000, guid: c9d8e7f6a5b44321b0c1d2e3f4a5b6c7, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ARFurnitureGestureController
-  placer: {fileID: 521325904}
-  requireTouchOnFurniture: 0
-  furnitureLayerMask:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  moveSpeedModifier: 0.0005
-  rotationSensitivity: 0.5
-  scaleSensitivity: 1
-  minScaleMultiplier: 0.3
-  maxScaleMultiplier: 3
-  verboseLogging: 0
-  dragStartThreshold: 12
+  m_EditorClassIdentifier: Assembly-CSharp::ARDesignCornerRoomBuilder
+  scanController: {fileID: 521325920}
+  raycastManager: {fileID: 1786306641}
+  planeManager: {fileID: 1786306640}
+  arCamera: {fileID: 1122902184}
+  placementIndicator: {fileID: 1330154966}
+  edgeColor: {r: 1, g: 1, b: 1, a: 0.98}
+  floorLineWidth: 0.028
+  wallLineWidth: 0.022
+  wallHeight: 2.5
+  requireHeightBeforeCorners: 1
+  requireStartButtonForHeightBase: 1
+  minWallHeight: 0.5
+  defaultWallHeight: 2.5
+  maxWallHeight: 5
+  ceilingSnapTolerance: 0.18
+  minCeilingHeightAboveBase: 1.8
+  heightAimScreenY: 0.52
+  heightPlacementIconSize: 0.32
+  measurementIconResourcePath: MeasurementIcons/measurement-icon
+  cornerMarkerSize: 0.06
+  closeSnapDistance: 0.35
+  maxCorners: 24
+  showEdgeMeasurements: 1
+  showLivePreviewMeasurement: 1
+  keepMeasurementsAfterConfirm: 0
 --- !u!114 &521325908
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -334,61 +455,21 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 521325901}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d, type: 3}
+  m_Script: {fileID: 11500000, guid: e7c4a91b2d5f4e0a8b3c6d9e1f2a4b5c, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ARFurniturePickerUI
-  catalog: {fileID: 521325902}
-  placer: {fileID: 521325904}
-  placementIndicator: {fileID: 1330154966}
+  m_EditorClassIdentifier: Assembly-CSharp::ARDesignEdgeVisualizer
+  scanController: {fileID: 521325920}
   planeManager: {fileID: 1786306640}
-  floorGuide: {fileID: 1786306643}
-  iconSize: 96
-  iconSpacing: 16
-  scrollBarHeight: 124
-  utilityButtonSize: 58
-  utilityButtonGap: 12
-  bottomMargin: 24
-  sideMargin: 16
-  selectedScale: 1.12
-  unselectedScale: 1
-  unselectedAlpha: 0.72
-  ringThickness: 4
-  selectionLerpSpeed: 14
-  scrollToSelection: 1
-  barBackgroundColor: {r: 1, g: 1, b: 1, a: 0.94}
-  barShadowColor: {r: 0, g: 0, b: 0, a: 0.18}
-  iconBackgroundColor: {r: 1, g: 1, b: 1, a: 1}
-  selectedRingColor: {r: 0.1, g: 0.52, b: 0.98, a: 1}
-  fallbackLabelColor: {r: 0.22, g: 0.22, b: 0.22, a: 1}
-  utilityIconColor: {r: 0.12, g: 0.12, b: 0.12, a: 1}
-  utilityBgColor: {r: 1, g: 1, b: 1, a: 0.94}
---- !u!114 &521325909
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 521325901}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: cb3ade762a1204c4a8e6400207900c19, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ColorPickerUIController
-  wallSelector: {fileID: 0}
-  wallPainter: {fileID: 0}
-  uiPanel: {fileID: 0}
-  presetButtons: []
-  resetButton: {fileID: 0}
-  closeButton: {fileID: 0}
-  presetColors:
-  - {r: 1, g: 1, b: 1, a: 1}
-  - {r: 0.96, g: 0.95, b: 0.9, a: 1}
-  - {r: 0.85, g: 0.85, b: 0.85, a: 1}
-  - {r: 0.68, g: 0.85, b: 0.9, a: 1}
-  - {r: 0.55, g: 0.65, b: 0.55, a: 1}
-  - {r: 0.8, g: 0.45, b: 0.35, a: 1}
+  floorEdgeColor: {r: 1, g: 1, b: 1, a: 0.95}
+  wallEdgeColor: {r: 0.72, g: 0.55, b: 0.95, a: 0.9}
+  floorLineWidth: 0.018
+  wallLineWidth: 0.014
+  floorLift: 0.008
+  minPlaneArea: 0.08
+  showEdgeLengthLabels: 1
+  minLabelEdgeLength: 0.8
 --- !u!114 &521325910
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -398,14 +479,18 @@ MonoBehaviour:
   m_GameObject: {fileID: 521325901}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 391cdfb5698305543995d882832664b0, type: 3}
+  m_Script: {fileID: 11500000, guid: 9647a183ee616ab46a495adb41e02243, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::WallPainter
-  paintMaterialTemplate: {fileID: 0}
-  paintAlpha: 0.8
-  useTransitions: 1
-  transitionDuration: 0.3
---- !u!114 &521325911
+  m_EditorClassIdentifier: Assembly-CSharp::ARDesignScanHUD
+  scanController: {fileID: 521325920}
+  bridge: {fileID: 0}
+  catalog: {fileID: 0}
+  placementIndicator: {fileID: 1330154966}
+  cornerBuilder: {fileID: 521325907}
+  spawnSampleOnConfirm: 0
+  measurementOnlyMode: 1
+  enableNativeHud: 1
+--- !u!114 &521325918
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -414,15 +499,23 @@ MonoBehaviour:
   m_GameObject: {fileID: 521325901}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: b5b0b5bf9e4353240ae29db18acaa65c, type: 3}
+  m_Script: {fileID: 11500000, guid: 73b8c55aebdb61544a4e7ef44500466f, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::WallSelector
-  raycastManager: {fileID: 0}
-  arCamera: {fileID: 0}
-  OnWallSelectedEvent:
-    m_PersistentCalls:
-      m_Calls: []
---- !u!114 &521325912
+  m_EditorClassIdentifier: Assembly-CSharp::RoomMeshVisualizer
+  scanController: {fileID: 521325920}
+  roomRoot: {fileID: 0}
+  wallTile: {r: 0.94, g: 0.94, b: 0.93, a: 1}
+  wallGrout: {r: 0.78, g: 0.78, b: 0.76, a: 1}
+  wallTileMeters: 0.32
+  floorTile: {r: 0.42, g: 0.43, b: 0.44, a: 1}
+  floorGrout: {r: 0.62, g: 0.63, b: 0.64, a: 1}
+  floorTileMeters: 0.4
+  ceilingColor: {r: 0.97, g: 0.97, b: 0.96, a: 1}
+  tileTextureResolution: 128
+  groutPixels: 2
+  orbitCutaway: 1
+  cutawayDotThreshold: 0.05
+--- !u!114 &521325919
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -431,14 +524,14 @@ MonoBehaviour:
   m_GameObject: {fileID: 521325901}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: fa17d122634046b4a8e23048891fafc5, type: 3}
+  m_Script: {fileID: 11500000, guid: d4cb994ad1b79f149a42a6a946d23082, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Unity.XR.ARFoundation::UnityEngine.XR.ARFoundation.ARRaycastManager
-  <trackablesChanged>k__BackingField:
-    m_PersistentCalls:
-      m_Calls: []
-  m_RaycastPrefab: {fileID: 0}
---- !u!114 &521325913
+  m_EditorClassIdentifier: Assembly-CSharp::ScanVisualizationController
+  scanController: {fileID: 521325920}
+  planeManager: {fileID: 1786306640}
+  pointCloudManager: {fileID: 1786306643}
+  meshManager: {fileID: 2075736066}
+--- !u!114 &521325920
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -447,15 +540,25 @@ MonoBehaviour:
   m_GameObject: {fileID: 521325901}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e0cb9aa70a22847b5925ee5f067c10a9, type: 3}
+  m_Script: {fileID: 11500000, guid: ba247ac15c9171747add466ed66b6648, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Unity.XR.CoreUtils::Unity.XR.CoreUtils.XROrigin
-  m_Camera: {fileID: 0}
-  m_OriginBaseGameObject: {fileID: 521325901}
-  m_CameraFloorOffsetObject: {fileID: 0}
-  m_RequestedTrackingOriginMode: 0
-  m_CameraYOffset: 1.1176
---- !u!114 &521325914
+  m_EditorClassIdentifier: Assembly-CSharp::RoomScanController
+  planeManager: {fileID: 1786306640}
+  pointCloudManager: {fileID: 1786306643}
+  meshManager: {fileID: 2075736066}
+  arCamera: {fileID: 1122902184}
+  targetFloorArea: 2.5
+  targetWallArea: 2
+  targetLookAroundCoverage: 0.25
+  minScanDuration: 2
+  readyFloorScore: 0.45
+  readyLookScore: 0.35
+  maxMeshChunks: 96
+  minPlaneArea: 0.08
+  statusPushInterval: 0.4
+  cornerBuilder: {fileID: 521325907}
+  autoStartScanOnLoad: 1
+--- !u!114 &521325922
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -464,16 +567,45 @@ MonoBehaviour:
   m_GameObject: {fileID: 521325901}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: fc5c2685502096f48b79ef55c33828bd, type: 3}
+  m_Script: {fileID: 11500000, guid: 25d49cc3be2eaa24d95482be20718f03, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ARModeSwitcher
-  planeManager: {fileID: 0}
-  furniturePlacer: {fileID: 0}
-  gestureController: {fileID: 0}
-  wallSelector: {fileID: 0}
-  wallPainter: {fileID: 0}
-  furnitureUIPanel: {fileID: 0}
-  wallPaintUIPanel: {fileID: 0}
+  m_EditorClassIdentifier: Assembly-CSharp::RoomMeasurementSync
+  scanController: {fileID: 521325920}
+  saveUrl: http://192.168.1.7:3000/api/v1/room-measurements
+  saveOnConfirm: 0
+  requestTimeoutSeconds: 15
+--- !u!114 &521325923
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f8e7d6c5b4a39281706f5e4d3c2b1a09, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RoomMeasurementSaveModal
+  scanController: {fileID: 521325920}
+  measurementSync: {fileID: 521325922}
+  measurementOnlyMode: 1
+  enableNativeModal: 1
+--- !u!114 &521325924
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c91b41a62b83eb64a9f6daa95ef26e39, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ARMeasurementPlanHUD
+  scanController: {fileID: 521325920}
+  layoutMode: {fileID: 521325906}
+  mainMenuSceneName: MainMenu
+  enableNativeHud: 1
 --- !u!1 &535005051
 GameObject:
   m_ObjectHideFlags: 0
@@ -580,6 +712,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ARBootstrap
   arSession: {fileID: 935258867}
+  cameraManager: {fileID: 1122902182}
+  cameraBackground: {fileID: 1122902181}
+  permissionTimeoutSeconds: 60
 --- !u!1 &1122902177
 GameObject:
   m_ObjectHideFlags: 0
@@ -990,7 +1125,7 @@ MonoBehaviour:
   lockedScale: 1
   searchingScale: 0.85
   scaleSmoothing: 8
-  minDepthBelowCamera: 0.9
+  minDepthBelowCamera: 0.22
   minFloorArea: 0.25
   floorSurfaceInset: 0.002
   arCamera: {fileID: 1122902184}
@@ -1039,6 +1174,7 @@ GameObject:
   - component: {fileID: 1786306641}
   - component: {fileID: 1786306642}
   - component: {fileID: 1786306643}
+  - component: {fileID: 1786306644}
   m_Layer: 0
   m_Name: XR Origin
   m_TagString: Untagged
@@ -1078,6 +1214,8 @@ Transform:
   m_Children:
   - {fileID: 535005052}
   - {fileID: 1774506373}
+  - {fileID: 2036794215}
+  - {fileID: 2075736065}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &1786306640
@@ -1095,8 +1233,8 @@ MonoBehaviour:
   <trackablesChanged>k__BackingField:
     m_PersistentCalls:
       m_Calls: []
-  m_PlanePrefab: {fileID: 0}
-  m_DetectionMode: 1
+  m_PlanePrefab: {fileID: 1061953939633917784, guid: f65b9645c391ca6479347093ee5192c6, type: 3}
+  m_DetectionMode: 3
 --- !u!114 &1786306641
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1138,11 +1276,115 @@ MonoBehaviour:
   m_GameObject: {fileID: 1786306637}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e90bd82ecbbb7784bba57b725407e0ed, type: 3}
+  m_Script: {fileID: 11500000, guid: 7ab0e80cee9cc1d44928bfe488dd1e2d, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ARFloorGuide
-  planeManager: {fileID: 1786306640}
-  hideAfterPlacementDelay: 2
+  m_EditorClassIdentifier: Unity.XR.ARFoundation::UnityEngine.XR.ARFoundation.ARPointCloudManager
+  <trackablesChanged>k__BackingField:
+    m_PersistentCalls:
+      m_Calls: []
+  m_PointCloudPrefab: {fileID: 0}
+--- !u!114 &1786306644
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1786306637}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5f4186ae95c3fc5428e393f784a2ba6c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ARBootstrap
+  arSession: {fileID: 0}
+  cameraManager: {fileID: 0}
+  cameraBackground: {fileID: 0}
+  permissionTimeoutSeconds: 60
+--- !u!1 &2036794214
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2036794215}
+  m_Layer: 0
+  m_Name: FurnitureRoot
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &2036794215
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2036794214}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1786306639}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &2075736064
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2075736065}
+  - component: {fileID: 2075736066}
+  m_Layer: 0
+  m_Name: Mesh Root
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &2075736065
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2075736064}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 10, y: 10, z: 10}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1786306639}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2075736066
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2075736064}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 968053edfd89749c48f4ea5d444abf64, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.XR.ARFoundation::UnityEngine.XR.ARFoundation.ARMeshManager
+  m_MeshPrefab: {fileID: 822838973077035490, guid: 73ff0c4b67fea4f45acb2e544602d929, type: 3}
+  m_Density: 0.5
+  m_Normals: 1
+  m_Tangents: 0
+  m_TextureCoordinates: 0
+  m_Colors: 0
+  m_Classification: 0
+  m_ConcurrentQueueSize: 4
+  meshInfosChanged:
+    m_PersistentCalls:
+      m_Calls: []
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
@@ -1151,3 +1393,5 @@ SceneRoots:
   - {fileID: 935258868}
   - {fileID: 521325905}
   - {fileID: 1330154965}
+  - {fileID: 477532504}
+  - {fileID: 78738675}

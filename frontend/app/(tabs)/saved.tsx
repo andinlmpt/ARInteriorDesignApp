@@ -124,7 +124,7 @@ export default function SavedScreen() {
     } else {
       // Navigate to item details based on type
       if (item.type === 'project') {
-        router.push(`/create-project?id=${item.id}`);
+        router.push('/projects');
       } else if (item.type === 'design') {
         router.push(`/ai-design?id=${item.id}`);
       } else if (item.type === 'theme') {

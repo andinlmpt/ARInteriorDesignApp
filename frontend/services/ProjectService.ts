@@ -5,7 +5,6 @@
 
 import {
   Project,
-  CreateProjectInput,
   ProjectStatus,
   UnityLayoutExportMeta,
 } from '../types/project';
@@ -51,69 +50,6 @@ class ProjectService {
     } catch (error) {
       console.warn('[ProjectService] Failed to persist projects:', error);
     }
-  }
-
-  /**
-   * Validate project input
-   */
-  private validateInput(input: CreateProjectInput): { valid: boolean; error?: string } {
-    if (!input.name || input.name.trim().length === 0) {
-      return { valid: false, error: 'Project name is required' };
-    }
-
-    if (input.name.length > 50) {
-      return { valid: false, error: 'Project name must be 50 characters or less' };
-    }
-
-    if (input.description && input.description.length > 200) {
-      return { valid: false, error: 'Description must be 200 characters or less' };
-    }
-
-    if (input.dimensions) {
-      const { width, length, height } = input.dimensions;
-      if (width <= 0 || length <= 0 || height <= 0) {
-        return { valid: false, error: 'Dimensions must be positive numbers' };
-      }
-      if (width > 50 || length > 50 || height > 10) {
-        return { valid: false, error: 'Dimensions are unreasonably large' };
-      }
-    }
-
-    return { valid: true };
-  }
-
-  /**
-   * Create a new project
-   */
-  async createProject(input: CreateProjectInput): Promise<Project> {
-    await this.initialize();
-
-    // Validate input
-    const validation = this.validateInput(input);
-    if (!validation.valid) {
-      throw new Error(validation.error || 'Invalid project input');
-    }
-
-    const project: Project = {
-      id: `project-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-      name: input.name.trim(),
-      description: input.description?.trim(),
-      roomType: input.roomType,
-      style: input.style,
-      dimensions: input.dimensions,
-      budget: input.budget,
-      status: 'draft',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      tags: input.style ? [input.style.toLowerCase()] : [],
-      thumbnail: undefined,
-    };
-
-    this.projects.push(project);
-    await this.persist();
-
-    console.log('✅ Project created:', project.id);
-    return project;
   }
 
   /**

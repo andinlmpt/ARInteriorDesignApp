@@ -22,6 +22,7 @@ import { getHorizontalPadding } from '@/utils/responsive';
 import { projectService } from '@/services/ProjectService';
 import type { Project } from '@/types/project';
 import { BRAND } from '@/constants/branding';
+import { buildModelPreviewExportHref, pickUnityExportGlb } from '@/utils/modelPreviewExport';
 
 function formatDate(ts: number): string {
   return new Date(ts).toLocaleDateString(undefined, {
@@ -36,6 +37,7 @@ export default function ProjectsScreen() {
   const { colors, statusBarStyle } = useTheme();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -70,25 +72,36 @@ export default function ProjectsScreen() {
     ]);
   };
 
+  const handleImportExport = useCallback(async () => {
+    setImporting(true);
+    try {
+      const result = await pickUnityExportGlb({ saveToProjects: true });
+      if ('cancelled' in result) return;
+      if ('error' in result) {
+        Alert.alert('Could not open file', result.error);
+        return;
+      }
+      await loadProjects();
+      router.push(result.href);
+    } finally {
+      setImporting(false);
+    }
+  }, [loadProjects, router]);
+
   const handlePress = (project: Project) => {
-    if (project.source === 'unity-export' && project.unityExport) {
-      const kb = Math.round(project.unityExport.byteLength / 1024);
-      Alert.alert(
-        project.name,
-        [
-          `Unity 3D layout export`,
-          `File: ${project.unityExport.fileName}`,
-          `Size: ${kb} KB`,
-          `Furniture: ${project.unityExport.furnitureCount}`,
-          `Room meshes: ${project.unityExport.roomMeshCount}`,
-          `Saved: ${formatDate(project.unityExport.exportedAt)}`,
-        ].join('\n'),
-        [{ text: 'OK' }]
+    if (project.source === 'unity-export' && project.unityExport?.path) {
+      router.push(
+        buildModelPreviewExportHref({
+          uri: project.unityExport.path,
+          title: project.unityExport.fileName || project.name,
+          furnitureCount: project.unityExport.furnitureCount,
+          projectId: project.id,
+        })
       );
       return;
     }
 
-    router.push(`/create-project?id=${project.id}`);
+    Alert.alert(project.name, project.description || 'This project has no 3D layout to open.');
   };
 
   const renderItem = ({ item }: { item: Project }) => {
@@ -138,13 +151,21 @@ export default function ProjectsScreen() {
           <AppText variant="h2" style={[styles.title, { color: colors.textPrimary }]}>
             Projects
           </AppText>
-          <TouchableOpacity
-            onPress={() => router.push('/create-project')}
-            activeOpacity={0.7}
-            hitSlop={12}
-          >
-            <Ionicons name="add" size={26} color={colors.accent} />
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              onPress={() => void handleImportExport()}
+              activeOpacity={0.7}
+              hitSlop={12}
+              disabled={importing}
+              accessibilityLabel="Import Unity export GLB"
+            >
+              {importing ? (
+                <ActivityIndicator size="small" color={colors.accent} />
+              ) : (
+                <Ionicons name="download-outline" size={24} color={colors.accent} />
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
 
         {loading ? (
@@ -164,7 +185,8 @@ export default function ProjectsScreen() {
                   No projects yet
                 </AppText>
                 <AppText variant="body" color="textMuted" style={styles.emptyText}>
-                  Export a 3D layout from Unity AR, or create a project with +.
+                  From Unity, export and save the .glb to your phone, then tap the download icon
+                  above to open it in 3D preview.
                 </AppText>
               </View>
             }
@@ -184,6 +206,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: getHorizontalPadding(spacing.lg),
     paddingVertical: spacing.md,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    minWidth: 40,
+    justifyContent: 'flex-end',
   },
   title: { fontWeight: '700' },
   list: {

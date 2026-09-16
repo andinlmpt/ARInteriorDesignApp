@@ -14,6 +14,11 @@ export interface RemoteFurnitureItem {
   height: number;
   depth: number;
   dimensionLabel?: string;
+  lengthIn?: number;
+  widthIn?: number;
+  heightIn?: number;
+  availableColors?: string[];
+  quantity?: number;
 }
 
 export interface FurnitureCatalogResponse {

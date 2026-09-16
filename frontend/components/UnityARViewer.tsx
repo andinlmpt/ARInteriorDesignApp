@@ -5,6 +5,7 @@ import {
   UNITY_AR_RECEIVE_METHOD,
   parseUnityPayload,
   type ExportResultPayload,
+  type ARPhotoCapturedPayload,
   type HistoryStatePayload,
   type LayoutPayload,
   type PlacedFurniturePayload,
@@ -58,6 +59,7 @@ interface UnityARViewerProps {
   onFurnitureRemoved?: (instanceId: string) => void;
   onLayoutChanged?: (payload: LayoutPayload) => void;
   onExportComplete?: (payload: ExportResultPayload) => void;
+  onPhotoCaptured?: (payload: ARPhotoCapturedPayload) => void;
   onHistoryChanged?: (payload: HistoryStatePayload) => void;
   onUnityError?: (payload: UnityErrorPayload) => void;
 }
@@ -103,6 +105,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
       onFurnitureRemoved,
       onLayoutChanged,
       onExportComplete,
+      onPhotoCaptured,
       onHistoryChanged,
       onUnityError,
     },
@@ -213,6 +216,12 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
             break;
           }
 
+          case 'photoCaptured': {
+            const payload = parseUnityPayload<ARPhotoCapturedPayload>(msg);
+            if (payload) onPhotoCaptured?.(payload);
+            break;
+          }
+
           case 'historyChanged': {
             const payload = parseUnityPayload<HistoryStatePayload>(msg);
             if (payload) onHistoryChanged?.(payload);
@@ -228,6 +237,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
       },
       [
         onExportComplete,
+        onPhotoCaptured,
         onFurnitureInstancePlaced,
         onFurniturePlaced,
         onFurnitureRemoved,

@@ -1,34 +1,53 @@
-import { View, StyleSheet, Dimensions, ScrollView, Pressable, Animated } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  Dimensions,
+  ScrollView,
+  Pressable,
+  Animated,
+  RefreshControl,
+  ActivityIndicator,
+  Alert,
+  TextInput,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, type Href } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { AppText } from '@/components/ui/Text';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, radii } from '@/components/ui/theme';
-import { AUTH_USER_STORAGE_KEY } from '@/data/authData';
-import { AnimatedButton, AnimatedCard, FadeInView, SlideInView, ScaleInView } from '@/components/interactive';
-import { getHorizontalPadding, isSmallScreen } from '@/utils/responsive';
-import { Platform } from 'react-native';
+import { AnimatedButton, FadeInView, SlideInView } from '@/components/interactive';
+import { getHorizontalPadding } from '@/utils/responsive';
 import { AppLogo } from '@/components/ui/AppLogo';
 import { BRAND } from '@/constants/branding';
+import { useFurnitureCatalog } from '@/hooks/useFurnitureCatalog';
+import { ProductCard } from '@/components/home/ProductCard';
+import { ProductDetailSheet } from '@/components/home/ProductDetailSheet';
+import { ProductFilterSheet, type ProductFilters } from '@/components/home/ProductFilterSheet';
+import {
+  HOME_PRODUCT_CATEGORY_CHIPS,
+  type HomeProduct,
+} from '@/types/home-product';
+import { mapHomeCategoryFilter } from '@/utils/furnitureCatalogHelpers';
+import { savedItemsService } from '@/services/SavedItemsService';
+import { homeProductToSavedItem } from '@/utils/saveItemHelpers';
+
+const DEFAULT_FILTERS: ProductFilters = { category: 'all', savedOnly: false };
 
 const { width } = Dimensions.get('window');
-// Responsive card width for 2x2 grid - accounting for padding and gaps
 const getCardWidth = () => {
-  const horizontalPadding = getHorizontalPadding(24); // Base padding from content
-  const gap = 12; // Gap between cards (spacing.sm)
-  const availableWidth = width - (horizontalPadding * 2);
-  const cardWidth = (availableWidth - gap) / 2; // Two cards per row with gap
-  // Ensure minimum width and reasonable maximum, floor to avoid decimal widths
+  const horizontalPadding = getHorizontalPadding(24);
+  const gap = 12;
+  const availableWidth = width - horizontalPadding * 2;
+  const cardWidth = (availableWidth - gap) / 2;
   return Math.max(140, Math.min(180, Math.floor(cardWidth)));
 };
-const CARD_W = getCardWidth();
-const CARD_GAP = 12; // Gap between cards
+const CARD_GAP = 12;
+const PRODUCT_CARD_W = getCardWidth();
 
-// Interactive button with scale + opacity
 const Button = ({
   children,
   onPress,
@@ -72,25 +91,33 @@ export default function HomeScreen() {
   const router = useRouter();
   const { colors: t, isDark, toggleTheme, statusBarStyle } = useTheme();
   const [showTip, setShowTip] = useState(true);
-  const [userName, setUserName] = useState<string>('User');
+  const [filters, setFilters] = useState<ProductFilters>(DEFAULT_FILTERS);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState<HomeProduct | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [savingId, setSavingId] = useState<string | null>(null);
 
+  const { products, loading, error, refresh } = useFurnitureCatalog();
+
+  const loadSavedIds = useCallback(async () => {
+    try {
+      const items = await savedItemsService.getSavedItemsByType('furniture');
+      setSavedIds(new Set(items.map((item) => item.id)));
+    } catch (err) {
+      console.warn('[Home] Failed to load saved furniture:', err);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadSavedIds();
+    }, [loadSavedIds]),
+  );
 
   useEffect(() => {
-    AsyncStorage.getItem('hideTip').then(v => v === 'true' && setShowTip(false));
-
-    // Load user name from storage
-    const loadUserName = async () => {
-      try {
-        const userData = await AsyncStorage.getItem(AUTH_USER_STORAGE_KEY);
-        if (userData) {
-          const user = JSON.parse(userData);
-          setUserName(user.name || 'User');
-        }
-      } catch (error) {
-        console.error('[Home] Failed to load user name:', error);
-      }
-    };
-    loadUserName();
+    AsyncStorage.getItem('hideTip').then((v) => v === 'true' && setShowTip(false));
   }, []);
 
   const dismissTip = useCallback(async () => {
@@ -98,36 +125,107 @@ export default function HomeScreen() {
     await AsyncStorage.setItem('hideTip', 'true');
   }, []);
 
-  const actions = [
-    { icon: 'sparkles', label: 'AI Design', route: '/ai-design' as Href, color: t.purple },
-    { icon: 'color-wand', label: 'Themes', route: '/explore' as Href, color: t.pink },
-    { icon: 'scan', label: 'Unity AR', route: '/ar-view' as Href, color: t.accent },
-    { icon: 'cube-outline', label: '3D Model', route: '/model-preview' as Href, color: t.orange },
-  ];
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([refresh(), loadSavedIds()]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refresh, loadSavedIds]);
 
-  const rooms = [
-    { icon: 'tv', name: 'Living', count: 120 },
-    { icon: 'bed', name: 'Bed', count: 85 },
-    { icon: 'cafe', name: 'Kitchen', count: 65 },
-    { icon: 'water', name: 'Bath', count: 40 },
-  ];
+  const filteredProducts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return products.filter((p) => {
+      if (filters.category !== 'all' && mapHomeCategoryFilter(p.category) !== filters.category) {
+        return false;
+      }
+      if (filters.savedOnly && !savedIds.has(p.id)) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        p.name.toLowerCase().includes(q) ||
+        p.category.toLowerCase().includes(q) ||
+        p.dimensionLabel.toLowerCase().includes(q) ||
+        p.availableColors.some((c) => c.toLowerCase().includes(q))
+      );
+    });
+  }, [products, filters, searchQuery, savedIds]);
 
-  const projects = [
-    { name: 'Modern Loft', time: '2d', progress: 85 },
-    { name: 'Cozy Suite', time: '5d', progress: 60 },
-  ];
+  const filtersActive =
+    filters.category !== 'all' || filters.savedOnly;
+
+  const filterSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (filters.category !== 'all') {
+      const chip = HOME_PRODUCT_CATEGORY_CHIPS.find((c) => c.id === filters.category);
+      if (chip) parts.push(chip.label);
+    }
+    if (filters.savedOnly) parts.push('Saved');
+    return parts.join(' · ');
+  }, [filters]);
+
+  const handleToggleSave = useCallback(async (product: HomeProduct) => {
+    if (savingId) return;
+    setSavingId(product.id);
+    const currentlySaved = savedIds.has(product.id);
+
+    try {
+      if (currentlySaved) {
+        await savedItemsService.removeSavedItem(product.id);
+        setSavedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(product.id);
+          return next;
+        });
+      } else {
+        await savedItemsService.saveItem(homeProductToSavedItem(product));
+        setSavedIds((prev) => new Set(prev).add(product.id));
+      }
+    } catch (err) {
+      console.warn('[Home] Failed to toggle save:', err);
+      Alert.alert(
+        'Couldn’t update saved items',
+        'Check that you’re signed in and the backend is running.',
+      );
+    } finally {
+      setSavingId(null);
+    }
+  }, [savedIds, savingId]);
+
+  const handleViewInAR = useCallback(
+    (product: HomeProduct) => {
+      setSelectedProduct(null);
+      router.push({
+        pathname: '/ar-view',
+        params: { furniture: product.id },
+      });
+    },
+    [router],
+  );
 
   return (
     <View style={[styles.container, { backgroundColor: t.background }]}>
       <StatusBar style={statusBarStyle} />
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={t.accent}
+              colors={[t.accent]}
+            />
+          }
+        >
           {/* Header with Branding */}
           <View style={styles.header}>
             <FadeInView delay={100}>
               <View style={styles.brandingSection}>
-                <AppLogo size={52} circular elevated={false} style={styles.logoContainer} />
+                <AppLogo size={52} circular={false} elevated={false} style={styles.logoContainer} />
                 <View style={styles.brandingText}>
                   <View style={styles.titleRow}>
                     <AppText variant="h2" weight="700" style={[styles.appName, { color: t.textPrimary }]}>
@@ -153,153 +251,160 @@ export default function HomeScreen() {
                 </View>
               </View>
             </FadeInView>
-            <View style={styles.headerContentRow}>
-              <View style={styles.headerTextContainer}>
-                <AppText variant="body" style={[styles.greeting, { color: t.textSecondary }]}>
-                  Welcome back
-                </AppText>
-                <AppText variant="h1" style={[styles.name, { color: t.textPrimary }]}>
-                  {userName}
+          </View>
+
+          {/* Products from Admin */}
+          <View style={styles.productsSection}>
+            <View style={styles.sectionRow}>
+              <AppText variant="h2" weight="700" style={[styles.sectionTitleInline, { color: t.textPrimary }]}>
+                Products
+              </AppText>
+            </View>
+
+            <View style={styles.searchRow}>
+              <View
+                style={[
+                  styles.searchBar,
+                  {
+                    backgroundColor: t.surfaceSecondary,
+                    borderColor: t.border,
+                  },
+                ]}
+              >
+                <Ionicons name="search-outline" size={18} color={t.textMuted} />
+                <TextInput
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Search products…"
+                  placeholderTextColor={t.textMuted}
+                  style={[styles.searchInput, { color: t.textPrimary }]}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  clearButtonMode="while-editing"
+                  returnKeyType="search"
+                  accessibilityLabel="Search products"
+                />
+                {searchQuery.length > 0 ? (
+                  <Pressable
+                    onPress={() => setSearchQuery('')}
+                    hitSlop={8}
+                    accessibilityLabel="Clear search"
+                  >
+                    <Ionicons name="close-circle" size={18} color={t.textMuted} />
+                  </Pressable>
+                ) : null}
+              </View>
+
+              <Pressable
+                onPress={() => setFilterOpen(true)}
+                style={[
+                  styles.filterBtn,
+                  {
+                    backgroundColor: filtersActive ? t.accent : t.surfaceSecondary,
+                    borderColor: filtersActive ? t.accent : t.border,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Filter products"
+              >
+                <Ionicons
+                  name="options-outline"
+                  size={20}
+                  color={filtersActive ? '#FFFFFF' : t.textSecondary}
+                />
+                {filtersActive ? <View style={[styles.filterDot, { backgroundColor: BRAND.colors.orange }]} /> : null}
+              </Pressable>
+            </View>
+
+            {filtersActive ? (
+              <View style={styles.activeFilterRow}>
+                <View style={[styles.activeFilterChip, { backgroundColor: t.accentSoft }]}>
+                  <Ionicons name="funnel-outline" size={14} color={t.accent} />
+                  <AppText variant="caption" weight="600" style={{ color: t.accent }}>
+                    {filterSummary}
+                  </AppText>
+                </View>
+                <Pressable onPress={() => setFilters(DEFAULT_FILTERS)} hitSlop={8}>
+                  <AppText variant="caption" weight="600" style={{ color: t.textSecondary }}>
+                    Clear
+                  </AppText>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {loading && products.length === 0 ? (
+              <View style={styles.stateBlock}>
+                <ActivityIndicator size="large" color={t.accent} />
+                <AppText variant="body" style={{ color: t.textSecondary, marginTop: spacing.md }}>
+                  Loading products…
                 </AppText>
               </View>
-            </View>
-          </View>
-
-          {/* New Project */}
-          <Button onPress={() => router.push('/create-project')} style={[styles.newProject, { backgroundColor: t.surfacePrimary }]}>
-            <View style={[styles.newIcon, { backgroundColor: t.accentSoft }]}>
-              <Ionicons name="add" size={24} color={t.accent} />
-            </View>
-            <View style={styles.newText}>
-              <AppText variant="subtitle" weight="600" style={[styles.newTitle, { color: t.textPrimary }]}>
-                New Project
-              </AppText>
-              <AppText variant="body" style={[styles.newSub, { color: t.textSecondary }]}>
-                Start designing your space
-              </AppText>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={t.textMuted} />
-          </Button>
-
-          {/* Quick Actions */}
-          <View style={styles.quickActionsSection}>
-            <AppText variant="h2" weight="700" style={[styles.sectionTitle, { color: t.textPrimary }]}>
-              Quick Actions
-            </AppText>
-            <View style={styles.actionsGrid} removeClippedSubviews={false}>
-              {actions.map((a, index) => (
-                <ScaleInView key={a.label} delay={index * 100}>
-                  <AnimatedCard
-                    onPress={() => router.push(a.route)}
+            ) : error && products.length === 0 ? (
+              <View style={[styles.stateBlock, { backgroundColor: t.surfacePrimary }]}>
+                <Ionicons name="cloud-offline-outline" size={36} color={t.textMuted} />
+                <AppText
+                  variant="body"
+                  weight="600"
+                  style={{ color: t.textPrimary, marginTop: spacing.sm, textAlign: 'center' }}
+                >
+                  Couldn’t load products
+                </AppText>
+                <AppText
+                  variant="caption"
+                  style={{ color: t.textSecondary, marginTop: spacing.xs, textAlign: 'center' }}
+                >
+                  {error}
+                </AppText>
+                <TouchableRetry onPress={() => void refresh()} color={t.accent} />
+              </View>
+            ) : filteredProducts.length === 0 ? (
+              <View style={[styles.stateBlock, { backgroundColor: t.surfacePrimary }]}>
+                <Ionicons
+                  name={searchQuery.trim() || filtersActive ? 'search-outline' : 'cube-outline'}
+                  size={40}
+                  color={t.textMuted}
+                />
+                <AppText
+                  variant="body"
+                  weight="600"
+                  style={{ color: t.textPrimary, marginTop: spacing.sm, textAlign: 'center' }}
+                >
+                  {searchQuery.trim() || filtersActive ? 'No matching products' : 'No products yet'}
+                </AppText>
+                <AppText
+                  variant="caption"
+                  style={{ color: t.textSecondary, marginTop: spacing.xs, textAlign: 'center' }}
+                >
+                  {searchQuery.trim() || filtersActive
+                    ? 'Try another search or clear your filters.'
+                    : 'Add furniture in Admin → Products, then pull to refresh.'}
+                </AppText>
+              </View>
+            ) : (
+              <View style={styles.productsGrid}>
+                {filteredProducts.map((product, index) => (
+                  <View
+                    key={product.id}
                     style={[
-                      styles.actionCard,
-                      { backgroundColor: t.surfacePrimary },
-                      index % 2 === 0 && styles.actionCardLeft, // Left column
-                      index % 2 === 1 && styles.actionCardRight, // Right column
+                      styles.productCell,
+                      index % 2 === 0 ? styles.productCellLeft : styles.productCellRight,
                     ]}
-                    hapticFeedback={true}
                   >
-                    <View style={[styles.actionIconContainer, { backgroundColor: a.color + '15' }]}>
-                      <Ionicons name={a.icon as any} size={28} color={a.color} />
-                    </View>
-                    <AppText variant="body" weight="600" style={[styles.actionLabel, { color: t.textPrimary }]}>
-                      {a.label}
-                    </AppText>
-                  </AnimatedCard>
-                </ScaleInView>
-              ))}
-            </View>
+                    <ProductCard
+                      product={product}
+                      width={PRODUCT_CARD_W}
+                      isSaved={savedIds.has(product.id)}
+                      saving={savingId === product.id}
+                      onPress={setSelectedProduct}
+                      onToggleSave={handleToggleSave}
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
 
-          {/* Rooms */}
-          <View style={styles.sectionRow}>
-            <AppText variant="h2" weight="700" style={[styles.sectionTitle, { color: t.textPrimary }]}>
-              Rooms
-            </AppText>
-            <Button activeScale={0.95}>
-              <AppText variant="body" weight="600" style={[styles.seeAll, { color: t.accent }]}>
-                See all
-              </AppText>
-            </Button>
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.roomsScroll}
-            contentContainerStyle={styles.roomsScrollContent}
-          >
-            {rooms.map((r, i) => {
-              const roomColors = [t.purple, t.pink, t.orange, t.accent];
-              return (
-                <SlideInView key={r.name} direction="right" delay={i * 100}>
-                  <AnimatedCard style={[styles.roomCard, { backgroundColor: t.surfacePrimary }]} hapticFeedback={true}>
-                    <View style={[styles.roomIconContainer, { backgroundColor: roomColors[i] + '15' }]}>
-                      <Ionicons
-                        name={r.icon as any}
-                        size={24}
-                        color={roomColors[i]}
-                      />
-                    </View>
-                    <AppText variant="body" weight="600" style={[styles.roomName, { color: t.textPrimary }]}>
-                      {r.name}
-                    </AppText>
-                    <AppText variant="caption" style={[styles.roomCount, { color: t.textSecondary }]}>
-                      {r.count}+ items
-                    </AppText>
-                  </AnimatedCard>
-                </SlideInView>
-              );
-            })}
-          </ScrollView>
-
-          {/* Recent Projects */}
-          <View style={styles.sectionRow}>
-            <AppText variant="h2" weight="700" style={[styles.sectionTitle, { color: t.textPrimary }]}>
-              Recent Projects
-            </AppText>
-            <Button activeScale={0.95}>
-              <AppText variant="body" weight="600" style={[styles.seeAll, { color: t.accent }]}>
-                All
-              </AppText>
-            </Button>
-          </View>
-          <FadeInView delay={300}>
-            <View style={[styles.projectsList, { backgroundColor: t.surfacePrimary }]}>
-              {projects.map((p, i) => (
-                <ScaleInView key={p.name} delay={i * 100}>
-                  <AnimatedCard
-                    style={[
-                      styles.projectRow,
-                      i < projects.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.border }
-                    ]}
-                    hapticFeedback={true}
-                  >
-                    <View style={[styles.projectIcon, { backgroundColor: t.surfaceSecondary }]}>
-                      <Ionicons name="folder-outline" size={20} color={t.textSecondary} />
-                    </View>
-                    <View style={styles.projectInfo}>
-                      <AppText variant="subtitle" weight="600" style={[styles.projectName, { color: t.textPrimary }]}>
-                        {p.name}
-                      </AppText>
-                      <AppText variant="caption" style={[styles.projectTime, { color: t.textSecondary }]}>
-                        {p.time} ago
-                      </AppText>
-                    </View>
-                    <View style={styles.progressWrap}>
-                      <View style={[styles.progressBg, { backgroundColor: t.surfaceSecondary }]}>
-                        <View style={[styles.progressBar, { width: `${p.progress}%`, backgroundColor: t.accent }]} />
-                      </View>
-                      <AppText variant="caption" weight="600" style={[styles.progressText, { color: t.textSecondary }]}>
-                        {p.progress}%
-                      </AppText>
-                    </View>
-                  </AnimatedCard>
-                </ScaleInView>
-              ))}
-            </View>
-          </FadeInView>
-
-          {/* Pro Tip - Dismissable */}
+          {/* Pro Tip */}
           {showTip && (
             <SlideInView direction="bottom" delay={400}>
               <View style={[styles.tip, { backgroundColor: t.surfacePrimary }]}>
@@ -311,7 +416,7 @@ export default function HomeScreen() {
                     Pro Tip
                   </AppText>
                   <AppText variant="body" style={[styles.tipDesc, { color: t.textSecondary }]}>
-                    Use AR View for real-time preview of your designs
+                    Tap a product for dimensions, save it, or view it in AR
                   </AppText>
                 </View>
                 <AnimatedButton onPress={dismissTip} hapticType="light">
@@ -322,10 +427,41 @@ export default function HomeScreen() {
               </View>
             </SlideInView>
           )}
-
         </ScrollView>
       </SafeAreaView>
+
+      <ProductDetailSheet
+        product={selectedProduct}
+        visible={!!selectedProduct}
+        isSaved={selectedProduct ? savedIds.has(selectedProduct.id) : false}
+        saving={selectedProduct ? savingId === selectedProduct.id : false}
+        onClose={() => setSelectedProduct(null)}
+        onToggleSave={handleToggleSave}
+        onViewInAR={handleViewInAR}
+      />
+
+      <ProductFilterSheet
+        visible={filterOpen}
+        value={filters}
+        onClose={() => setFilterOpen(false)}
+        onApply={setFilters}
+      />
     </View>
+  );
+}
+
+function TouchableRetry({ onPress, color }: { onPress: () => void; color: string }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[styles.retryBtn, { borderColor: color }]}
+      accessibilityRole="button"
+      accessibilityLabel="Retry loading products"
+    >
+      <AppText variant="caption" weight="600" style={{ color }}>
+        Retry
+      </AppText>
+    </Pressable>
   );
 }
 
@@ -334,13 +470,12 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   content: {
     paddingHorizontal: getHorizontalPadding(spacing.lg),
-    paddingBottom: spacing.xxl * 3.5, // Extra padding for tab bar + safe area
+    paddingBottom: spacing.xxl * 3.5,
     paddingTop: spacing.md,
   },
 
-  // Header
   header: {
-    marginTop: spacing.md, // Increased to provide breathing room from the status bar
+    marginTop: spacing.md,
     marginBottom: spacing.lg,
     paddingHorizontal: spacing.xs,
   },
@@ -369,23 +504,7 @@ const styles = StyleSheet.create({
   },
   appTagline: {
     fontSize: 12,
-    marginTop: 2, // Spacing directly below the title line
-  },
-  headerContentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-  },
-  headerTextContainer: {
-    flex: 1,
-  },
-  greeting: {
-    fontSize: 14,
-    marginBottom: spacing.xs,
-  },
-  name: {
-    fontSize: 28,
+    marginTop: 2,
   },
   headerActions: {
     flexDirection: 'row',
@@ -407,37 +526,8 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
 
-  // New Project
-  newProject: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: spacing.lg,
-    borderRadius: radii.lg,
-    marginBottom: spacing.xl,
-    gap: spacing.md,
-    minHeight: 80,
-  },
-  newIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  newText: {
-    flex: 1,
-    gap: spacing.xs,
-  },
-  newTitle: {
-    marginBottom: spacing.xs,
-  },
-  newSub: {
-    fontSize: 13,
-  },
-
-  // Sections
-  sectionTitle: {
-    marginBottom: spacing.md,
+  sectionTitleInline: {
+    marginBottom: 0,
   },
   sectionRow: {
     flexDirection: 'row',
@@ -446,137 +536,94 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     paddingHorizontal: spacing.xs,
   },
-  seeAll: {
-    fontSize: 14,
-  },
 
-  // Quick Actions Section
-  quickActionsSection: {
-    marginBottom: spacing.xl,
-    width: '100%',
-  },
-
-  // Actions Grid - 2x2 layout
-  actionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'flex-start',
-    width: '100%',
-    marginTop: spacing.xs,
-    paddingBottom: spacing.xs,
-  },
-  actionCard: {
-    width: CARD_W, // Use calculated width for consistent 2-column layout
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radii.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
-    minHeight: 120,
-  },
-  actionCardLeft: {
-    marginRight: CARD_GAP, // Add gap between left and right columns
-  },
-  actionCardRight: {
-    marginRight: 0, // No right margin for right column
-  },
-  actionIconContainer: {
-    marginBottom: spacing.sm,
-    width: 56,
-    height: 56,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionLabel: {
-    fontSize: 14,
-    textAlign: 'center',
-    maxWidth: '100%',
-  },
-
-  // Rooms
-  roomsScroll: {
-    marginBottom: spacing.xl,
-  },
-  roomsScrollContent: {
-    paddingRight: spacing.lg,
-  },
-  roomCard: {
-    width: 100,
-    padding: spacing.md,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    marginRight: spacing.md,
-    gap: spacing.sm,
-    minHeight: 110,
-  },
-  roomIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.xs,
-  },
-  roomName: {
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  roomCount: {
-    fontSize: 12,
-    textAlign: 'center',
-  },
-
-  // Projects
-  projectsList: {
-    borderRadius: radii.lg,
-    overflow: 'hidden',
+  productsSection: {
     marginBottom: spacing.lg,
   },
-  projectRow: {
+  searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: spacing.md,
-    gap: spacing.md,
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+    marginHorizontal: spacing.xs,
   },
-  projectIcon: {
+  searchBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    minHeight: 44,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    paddingVertical: 0,
+  },
+  filterBtn: {
     width: 44,
     height: 44,
-    borderRadius: radii.md,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  projectInfo: {
-    flex: 1,
+  filterDot: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  activeFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+    marginHorizontal: spacing.xs,
+  },
+  activeFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
   },
-  projectName: {
-    marginBottom: spacing.xs,
+  productsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    width: '100%',
   },
-  projectTime: {
-    fontSize: 12,
+  productCell: {
+    marginBottom: 0,
   },
-  progressWrap: {
-    alignItems: 'flex-end',
-    gap: spacing.xs,
-    minWidth: 60,
+  productCellLeft: {
+    marginRight: CARD_GAP,
   },
-  progressBg: {
-    width: 60,
-    height: 6,
-    borderRadius: 3,
-    overflow: 'hidden',
+  productCellRight: {
+    marginRight: 0,
   },
-  progressBar: {
-    height: '100%',
-    borderRadius: 3,
+  stateBlock: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xxl,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radii.lg,
+    minHeight: 160,
   },
-  progressText: {
-    fontSize: 12,
+  retryBtn: {
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.pill,
+    borderWidth: 1.5,
   },
 
-  // Tip
   tip: {
     flexDirection: 'row',
     alignItems: 'center',

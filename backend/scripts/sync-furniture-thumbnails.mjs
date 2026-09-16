@@ -1,9 +1,12 @@
 /**
- * Copy Unity FurnitureIcons into backend/uploads/thumbnails and
+ * Copy furniture icon PNGs into backend/uploads/thumbnails and
  * set furniture.thumbnailUrl for catalog items.
  *
+ * Default icon source: backend/assets/furniture-icons
+ * Override: FURNITURE_ICONS_DIR=/path/to/icons
+ *
  * Usage:
- *   node scripts/sync-furniture-thumbnails.mjs
+ *   npm run seed:furniture:thumbnails
  */
 
 import '../src/loadEnv.js';
@@ -13,23 +16,14 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import Furniture from '../src/models/Furniture.js';
 import { connectMongoDB, disconnectMongoDB } from '../src/db/mongodb.js';
+import {
+  iconSlugFromFileName,
+  resolveIconSlug,
+  resolveIconsDir,
+} from './furniture-icon-utils.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..', '..');
-const ICONS_DIR = join(
-  ROOT,
-  'InteriorDesignViewer',
-  'Assets',
-  '_App',
-  'Furniture',
-  'Resources',
-  'FurnitureIcons'
-);
 const THUMB_DIR = join(__dirname, '..', 'uploads', 'thumbnails');
-
-const ALIASES = {
-  'malaysia-sofa': 'malaysian-sofa',
-};
 
 function getPublicBaseUrl() {
   const configured = process.env.PUBLIC_UPLOAD_BASE_URL?.trim();
@@ -40,12 +34,7 @@ function getPublicBaseUrl() {
   return `http://localhost:${port}/uploads`;
 }
 
-const slugify = (value) =>
-  String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
+const ICONS_DIR = resolveIconsDir();
 
 await mkdir(THUMB_DIR, { recursive: true });
 
@@ -54,20 +43,23 @@ if (!existsSync(ICONS_DIR)) {
   process.exit(1);
 }
 
-const iconFiles = (await readdir(ICONS_DIR)).filter((name) => name.toLowerCase().endsWith('.png'));
+console.log(`Using icon source: ${ICONS_DIR}`);
+
+const iconFiles = (await readdir(ICONS_DIR)).filter((name) =>
+  /\.(png|jpg|jpeg|webp)$/i.test(name)
+);
 const iconById = new Map();
 
 for (const file of iconFiles) {
-  const id = slugify(file.replace(/\.png$/i, ''));
+  const id = iconSlugFromFileName(file);
   const dest = join(THUMB_DIR, `${id}.png`);
   await copyFile(join(ICONS_DIR, file), dest);
   iconById.set(id, `${id}.png`);
   console.log(`Copied ${file} -> ${id}.png`);
 }
 
-// Category fallbacks so products without a dedicated icon still show a preview.
 const seatingFallbackSrc = iconById.get('bahamas-sofa') || [...iconById.values()].find((f) => f.includes('sofa'));
-const bedsFallbackSrc = iconById.get('sakura-bed') || seatingFallbackSrc;
+const bedsFallbackSrc = iconById.get('sakura-bed') || iconById.get('cosmos-bed') || seatingFallbackSrc;
 
 if (seatingFallbackSrc) {
   await copyFile(join(THUMB_DIR, seatingFallbackSrc), join(THUMB_DIR, '_default-seating.png'));
@@ -79,16 +71,15 @@ if (bedsFallbackSrc) {
 const base = getPublicBaseUrl();
 await connectMongoDB();
 
-const items = await Furniture.find({}).select('id category thumbnailUrl').lean();
+const items = await Furniture.find({}).select('id displayName category thumbnailUrl').lean();
 let matched = 0;
 let fallback = 0;
 let skipped = 0;
 
 for (const item of items) {
-  const alias = ALIASES[item.id];
-  const iconFile = iconById.get(item.id) || (alias ? iconById.get(alias) : null);
+  const iconSlug = resolveIconSlug(item, iconById);
+  let fileName = iconSlug ? iconById.get(iconSlug) : null;
 
-  let fileName = iconFile;
   if (!fileName) {
     if (item.category === 'beds' && existsSync(join(THUMB_DIR, '_default-beds.png'))) {
       fileName = '_default-beds.png';
@@ -98,13 +89,13 @@ for (const item of items) {
       fallback += 1;
     } else {
       skipped += 1;
+      console.warn(`No icon for: ${item.id} (${item.displayName})`);
       continue;
     }
   } else {
-    // Prefer product-specific icon copied under product id when alias was used.
-    if (alias && iconById.get(alias)) {
+    if (iconSlug !== item.id) {
       const dest = join(THUMB_DIR, `${item.id}.png`);
-      await copyFile(join(THUMB_DIR, iconById.get(alias)), dest);
+      await copyFile(join(THUMB_DIR, fileName), dest);
       fileName = `${item.id}.png`;
     }
     matched += 1;

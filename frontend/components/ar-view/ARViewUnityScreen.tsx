@@ -30,17 +30,32 @@ import type {
   LayoutPayload,
   RoomConfirmedPayload,
   ScanStatusPayload,
+  ARPhotoCapturedPayload,
 } from '@/types/unity-bridge';
 import { RoomMeasurementService } from '@/services/RoomMeasurementService';
 import { projectService } from '@/services/ProjectService';
+import { savedItemsService } from '@/services/SavedItemsService';
 import { colors, spacing, radii } from '@/components/ui/theme';
 import { isUnityViewAvailable } from '@/utils/unityAvailability';
+import { buildModelPreviewExportHref } from '@/utils/modelPreviewExport';
 
 const UNITY_READY_TIMEOUT_MS = 15000;
 
 function scanHintMessage(status: ScanStatusPayload | null): string {
   if (!status) return 'Walk around the room slowly — scanning runs in the background';
   switch (status.hint) {
+    case 'tapFloorHeight':
+      return 'Tap the floor to start measuring height';
+    case 'extrudeHeight':
+      return 'Move aim up to extrude height, then tap Finish';
+    case 'tapFirstCorner':
+      return 'Height locked — tap the first floor corner';
+    case 'tapNextCorner':
+      return 'Tap the next floor corner';
+    case 'tapThirdCorner':
+      return 'Tap a third corner to outline the room';
+    case 'tapMoreCorners':
+      return 'Keep tapping corners to outline the room';
     case 'findFloor':
       return 'Keep walking and looking around the room';
     case 'moveAround':
@@ -356,15 +371,78 @@ export function ARViewUnityScreen() {
             if (payload.success) {
               void projectService
                 .saveUnityLayoutExport(payload)
-                .then(() => {
+                .then((project) => {
                   setStatusMessage(
                     `Saved to Projects · ${payload.fileName} (${Math.round(payload.byteLength / 1024)} KB)`
+                  );
+                  router.push(
+                    buildModelPreviewExportHref({
+                      uri: payload.path,
+                      title: payload.fileName || project.name,
+                      furnitureCount: payload.furnitureCount,
+                      projectId: project.id,
+                    })
                   );
                 })
                 .catch((err) => {
                   console.warn('[ARViewUnity] Failed to save export to Projects:', err);
+                  // Still open the 3D viewer even if project save fails.
+                  router.push(
+                    buildModelPreviewExportHref({
+                      uri: payload.path,
+                      title: payload.fileName,
+                      furnitureCount: payload.furnitureCount,
+                    })
+                  );
                 });
             }
+          }}
+          onPhotoCaptured={(payload: ARPhotoCapturedPayload) => {
+            if (!payload?.success || !payload.path) {
+              setStatusMessage(payload?.error || 'Photo capture failed');
+              return;
+            }
+
+            const uri = payload.path.startsWith('file://')
+              ? payload.path
+              : `file://${payload.path}`;
+            const kb = Math.round((payload.byteLength || 0) / 1024);
+            setStatusMessage(
+              payload.gallerySaved
+                ? `Photo saved to Gallery + app (${kb} KB)`
+                : `Photo saved to app (${kb} KB)`
+            );
+
+            void savedItemsService
+              .saveItem({
+                id: `ar-photo-${payload.fileName || Date.now()}`,
+                name: payload.fileName || 'AR Photo',
+                type: 'design',
+                imageUrl: uri,
+                description: 'Captured from AR Furniture',
+                iconName: 'camera',
+                iconColor: '#0C295F',
+                metadata: {
+                  source: 'unity-ar-photo',
+                  path: payload.path,
+                  gallerySaved: payload.gallerySaved,
+                  mimeType: payload.mimeType || 'image/png',
+                  byteLength: payload.byteLength,
+                },
+              })
+              .then(() => {
+                setStatusMessage(
+                  payload.gallerySaved
+                    ? `Saved to Gallery + Saved tab · ${payload.fileName}`
+                    : `Saved to Saved tab · ${payload.fileName}`
+                );
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+                  () => {}
+                );
+              })
+              .catch((err) => {
+                console.warn('[ARViewUnity] Failed to save AR photo to Saved items:', err);
+              });
           }}
           onUnityError={(payload) => {
             setStatusMessage(payload.message || payload.code);

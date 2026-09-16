@@ -39,16 +39,16 @@ const mainCategories: Category[] = [
 
 // Quick search categories (randomized, no navigation)
 const quickSearchCategories: Category[] = [
-  { id: 'modern', name: 'Modern', iconName: 'cube-outline', iconColor: '#7A8F7B', count: 'Designs' },
-  { id: 'minimalist', name: 'Minimalist', iconName: 'apps-outline', iconColor: '#617364', count: 'Designs' },
-  { id: 'cozy', name: 'Cozy', iconName: 'home-outline', iconColor: '#C77A6A', count: 'Designs' },
-  { id: 'scandinavian', name: 'Scandinavian', iconName: 'snow-outline', iconColor: '#9A9A98', count: 'Designs' },
-  { id: 'industrial', name: 'Industrial', iconName: 'construct-outline', iconColor: '#78716C', count: 'Designs' },
-  { id: 'bohemian', name: 'Bohemian', iconName: 'flower-outline', iconColor: '#CDB9A6', count: 'Designs' },
-  { id: 'rustic', name: 'Rustic', iconName: 'leaf-outline', iconColor: '#6F8B62', count: 'Designs' },
-  { id: 'luxury', name: 'Luxury', iconName: 'diamond-outline', iconColor: '#D7B26A', count: 'Designs' },
-  { id: 'vintage', name: 'Vintage', iconName: 'time-outline', iconColor: '#92400E', count: 'Designs' },
-  { id: 'contemporary', name: 'Contemporary', iconName: 'layers-outline', iconColor: '#7A8F7B', count: 'Designs' },
+  { id: 'modern', name: 'Modern', iconName: 'cube-outline', iconColor: '#0C295F', count: 'Designs' },
+  { id: 'minimalist', name: 'Minimalist', iconName: 'apps-outline', iconColor: '#3E5A8C', count: 'Designs' },
+  { id: 'cozy', name: 'Cozy', iconName: 'home-outline', iconColor: '#E69868', count: 'Designs' },
+  { id: 'scandinavian', name: 'Scandinavian', iconName: 'snow-outline', iconColor: '#8A96A8', count: 'Designs' },
+  { id: 'industrial', name: 'Industrial', iconName: 'construct-outline', iconColor: '#5A6B85', count: 'Designs' },
+  { id: 'bohemian', name: 'Bohemian', iconName: 'flower-outline', iconColor: '#F0B088', count: 'Designs' },
+  { id: 'rustic', name: 'Rustic', iconName: 'leaf-outline', iconColor: '#2F6B4F', count: 'Designs' },
+  { id: 'luxury', name: 'Luxury', iconName: 'diamond-outline', iconColor: '#E69868', count: 'Designs' },
+  { id: 'vintage', name: 'Vintage', iconName: 'time-outline', iconColor: '#C47A50', count: 'Designs' },
+  { id: 'contemporary', name: 'Contemporary', iconName: 'layers-outline', iconColor: '#0C295F', count: 'Designs' },
 ];
 
 // Helper function to shuffle array (Fisher-Yates shuffle)

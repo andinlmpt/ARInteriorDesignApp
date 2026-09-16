@@ -52,6 +52,50 @@ export function furnitureToSavedItem(furniture: FurnitureLibraryItem): {
 }
 
 /**
+ * Convert home catalog product to saved item format
+ */
+export function homeProductToSavedItem(product: {
+  id: string;
+  name: string;
+  category: string;
+  thumbnailUrl?: string;
+  dimensionLabel: string;
+  width: number;
+  height: number;
+  depth: number;
+  availableColors?: string[];
+}): {
+  id: string;
+  name: string;
+  type: SavedItemType;
+  imageUrl?: string;
+  iconName?: string;
+  iconColor?: string;
+  description?: string;
+  metadata?: Record<string, unknown>;
+} {
+  return {
+    id: product.id,
+    name: product.name,
+    type: 'furniture',
+    imageUrl: product.thumbnailUrl,
+    iconName: 'cube-outline',
+    iconColor: '#0C295F',
+    description: product.dimensionLabel,
+    metadata: {
+      category: product.category,
+      dimensions: {
+        width: product.width,
+        depth: product.depth,
+        height: product.height,
+      },
+      availableColors: product.availableColors ?? [],
+      source: 'home-products',
+    },
+  };
+}
+
+/**
  * Convert project to saved item format
  */
 export function projectToSavedItem(project: {

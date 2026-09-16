@@ -405,8 +405,10 @@ public static class ARDesignSceneBuilder
         var edgeVisualizer = Ensure<ARDesignEdgeVisualizer>(managers);
         var cornerBuilder = Ensure<ARDesignCornerRoomBuilder>(managers);
         var layoutMode = Ensure<ARDesignLayoutModeController>(managers);
+        Ensure<ARMainMenuBackButton>(managers);
 
-        // Plane-boundary outlines are replaced by corner-to-corner tapping.
+        // Furniture scene: no height/width measurement — placement only.
+        cornerBuilder.enabled = false;
         edgeVisualizer.enabled = false;
 
         var cameraBackground = rig.camera != null
@@ -423,6 +425,8 @@ public static class ARDesignSceneBuilder
             so.Set("meshManager", rig.meshManager);
             so.Set("arCamera", rig.camera);
             so.Set("cornerBuilder", cornerBuilder);
+            so.SetBool("furniturePlacementOnly", true);
+            so.SetBool("autoStartScanOnLoad", false);
         });
 
         Wire(scanVisualization, so =>
@@ -468,6 +472,7 @@ public static class ARDesignSceneBuilder
             so.Set("catalog", catalog);
             so.Set("gltfLoader", gltfLoader);
             so.Set("placeholderPrefab", assets.placeholderPrefab);
+            so.SetBool("requireConfirmedRoom", false);
         });
 
         Wire(manipulator, so =>
@@ -504,6 +509,9 @@ public static class ARDesignSceneBuilder
             so.Set("catalog", catalog);
             so.Set("placementIndicator", rig.placementIndicator);
             so.Set("cornerBuilder", cornerBuilder);
+            so.SetBool("enableNativeHud", false);
+            so.SetBool("measurementOnlyMode", false);
+            so.SetBool("spawnSampleOnConfirm", false);
         });
 
         Wire(catalogUi, so =>
@@ -531,6 +539,8 @@ public static class ARDesignSceneBuilder
         {
             so.Set("scanController", scanController);
             so.Set("measurementSync", roomMeasurementSync);
+            so.SetBool("enableNativeModal", false);
+            so.SetBool("measurementOnlyMode", false);
         });
 
         Wire(roomExport, so =>
@@ -990,6 +1000,18 @@ public static class ARDesignSceneBuilder
             }
 
             property.objectReferenceValue = value;
+        }
+
+        public void SetBool(string propertyName, bool value)
+        {
+            var property = serialized.FindProperty(propertyName);
+            if (property == null)
+            {
+                Debug.LogWarning($"[AR Design] {owner.GetType().Name} has no serialized field '{propertyName}'.");
+                return;
+            }
+
+            property.boolValue = value;
         }
     }
 

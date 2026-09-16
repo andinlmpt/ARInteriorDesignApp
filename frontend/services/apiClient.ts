@@ -82,10 +82,66 @@ const getBaseUrl = (): string => {
   if (process.env.EXPO_PUBLIC_API_BASE_URL) {
     return process.env.EXPO_PUBLIC_API_BASE_URL;
   }
-  
+
+  // Re-resolve Expo LAN host at call time (module load can be too early).
+  const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production';
+  const expoDevHost = isDev ? getDevMachineHostFromExpo() : null;
+  if (expoDevHost) {
+    return `http://${expoDevHost}:3000/api/v1`;
+  }
+
   // Fall back to platform-specific default
   return DEFAULT_BASE_URL;
 };
+
+/** Backend origin without /api/v1 — used for /uploads media. */
+export function getApiOrigin(): string {
+  return getBaseUrl().replace(/\/+$/, '').replace(/\/api\/v\d+$/i, '');
+}
+
+/**
+ * Make upload/thumbnail URLs reachable from a physical device.
+ * Rewrites localhost/127.0.0.1 and relative /uploads paths to the API host.
+ */
+export function resolveMediaUrl(url?: string | null): string | undefined {
+  if (!url) return undefined;
+  const value = String(url).trim();
+  if (!value) return undefined;
+
+  const origin = getApiOrigin();
+
+  if (value.startsWith('/')) {
+    return `${origin}${value}`;
+  }
+
+  if (value.startsWith('uploads/')) {
+    return `${origin}/${value}`;
+  }
+
+  try {
+    const parsed = new URL(value);
+    const localHost =
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '127.0.0.1' ||
+      parsed.hostname === '0.0.0.0' ||
+      parsed.hostname === '10.0.2.2';
+
+    if (localHost) {
+      const api = new URL(origin.includes('://') ? origin : `http://${origin}`);
+      // Prefer Expo/LAN host over emulator loopback when available.
+      const expoHost = getDevMachineHostFromExpo();
+      parsed.protocol = api.protocol;
+      parsed.hostname = expoHost || api.hostname;
+      parsed.port = api.port;
+      return parsed.toString();
+    }
+  } catch {
+    // keep original
+  }
+
+  return value;
+}
+
 
 const getEnvApiKey = () =>
   process.env.EXPO_PUBLIC_LAYOUT_API_KEY ||

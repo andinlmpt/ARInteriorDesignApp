@@ -29,6 +29,7 @@ import trainingRoutes from './routes/training.js';
 import furnitureRoutes from './routes/furniture.js';
 import adminRoutes from './routes/admin.js';
 import roomMeasurementRoutes from './routes/roomMeasurements.js';
+import savedItemRoutes from './routes/savedItems.js';
 import { UPLOAD_ROOT } from './services/uploadService.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/logger.js';
@@ -125,6 +126,7 @@ app.use('/api/v1/training', trainingRoutes);
 app.use('/api/v1/furniture', furnitureRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/room-measurements', roomMeasurementRoutes);
+app.use('/api/v1/saved-items', savedItemRoutes);
 
 // Strict new route requested by user
 app.post('/api/v1/design/generate', authenticate, aiDesignController.generateLayout);
@@ -152,6 +154,7 @@ app.get('/api', (req, res) => {
       furniture: '/api/v1/furniture',
       admin: '/api/v1/admin',
       roomMeasurements: '/api/v1/room-measurements',
+      savedItems: '/api/v1/saved-items',
     },
     webView: '/',
   });

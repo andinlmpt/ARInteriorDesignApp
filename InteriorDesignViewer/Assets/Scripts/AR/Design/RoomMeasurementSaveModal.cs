@@ -11,7 +11,10 @@ public class RoomMeasurementSaveModal : MonoBehaviour
 {
     [SerializeField] private RoomScanController scanController;
     [SerializeField] private RoomMeasurementSync measurementSync;
+    [SerializeField] private bool measurementOnlyMode = false;
     [SerializeField] private bool enableNativeModal = true;
+
+    public static event Action RoomNameCommitted;
 
     static readonly Color Ink = new(0.10f, 0.10f, 0.12f, 1f);
     static readonly Color InkMuted = new(0.40f, 0.42f, 0.46f, 1f);
@@ -27,6 +30,8 @@ public class RoomMeasurementSaveModal : MonoBehaviour
     Text statusLabel;
     Button saveButton;
     Button continueButton;
+    Button cancelButton;
+    InputField roomNameInput;
     Image saveButtonBg;
     Text saveButtonText;
     bool active;
@@ -45,7 +50,7 @@ public class RoomMeasurementSaveModal : MonoBehaviour
             return;
         }
 
-        BuildUi();
+        BuildUi(measurementOnlyMode);
         SetVisible(false);
     }
 
@@ -106,18 +111,42 @@ public class RoomMeasurementSaveModal : MonoBehaviour
         if (saveButton != null) saveButton.interactable = !saving;
         if (continueButton != null) continueButton.interactable = !saving;
         if (saveButtonBg != null) saveButtonBg.color = saving ? new Color(0.7f, 0.7f, 0.72f, 1f) : Accent;
-        if (saveButtonText != null) saveButtonText.text = saving ? "Saving…" : "Save measurement";
+        if (saveButtonText != null)
+        {
+            saveButtonText.text = saving
+                ? "Saving…"
+                : (measurementOnlyMode ? "Save measure" : "Save measurement");
+        }
     }
 
     void OnSaveClicked()
     {
-        if (pendingPayload == null || measurementSync == null || saving) return;
+        if (pendingPayload == null || saving) return;
+
+        if (measurementOnlyMode)
+        {
+            var name = roomNameInput != null ? roomNameInput.text : string.Empty;
+            ARMeasurementSession.SetRoomName(name);
+            SetVisible(false);
+            RoomNameCommitted?.Invoke();
+            return;
+        }
+
+        if (measurementSync == null) return;
 
         saving = true;
         RefreshLabels();
 
         measurementSync.SaveMeasurement(pendingPayload);
         StartCoroutine(WaitForSaveResult());
+    }
+
+    void OnCancelClicked()
+    {
+        if (!measurementOnlyMode) return;
+        ARMeasurementSession.SetRoomName("Untitled room");
+        SetVisible(false);
+        RoomNameCommitted?.Invoke();
     }
 
     System.Collections.IEnumerator WaitForSaveResult()
@@ -163,9 +192,13 @@ public class RoomMeasurementSaveModal : MonoBehaviour
     {
         if (canvas != null)
             canvas.gameObject.SetActive(visible);
+
+        // Avoid stacking the floating MainMenu back over this modal.
+        if (measurementOnlyMode)
+            ARMainMenuBackButton.SetUiVisible(!visible);
     }
 
-    void BuildUi()
+    void BuildUi(bool measurementMode)
     {
         ARDesignUiUtil.EnsureEventSystem();
 
@@ -193,15 +226,47 @@ public class RoomMeasurementSaveModal : MonoBehaviour
         cardRt.anchorMin = new Vector2(0.5f, 0.5f);
         cardRt.anchorMax = new Vector2(0.5f, 0.5f);
         cardRt.pivot = new Vector2(0.5f, 0.5f);
-        cardRt.sizeDelta = new Vector2(520f, 360f);
+        cardRt.sizeDelta = measurementMode ? new Vector2(680f, 340f) : new Vector2(520f, 360f);
+
+        if (measurementMode)
+        {
+            titleLabel = ARDesignUiUtil.CreateText(card.transform, "Enter room's name", 28, FontStyle.Bold, TextAnchor.MiddleCenter);
+            titleLabel.color = Ink;
+            var titleRt = titleLabel.rectTransform;
+            titleRt.anchorMin = new Vector2(0.08f, 0.72f);
+            titleRt.anchorMax = new Vector2(0.92f, 0.92f);
+            titleRt.offsetMin = Vector2.zero;
+            titleRt.offsetMax = Vector2.zero;
+
+            roomNameInput = CreateRoomNameField(card.transform);
+
+            // Action row: Cancel + Save measure on one line with comfortable spacing
+            cancelButton = CreateTextButton(
+                card.transform,
+                "Cancel",
+                new Vector2(0.08f, 0.10f),
+                new Vector2(0.36f, 0.30f),
+                OnCancelClicked);
+            saveButton = CreateModalButton(
+                card.transform,
+                "Save measure",
+                new Vector2(0.40f, 0.10f),
+                new Vector2(0.92f, 0.30f),
+                Accent,
+                Color.white,
+                OnSaveClicked,
+                out saveButtonBg,
+                out saveButtonText);
+            return;
+        }
 
         titleLabel = ARDesignUiUtil.CreateText(card.transform, "Room measured", 26, FontStyle.Bold, TextAnchor.MiddleCenter);
         titleLabel.color = Ink;
-        var titleRt = titleLabel.rectTransform;
-        titleRt.anchorMin = new Vector2(0.08f, 0.78f);
-        titleRt.anchorMax = new Vector2(0.92f, 0.94f);
-        titleRt.offsetMin = Vector2.zero;
-        titleRt.offsetMax = Vector2.zero;
+        var measuredTitleRt = titleLabel.rectTransform;
+        measuredTitleRt.anchorMin = new Vector2(0.08f, 0.78f);
+        measuredTitleRt.anchorMax = new Vector2(0.92f, 0.94f);
+        measuredTitleRt.offsetMin = Vector2.zero;
+        measuredTitleRt.offsetMax = Vector2.zero;
 
         dimensionLabel = ARDesignUiUtil.CreateText(card.transform, "—", 22, FontStyle.Bold, TextAnchor.MiddleCenter);
         dimensionLabel.color = Ink;
@@ -250,6 +315,79 @@ public class RoomMeasurementSaveModal : MonoBehaviour
             out _);
     }
 
+    static InputField CreateRoomNameField(Transform parent)
+    {
+        var fieldGo = new GameObject("RoomNameField", typeof(RectTransform), typeof(Image));
+        fieldGo.transform.SetParent(parent, false);
+        var fieldImage = fieldGo.GetComponent<Image>();
+        ARDesignUiUtil.ApplyRounded(fieldImage, 16);
+        fieldImage.color = new Color(0.94f, 0.94f, 0.96f, 1f);
+
+        var fieldRt = fieldGo.GetComponent<RectTransform>();
+        fieldRt.anchorMin = new Vector2(0.08f, 0.38f);
+        fieldRt.anchorMax = new Vector2(0.92f, 0.62f);
+        fieldRt.offsetMin = Vector2.zero;
+        fieldRt.offsetMax = Vector2.zero;
+
+        var textGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
+        textGo.transform.SetParent(fieldGo.transform, false);
+        var text = textGo.GetComponent<Text>();
+        text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        text.supportRichText = false;
+        text.color = Ink;
+        text.fontSize = 24;
+        text.alignment = TextAnchor.MiddleLeft;
+        var textRt = textGo.GetComponent<RectTransform>();
+        textRt.anchorMin = Vector2.zero;
+        textRt.anchorMax = Vector2.one;
+        textRt.offsetMin = new Vector2(16f, 8f);
+        textRt.offsetMax = new Vector2(-16f, -8f);
+
+        var placeholderGo = new GameObject("Placeholder", typeof(RectTransform), typeof(Text));
+        placeholderGo.transform.SetParent(fieldGo.transform, false);
+        var placeholder = placeholderGo.GetComponent<Text>();
+        placeholder.font = text.font;
+        placeholder.text = "Living room";
+        placeholder.color = InkMuted;
+        placeholder.fontSize = 24;
+        placeholder.alignment = TextAnchor.MiddleLeft;
+        var placeholderRt = placeholderGo.GetComponent<RectTransform>();
+        placeholderRt.anchorMin = Vector2.zero;
+        placeholderRt.anchorMax = Vector2.one;
+        placeholderRt.offsetMin = new Vector2(16f, 8f);
+        placeholderRt.offsetMax = new Vector2(-16f, -8f);
+
+        var input = fieldGo.AddComponent<InputField>();
+        input.textComponent = text;
+        input.placeholder = placeholder;
+        input.lineType = InputField.LineType.SingleLine;
+        return input;
+    }
+
+    static Button CreateTextButton(Transform parent, string label, Vector2 anchorMin, Vector2 anchorMax, Action onClick)
+    {
+        var go = new GameObject(label + "Button", typeof(RectTransform), typeof(Button));
+        go.transform.SetParent(parent, false);
+        var button = go.GetComponent<Button>();
+        button.targetGraphic = null;
+        button.onClick.AddListener(() => onClick?.Invoke());
+
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = anchorMin;
+        rt.anchorMax = anchorMax;
+        rt.offsetMin = Vector2.zero;
+        rt.offsetMax = Vector2.zero;
+
+        var text = ARDesignUiUtil.CreateText(go.transform, label, 22, FontStyle.Bold, TextAnchor.MiddleCenter);
+        text.color = Accent;
+        var textRt = text.rectTransform;
+        textRt.anchorMin = Vector2.zero;
+        textRt.anchorMax = Vector2.one;
+        textRt.offsetMin = Vector2.zero;
+        textRt.offsetMax = Vector2.zero;
+        return button;
+    }
+
     static Button CreateModalButton(
         Transform parent,
         string label,
@@ -277,13 +415,16 @@ public class RoomMeasurementSaveModal : MonoBehaviour
         rt.offsetMin = Vector2.zero;
         rt.offsetMax = Vector2.zero;
 
-        text = ARDesignUiUtil.CreateText(go.transform, label, 18, FontStyle.Bold, TextAnchor.MiddleCenter);
+        text = ARDesignUiUtil.CreateText(go.transform, label, 20, FontStyle.Bold, TextAnchor.MiddleCenter);
         text.color = textColor;
+        text.horizontalOverflow = HorizontalWrapMode.Overflow;
+        text.verticalOverflow = VerticalWrapMode.Truncate;
+        text.resizeTextForBestFit = false;
         var textRt = text.rectTransform;
         textRt.anchorMin = Vector2.zero;
         textRt.anchorMax = Vector2.one;
-        textRt.offsetMin = Vector2.zero;
-        textRt.offsetMax = Vector2.zero;
+        textRt.offsetMin = new Vector2(12f, 4f);
+        textRt.offsetMax = new Vector2(-12f, -4f);
         return button;
     }
 }

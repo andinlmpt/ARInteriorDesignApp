@@ -21,7 +21,6 @@ export type ScreenName =
   | 'model-preview'
   | 'room-view'
   | 'room-measurements'
-  | 'create-project'
   | 'projects'
   | 'about-us'
   | 'help-support'
@@ -167,12 +166,6 @@ export const NAVIGATION_SCREENS: Record<string, ScreenConfig[]> = {
 
   // Utility Screens
   utility: [
-    {
-      name: 'create-project',
-      options: {
-        ...ANIMATION_PRESETS.card,
-      },
-    },
     {
       name: 'projects',
       options: {

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
 
@@ -73,9 +74,17 @@ public class ARPlacementIndicator : MonoBehaviour
     // ── Private ───────────────────────────────────────────────────────────────
     private readonly List<ARRaycastHit> hits     = new();
     private bool                        isTracking;
+    private bool                        visualSuppressed;
+    private bool                        overlayLocked;
+    private Vector3                     overlayLockedPosition;
+    private Quaternion                  overlayLockedRotation = Quaternion.identity;
     private Vector2                     screenPointOverride = Vector2.negativeInfinity;
     private Vector3                     baseScale;          // prefab scale at Awake
     private float                       currentScaleMultiplier = 1f;
+    private float                       overlayIconSize = 0.24f;
+    private GameObject                  overlayIconObject;
+    private Renderer                    overlayIconRenderer;
+    private Material                    overlayIconMaterial;
 
     // ── Unity messages ────────────────────────────────────────────────────────
     void Awake()
@@ -95,6 +104,15 @@ public class ARPlacementIndicator : MonoBehaviour
 
     void Update()
     {
+        if (overlayLocked)
+        {
+            transform.SetPositionAndRotation(overlayLockedPosition, overlayLockedRotation);
+            transform.localScale = baseScale * lockedScale;
+            SetVisible(true, true);
+            ApplyOverlayWorldSize();
+            return;
+        }
+
         if (!isTracking || raycastManager == null)
         {
             SetVisible(false, false);
@@ -185,6 +203,25 @@ public class ARPlacementIndicator : MonoBehaviour
         var targetMultiplier   = IsLockedOnFloor ? lockedScale : searchingScale;
         currentScaleMultiplier = Mathf.Lerp(currentScaleMultiplier, targetMultiplier, Time.deltaTime * scaleSmoothing);
         transform.localScale   = baseScale * currentScaleMultiplier;
+
+        UpdateOverlayPresentation();
+    }
+
+    void UpdateOverlayPresentation()
+    {
+        if (overlayIconObject == null || !overlayIconObject.activeSelf)
+            return;
+
+        ApplyOverlayWorldSize();
+
+        // Face the camera while tracking so the icon stays readable on the floor.
+        if (!overlayLocked && arCamera != null)
+        {
+            var toCamera = arCamera.transform.position - overlayIconObject.transform.position;
+            toCamera.y = 0f;
+            if (toCamera.sqrMagnitude > 0.0001f)
+                overlayIconObject.transform.rotation = Quaternion.LookRotation(-toCamera.normalized, Vector3.up);
+        }
     }
 
     void ApplyIndicatorPose(Pose floorPose, bool locked)
@@ -217,18 +254,161 @@ public class ARPlacementIndicator : MonoBehaviour
     {
         isTracking          = false;
         screenPointOverride = Vector2.negativeInfinity;
+        overlayLocked       = false;
         IsLockedOnFloor     = false;
         CurrentPlane        = null;
         SetVisible(false, false);
+    }
+
+    public void StopTracking(bool clearOverlay)
+    {
+        if (clearOverlay)
+            ClearOverlayIcon();
+        StopTracking();
+    }
+
+    /// <summary>Hide the built-in mesh while another marker (e.g. measurement icon) is shown.</summary>
+    public void SetVisualSuppressed(bool suppress)
+    {
+        visualSuppressed = suppress;
+        if (suppress && indicatorRenderer != null)
+            indicatorRenderer.enabled = false;
+    }
+
+    /// <summary>Replace the default mesh with a floor-aligned overlay icon (same tracking as furniture).</summary>
+    public void SetOverlayIcon(Texture2D texture, float sizeMeters = 0.24f)
+    {
+        overlayIconSize = Mathf.Max(0.05f, sizeMeters);
+        if (texture == null)
+        {
+            visualSuppressed = false;
+            if (overlayIconObject != null)
+                overlayIconObject.SetActive(false);
+            return;
+        }
+
+        EnsureOverlayIcon(texture);
+        visualSuppressed = true;
+        overlayLocked = false;
+        if (indicatorRenderer != null)
+            indicatorRenderer.enabled = false;
+    }
+
+    /// <summary>True when a measurement / custom overlay icon is active.</summary>
+    public bool HasOverlayIcon => overlayIconObject != null && overlayIconObject.activeSelf;
+
+    /// <summary>Freeze the overlay icon at a world pose (e.g. after the floor base is confirmed).</summary>
+    public void LockOverlayAt(Pose floorPose)
+    {
+        overlayLocked = true;
+        overlayLockedPosition = floorPose.position + floorPose.up * floorSurfaceInset;
+        overlayLockedRotation = alignToPlaneRotation ? floorPose.rotation : Quaternion.identity;
+        isTracking = false;
+        IsLockedOnFloor = true;
+        CurrentPose = floorPose;
+        SetVisible(true, true);
+    }
+
+    public void LockOverlayAt(Vector3 worldPosition, Quaternion rotation)
+    {
+        overlayLocked = true;
+        overlayLockedPosition = worldPosition;
+        overlayLockedRotation = rotation;
+        isTracking = false;
+        SetVisible(true, true);
+    }
+
+    public void ClearOverlayIcon()
+    {
+        overlayLocked = false;
+        visualSuppressed = false;
+        if (overlayIconObject != null)
+            overlayIconObject.SetActive(false);
+        if (indicatorRenderer != null)
+            indicatorRenderer.enabled = IsVisible;
+    }
+
+    void OnDestroy()
+    {
+        if (overlayIconMaterial != null)
+            Destroy(overlayIconMaterial);
+    }
+
+    void EnsureOverlayIcon(Texture2D texture)
+    {
+        if (texture == null) return;
+
+        if (overlayIconObject == null)
+        {
+            overlayIconObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            overlayIconObject.name = "OverlayIcon";
+            overlayIconObject.transform.SetParent(transform, false);
+            overlayIconObject.transform.localPosition = Vector3.zero;
+            overlayIconObject.transform.localRotation = Quaternion.identity;
+            Destroy(overlayIconObject.GetComponent<Collider>());
+            overlayIconRenderer = overlayIconObject.GetComponent<Renderer>();
+        }
+
+        ApplyOverlayWorldSize();
+        overlayIconMaterial = CreateOverlayMaterial(texture);
+        overlayIconRenderer.sharedMaterial = overlayIconMaterial;
+        overlayIconRenderer.shadowCastingMode = ShadowCastingMode.Off;
+        overlayIconRenderer.receiveShadows = false;
+        overlayIconObject.SetActive(true);
+    }
+
+    void ApplyOverlayWorldSize()
+    {
+        if (overlayIconObject == null)
+            return;
+
+        // Parent reticle is often scaled down (e.g. 0.04) — compensate so the icon
+        // reaches the requested world size in metres.
+        var parentScale = transform.lossyScale;
+        var uniform = Mathf.Max(
+            Mathf.Max(Mathf.Abs(parentScale.x), Mathf.Abs(parentScale.y)),
+            Mathf.Abs(parentScale.z),
+            0.001f);
+        overlayIconObject.transform.localScale = Vector3.one * (overlayIconSize / uniform);
+    }
+
+    static Material CreateOverlayMaterial(Texture2D texture)
+    {
+        var shader = Shader.Find("Sprites/Default")
+                     ?? Shader.Find("Unlit/Transparent")
+                     ?? Shader.Find("Universal Render Pipeline/Unlit");
+        var material = new Material(shader);
+        material.mainTexture = texture;
+        if (material.HasProperty("_BaseMap"))
+            material.SetTexture("_BaseMap", texture);
+        if (material.HasProperty("_BaseColor"))
+            material.SetColor("_BaseColor", Color.white);
+        if (material.HasProperty("_Surface"))
+            material.SetFloat("_Surface", 1f);
+        if (material.HasProperty("_Blend"))
+            material.SetFloat("_Blend", 0f);
+        if (material.HasProperty("_ZWrite"))
+            material.SetInt("_ZWrite", 0);
+        material.color = Color.white;
+        material.renderQueue = (int)RenderQueue.Transparent;
+        return material;
     }
 
     void SetVisible(bool visible, bool locked)
     {
         IsVisible = visible;
 
+        if (overlayIconObject != null)
+        {
+            var showOverlay = visible && (visualSuppressed || overlayLocked);
+            overlayIconObject.SetActive(showOverlay);
+            if (showOverlay)
+                ApplyOverlayWorldSize();
+        }
+
         if (indicatorRenderer == null) return;
 
-        indicatorRenderer.enabled = visible;
+        indicatorRenderer.enabled = visible && !visualSuppressed && !overlayLocked;
 
         if (!visible) return;
 

@@ -1,9 +1,11 @@
+using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// IKEA-style furniture browser: dark left category rail + filtered item panel.
+/// Bottom-action furniture UI: undo / save photo / toggleable catalog strip.
 /// </summary>
 [DefaultExecutionOrder(-85)]
 public class ARDesignFurnitureCatalogUI : MonoBehaviour
@@ -17,10 +19,12 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
     [SerializeField] private bool enableNativeCatalog = true;
 
     [Header("Layout")]
-    [SerializeField] private float sidebarWidth = 72f;
-    [SerializeField] private float panelWidth = 260f;
-    [SerializeField] private float categoryButtonSize = 52f;
-    [SerializeField] private float itemTileSize = 56f;
+    [SerializeField] private float pickerDockHeight = 280f;
+    [SerializeField] private float filterIdleSize = 136f;
+    [SerializeField] private float filterSelectedSize = 168f;
+    [SerializeField] private float sideCircleSize = 84f;
+    [SerializeField] private float saveCircleSize = 108f;
+    [SerializeField] private float bottomNavClearance = 100f;
     [SerializeField] private float toolButtonSize = 52f;
 
     static readonly Color SidebarBg = new(0.14f, 0.14f, 0.15f, 0.96f);
@@ -33,6 +37,8 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
     static readonly Color ToolBg = new(1f, 1f, 1f, 0.96f);
     static readonly Color ToolDisabled = new(0.88f, 0.88f, 0.9f, 0.85f);
     static readonly Color DeleteAccent = new(0.86f, 0.28f, 0.28f, 1f);
+    static readonly Color Navy = new(12f / 255f, 41f / 255f, 95f / 255f, 1f);
+    static readonly Color NamePillBg = new(0.18f, 0.18f, 0.2f, 0.92f);
     static readonly Color Ink = new(0.12f, 0.12f, 0.14f, 1f);
     static readonly Color InkMuted = new(0.45f, 0.45f, 0.48f, 1f);
     static readonly Color InkOnDark = new(1f, 1f, 1f, 0.95f);
@@ -56,6 +62,10 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
     };
 
     Canvas canvas;
+    RectTransform bottomCirclesBar;
+    RectTransform furnitureDockRt;
+    GameObject furnitureDock;
+    GameObject namePill;
     RectTransform categoryContent;
     RectTransform itemContent;
     Text panelTitle;
@@ -65,16 +75,22 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
     Image redoButtonBg;
     Image viewButtonBg;
     Image exportButtonBg;
+    Image saveButtonBg;
+    Image pickerButtonBg;
     Image deleteIcon;
     Image undoIcon;
     Image redoIcon;
     Image exportIcon;
+    Image saveIcon;
+    Image pickerIcon;
     Text viewLabel;
     Button deleteButton;
     Button undoButton;
     Button redoButton;
     Button viewButton;
     Button exportButton;
+    Button saveButton;
+    Button pickerButton;
     readonly List<GameObject> categoryButtons = new();
     readonly List<GameObject> itemButtons = new();
     readonly Dictionary<string, Sprite> glyphSprites = new();
@@ -82,7 +98,8 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
     string selectedCategory = "all";
     string selectedItemId;
     bool active;
-    bool panelOpen = true;
+    bool panelOpen;
+    bool capturingPhoto;
 
     RemoteFurnitureCatalogLoader remoteCatalogLoader;
 
@@ -103,6 +120,8 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
             enabled = false;
             return;
         }
+
+        ARMainMenuBackButton.EnsureOn(gameObject);
 
         try
         {
@@ -177,8 +196,15 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
     {
         foreach (var kv in glyphSprites)
         {
-            if (kv.Value != null && kv.Value.texture != null)
-                Destroy(kv.Value.texture);
+            var sprite = kv.Value;
+            if (sprite == null) continue;
+
+            // Only destroy runtime-generated textures (procedural icons).
+            // Never Destroy() Resources / project assets — that causes:
+            // "Destroying assets is not permitted to avoid data loss."
+            var tex = sprite.texture;
+            if (tex != null && (tex.hideFlags & HideFlags.DontSave) != 0)
+                Destroy(tex);
         }
         glyphSprites.Clear();
     }
@@ -190,8 +216,24 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         RebuildCategories();
         RebuildItems();
         RefreshToolButtons();
+        ApplyBottomSafeLayout();
         if (scanController != null)
             SetVisible(scanController.IsConfirmed);
+    }
+
+    void LateUpdate()
+    {
+        if (!active || canvas == null || !canvas.gameObject.activeInHierarchy) return;
+        // Keep clear of system nav if safe area / resolution changes.
+        ApplyBottomSafeLayout();
+    }
+
+    public void SetVisible(bool visible)
+    {
+        if (canvas != null)
+            canvas.gameObject.SetActive(visible);
+        if (visible)
+            ApplyBottomSafeLayout();
     }
 
     void OnPhase(RoomScanController.ScanPhase phase)
@@ -200,6 +242,8 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         SetVisible(phase == RoomScanController.ScanPhase.Confirmed);
         if (phase == RoomScanController.ScanPhase.Confirmed)
         {
+            // Stay in live AR — plan/orbit mode is not offered in the furniture toolbar.
+            layoutMode?.SetViewMode(ARDesignLayoutModeController.ViewMode.RealRoom);
             RebuildCategories();
             RebuildItems();
             RefreshToolButtons();
@@ -235,6 +279,120 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
     {
         layoutHistory?.Redo();
         RefreshToolButtons();
+    }
+
+    void OnPickerTogglePressed()
+    {
+        panelOpen = !panelOpen;
+        if (panelOpen)
+        {
+            RebuildItems();
+            if (string.IsNullOrEmpty(selectedItemId))
+                SetFurnitureName("Select furniture");
+            else
+                RefreshFurnitureName();
+        }
+        UpdatePanelVisibility();
+        RefreshPickerButton();
+    }
+
+    void OnSavePhotoPressed()
+    {
+        if (capturingPhoto) return;
+        StartCoroutine(CapturePhotoCoroutine());
+    }
+
+    IEnumerator CapturePhotoCoroutine()
+    {
+        capturingPhoto = true;
+        SetToolEnabled(saveButton, saveButtonBg, saveIcon, false, Navy * 0.75f, InkOnDark);
+
+        var uiWasEnabled = canvas != null && canvas.enabled;
+        if (canvas != null) canvas.enabled = false;
+
+        // Let the canvas hide before grabbing pixels.
+        yield return null;
+        yield return new WaitForEndOfFrame();
+
+        Texture2D shot = null;
+        try
+        {
+            shot = ScreenCapture.CaptureScreenshotAsTexture();
+            if (shot == null)
+            {
+                Debug.LogWarning("[ARDesignFurnitureCatalogUI] Screenshot capture returned null.");
+                yield break;
+            }
+
+            var dir = Path.Combine(Application.persistentDataPath, "ARPhotos");
+            Directory.CreateDirectory(dir);
+            var fileName = $"ar_photo_{System.DateTime.Now:yyyyMMdd_HHmmss}.png";
+            var path = Path.Combine(dir, fileName);
+            var pngBytes = shot.EncodeToPNG();
+            File.WriteAllBytes(path, pngBytes);
+            Debug.Log($"[ARDesignFurnitureCatalogUI] Photo saved: {path}");
+
+            // Write into system Gallery / Photos (share sheet often has no Gallery tile).
+            var galleryOk = ARPhotoGallerySaver.SavePngToGallery(pngBytes, fileName);
+            Debug.Log(galleryOk
+                ? "[ARDesignFurnitureCatalogUI] Also saved to device gallery."
+                : "[ARDesignFurnitureCatalogUI] Gallery save unavailable; share sheet can still be used.");
+
+            // Notify React Native (path only — same bridge pattern as exportComplete).
+            NotifyReactNativePhotoCaptured(path, fileName, pngBytes.LongLength, galleryOk);
+
+            SharePhoto(path, fileName);
+        }
+        finally
+        {
+            if (shot != null) Destroy(shot);
+            if (canvas != null) canvas.enabled = uiWasEnabled;
+            capturingPhoto = false;
+            RefreshToolButtons();
+        }
+    }
+
+    static void SharePhoto(string absolutePath, string fileName)
+    {
+        if (string.IsNullOrEmpty(absolutePath) || !File.Exists(absolutePath))
+            return;
+
+#if NATIVESHARE_PRESENT
+        new NativeShare()
+            .AddFile(absolutePath, "image/png")
+            .SetSubject("AR photo")
+            .SetText($"AR Interior Design — {fileName}")
+            .SetCallback((result, shareTarget) =>
+                Debug.Log($"[ARDesignFurnitureCatalogUI] Share result={result} target={shareTarget}"))
+            .Share();
+#else
+        Debug.Log(
+            $"[ARDesignFurnitureCatalogUI] Photo saved at {absolutePath}. " +
+            "Install NativeShare to open the share / save sheet.");
+#endif
+    }
+
+    static void NotifyReactNativePhotoCaptured(
+        string absolutePath,
+        string fileName,
+        long byteLength,
+        bool gallerySaved)
+    {
+        var payload = new ARPhotoCapturedPayload
+        {
+            success = !string.IsNullOrEmpty(absolutePath) && File.Exists(absolutePath),
+            path = absolutePath ?? string.Empty,
+            fileName = fileName ?? string.Empty,
+            byteLength = byteLength,
+            mimeType = "image/png",
+            gallerySaved = gallerySaved,
+            error = string.Empty,
+        };
+
+        if (!payload.success)
+            payload.error = "Photo file missing after capture.";
+
+        UnityMessageBridge.SendToApp("photoCaptured", JsonUtility.ToJson(payload));
     }
 
     void OnViewTogglePressed()
@@ -274,41 +432,31 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
 
     void RefreshToolButtons()
     {
-        var hasSelection = placementController != null && placementController.Selected != null;
         var canUndo = layoutHistory != null && layoutHistory.CanUndo;
-        var canRedo = layoutHistory != null && layoutHistory.CanRedo;
 
-        SetToolEnabled(deleteButton, deleteButtonBg, deleteIcon, hasSelection,
-            hasSelection ? DeleteAccent : ToolDisabled,
-            hasSelection ? InkOnDark : InkMuted);
         SetToolEnabled(undoButton, undoButtonBg, undoIcon, canUndo,
-            canUndo ? ToolBg : ToolDisabled,
+            ToolBg,
             canUndo ? Ink : InkMuted);
-        SetToolEnabled(redoButton, redoButtonBg, redoIcon, canRedo,
-            canRedo ? ToolBg : ToolDisabled,
-            canRedo ? Ink : InkMuted);
 
-        var canExport = !exportManager || !exportManager.IsExporting;
-        // Always allow the tap — EnsureExportManager runs on press if needed.
-        SetToolEnabled(exportButton, exportButtonBg, exportIcon, canExport,
-            canExport ? ToolBg : ToolDisabled,
-            canExport ? Ink : InkMuted);
-        RefreshViewButton();
+        if (!capturingPhoto)
+            SetToolEnabled(saveButton, saveButtonBg, saveIcon, true, Navy, InkOnDark);
+
+        RefreshPickerButton();
+    }
+
+    void RefreshPickerButton()
+    {
+        if (pickerButtonBg == null) return;
+        // Open = navy with white icon; closed = white with dark icon.
+        // Cube asset is converted to white line-art so it can tint correctly.
+        pickerButtonBg.color = panelOpen ? Navy : ToolBg;
+        if (pickerIcon != null)
+            pickerIcon.color = panelOpen ? Color.white : Ink;
     }
 
     void RefreshViewButton()
     {
-        if (viewButton == null) return;
-        var planner = layoutMode != null && layoutMode.IsPlannerOrbitActive;
-        // Label shows the mode you can switch TO.
-        if (viewLabel != null)
-        {
-            viewLabel.text = planner ? "AR" : "Plan";
-            viewLabel.color = planner ? CategoryActiveIcon : Ink;
-        }
-        if (viewButtonBg != null)
-            viewButtonBg.color = planner ? CategoryActiveBg : ToolBg;
-        viewButton.interactable = layoutMode != null && layoutMode.IsLayoutActive;
+        // Plan mode toggle removed from the furniture toolbar.
     }
 
     static void SetToolEnabled(
@@ -322,12 +470,6 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         if (button != null) button.interactable = enabled;
         if (bg != null) bg.color = bgColor;
         if (icon != null) icon.color = iconColor;
-    }
-
-    public void SetVisible(bool visible)
-    {
-        if (canvas != null)
-            canvas.gameObject.SetActive(visible);
     }
 
     void RebuildCategories()
@@ -364,20 +506,23 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
     void CreateCategoryButton(CategoryDef cat)
     {
         var selected = selectedCategory == cat.id;
-        var go = new GameObject($"Cat_{cat.id}", typeof(RectTransform), typeof(Image), typeof(Button));
+        var go = new GameObject($"Cat_{cat.id}", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
         go.transform.SetParent(categoryContent, false);
 
         var image = go.GetComponent<Image>();
         ARDesignUiUtil.ApplyRounded(image, 16);
-        image.color = selected ? CategoryActiveBg : new Color(1f, 1f, 1f, 0f);
+        image.color = selected ? CategoryActiveBg : new Color(0.92f, 0.92f, 0.94f, 1f);
 
         var button = go.GetComponent<Button>();
         button.targetGraphic = image;
         var captured = cat.id;
         button.onClick.AddListener(() => OnSelectCategory(captured));
 
-        var rt = go.GetComponent<RectTransform>();
-        rt.sizeDelta = new Vector2(categoryButtonSize, categoryButtonSize);
+        var layout = go.GetComponent<LayoutElement>();
+        layout.minWidth = 44f;
+        layout.preferredWidth = 44f;
+        layout.minHeight = 44f;
+        layout.preferredHeight = 44f;
 
         var iconGo = new GameObject("Icon", typeof(RectTransform), typeof(Image));
         iconGo.transform.SetParent(go.transform, false);
@@ -385,7 +530,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         iconImage.sprite = GetGlyphSprite(cat.id, cat.glyph);
         iconImage.preserveAspect = true;
         iconImage.raycastTarget = false;
-        iconImage.color = selected ? CategoryActiveIcon : CategoryIdleIcon;
+        iconImage.color = selected ? CategoryActiveIcon : Ink;
         var iconRt = iconGo.GetComponent<RectTransform>();
         iconRt.anchorMin = new Vector2(0.22f, 0.22f);
         iconRt.anchorMax = new Vector2(0.78f, 0.78f);
@@ -397,28 +542,24 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
 
     void OnSelectCategory(string categoryId)
     {
-        if (selectedCategory == categoryId)
-        {
-            panelOpen = !panelOpen;
-        }
-        else
-        {
-            selectedCategory = categoryId;
-            panelOpen = true;
-        }
-
+        selectedCategory = categoryId;
+        panelOpen = true;
         RebuildCategories();
         RebuildItems();
-        UpdatePanelVisibility();
     }
 
     void UpdatePanelVisibility()
     {
-        Transform t = itemContent;
-        while (t != null && t.name != "ItemPanel")
-            t = t.parent;
-        if (t != null)
-            t.gameObject.SetActive(panelOpen);
+        if (furnitureDock != null)
+            furnitureDock.SetActive(panelOpen);
+
+        if (namePill != null)
+        {
+            var showName = panelOpen && panelTitle != null && !string.IsNullOrEmpty(panelTitle.text);
+            namePill.SetActive(showName);
+        }
+
+        ApplyBottomSafeLayout();
     }
 
     void RebuildItems()
@@ -430,92 +571,81 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         itemButtons.Clear();
         if (itemContent == null) return;
 
-        var title = CategoryTitle(selectedCategory);
-        if (panelTitle != null) panelTitle.text = title;
-
         List<FurnitureEntry> items;
         if (catalog == null || catalog.Entries.Count == 0)
         {
             if (catalog != null && catalog.RemoteCatalogOnly && remoteCatalogLoader != null && !remoteCatalogLoader.IsLoaded)
             {
-                if (panelCount != null)
-                    panelCount.text = "Loading…";
-                UpdatePanelVisibility();
+                SetFurnitureName("Loading…");
                 return;
             }
 
-            items = new List<FurnitureEntry>();
             if (catalog == null || !catalog.RemoteCatalogOnly)
-                CreateItemButton("sample-cube", "Cube", null, new Vector3(0.6f, 0.6f, 0.6f), null);
-            if (panelCount != null)
-                panelCount.text = catalog != null && catalog.RemoteCatalogOnly ? "Catalog unavailable" : "1 item";
-            UpdatePanelVisibility();
+                CreateItemButton("sample-cube", "Cube", null);
+            else
+                SetFurnitureName("Catalog unavailable");
             return;
         }
 
         items = catalog.GetEntriesInCategory(selectedCategory);
-        if (panelCount != null)
-            panelCount.text = items.Count == 1 ? "1 item" : $"{items.Count} items";
-
         foreach (var entry in items)
-            CreateItemButton(
-                entry.id,
-                catalog.GetDisplayName(entry),
-                catalog.GetIcon(entry),
-                catalog.GetDefaultDimensions(entry.id),
-                catalog.GetDimensionLabel(entry.id));
+            CreateItemButton(entry.id, catalog.GetDisplayName(entry), catalog.GetIcon(entry));
 
-        UpdatePanelVisibility();
+        RefreshFurnitureName();
     }
 
-    void CreateItemButton(string id, string label, Sprite icon, Vector3 dims, string referenceDimensionLabel)
+    void CreateItemButton(string id, string label, Sprite icon)
     {
         var selected = selectedItemId == id;
-        var row = new GameObject($"Item_{id}", typeof(RectTransform), typeof(Image), typeof(Button));
-        row.transform.SetParent(itemContent, false);
+        var size = selected ? filterSelectedSize : filterIdleSize;
 
-        var bg = row.GetComponent<Image>();
-        ARDesignUiUtil.ApplyRounded(bg, 18);
-        bg.color = selected ? ItemSelected : ItemTile;
+        var tile = new GameObject($"Item_{id}", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+        tile.transform.SetParent(itemContent, false);
 
-        var button = row.GetComponent<Button>();
-        button.targetGraphic = bg;
+        // Transparent hit target (no filled background)
+        var ring = tile.GetComponent<Image>();
+        ARDesignUiUtil.ApplyCircle(ring);
+        ring.color = Color.clear;
+        ring.raycastTarget = true;
+
+        var button = tile.GetComponent<Button>();
+        button.targetGraphic = ring;
+        button.transition = Selectable.Transition.None;
         var capturedId = id;
         button.onClick.AddListener(() => OnSelectItem(capturedId));
 
-        var rowRt = row.GetComponent<RectTransform>();
-        rowRt.sizeDelta = new Vector2(0f, 72f);
+        var layout = tile.GetComponent<LayoutElement>();
+        layout.minWidth = size;
+        layout.preferredWidth = size;
+        layout.minHeight = size;
+        layout.preferredHeight = size;
 
-        var layout = row.AddComponent<LayoutElement>();
-        layout.minHeight = 72f;
-        layout.preferredHeight = 72f;
-        layout.flexibleWidth = 1f;
-
-        // Thumbnail
+        // Furniture thumb — inset so it clears the navy border stroke
         var thumb = new GameObject("Thumb", typeof(RectTransform), typeof(Image));
-        thumb.transform.SetParent(row.transform, false);
+        thumb.transform.SetParent(tile.transform, false);
         var thumbImg = thumb.GetComponent<Image>();
-        ARDesignUiUtil.ApplyRounded(thumbImg, 14);
         thumbImg.raycastTarget = false;
         thumbImg.preserveAspect = true;
+        ARDesignUiUtil.ApplyCircle(thumbImg);
+        var thumbInset = selected ? 0.14f : 0.12f;
         var thumbRt = thumb.GetComponent<RectTransform>();
-        thumbRt.anchorMin = new Vector2(0f, 0.5f);
-        thumbRt.anchorMax = new Vector2(0f, 0.5f);
-        thumbRt.pivot = new Vector2(0f, 0.5f);
-        thumbRt.sizeDelta = new Vector2(itemTileSize, itemTileSize);
-        thumbRt.anchoredPosition = new Vector2(8f, 0f);
+        thumbRt.anchorMin = new Vector2(thumbInset, thumbInset);
+        thumbRt.anchorMax = new Vector2(1f - thumbInset, 1f - thumbInset);
+        thumbRt.offsetMin = Vector2.zero;
+        thumbRt.offsetMax = Vector2.zero;
 
         if (icon != null)
         {
-            thumbImg.sprite = icon;
+            // Punch studio white backdrops so product photos match transparent icons.
+            thumbImg.sprite = ARDesignUiUtil.PunchStudioBackground(icon);
             thumbImg.color = Color.white;
             thumbImg.type = Image.Type.Simple;
         }
         else
         {
-            thumbImg.color = selected ? new Color(1f, 1f, 1f, 0.12f) : Color.white;
-            var glyph = ARDesignUiUtil.CreateText(thumb.transform, ShortLabel(label), 16, FontStyle.Bold, TextAnchor.MiddleCenter);
-            glyph.color = selected ? InkOnDark : Ink;
+            thumbImg.color = new Color(0.22f, 0.22f, 0.24f, 1f);
+            var glyph = ARDesignUiUtil.CreateText(thumb.transform, ShortLabel(label), 13, FontStyle.Bold, TextAnchor.MiddleCenter);
+            glyph.color = InkOnDark;
             glyph.raycastTarget = false;
             var glyphRt = glyph.rectTransform;
             glyphRt.anchorMin = Vector2.zero;
@@ -524,35 +654,26 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
             glyphRt.offsetMax = Vector2.zero;
         }
 
-        // Labels
-        var nameText = ARDesignUiUtil.CreateText(row.transform, label, 15, FontStyle.Bold, TextAnchor.MiddleLeft);
-        nameText.color = selected ? InkOnDark : Ink;
-        nameText.raycastTarget = false;
-        nameText.horizontalOverflow = HorizontalWrapMode.Wrap;
-        var nameRt = nameText.rectTransform;
-        nameRt.anchorMin = new Vector2(0f, 0.5f);
-        nameRt.anchorMax = new Vector2(1f, 1f);
-        nameRt.offsetMin = new Vector2(76f, 2f);
-        nameRt.offsetMax = new Vector2(-10f, -8f);
+        // Navy stroke only (hollow ring over the icon)
+        var borderGo = new GameObject("Border", typeof(RectTransform), typeof(Image));
+        borderGo.transform.SetParent(tile.transform, false);
+        var borderImg = borderGo.GetComponent<Image>();
+        borderImg.raycastTarget = false;
+        borderImg.color = Navy;
+        ARDesignUiUtil.ApplyCircleRing(borderImg, selected ? 0.075f : 0.055f);
+        var borderRt = borderImg.rectTransform;
+        borderRt.anchorMin = Vector2.zero;
+        borderRt.anchorMax = Vector2.one;
+        borderRt.offsetMin = Vector2.zero;
+        borderRt.offsetMax = Vector2.zero;
 
-        var dimLabel = !string.IsNullOrWhiteSpace(referenceDimensionLabel)
-            ? referenceDimensionLabel.Trim()
-            : FurnitureDimensionFormat.FromCatalogMetres(dims);
-        var dimText = ARDesignUiUtil.CreateText(row.transform, dimLabel, 12, FontStyle.Normal, TextAnchor.UpperLeft);
-        dimText.color = selected ? new Color(1f, 1f, 1f, 0.7f) : InkMuted;
-        dimText.raycastTarget = false;
-        var dimRt = dimText.rectTransform;
-        dimRt.anchorMin = new Vector2(0f, 0f);
-        dimRt.anchorMax = new Vector2(1f, 0.5f);
-        dimRt.offsetMin = new Vector2(76f, 8f);
-        dimRt.offsetMax = new Vector2(-10f, -2f);
-
-        itemButtons.Add(row);
+        itemButtons.Add(tile);
     }
 
     void OnSelectItem(string id)
     {
         selectedItemId = id;
+        RefreshFurnitureName();
         RebuildItems();
 
         if (placementController == null) return;
@@ -571,6 +692,36 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
             depth = dims.z,
             dimensionLabel = catalog != null ? catalog.GetDimensionLabel(id) : null,
         });
+    }
+
+    void RefreshFurnitureName()
+    {
+        if (string.IsNullOrEmpty(selectedItemId))
+        {
+            SetFurnitureName("");
+            return;
+        }
+
+        if (catalog != null)
+        {
+            var entry = catalog.GetEntry(selectedItemId);
+            if (entry != null)
+            {
+                SetFurnitureName(catalog.GetDisplayName(entry));
+                return;
+            }
+        }
+
+        SetFurnitureName(selectedItemId);
+    }
+
+    void SetFurnitureName(string name)
+    {
+        if (panelTitle != null)
+            panelTitle.text = name ?? "";
+
+        if (namePill != null)
+            namePill.SetActive(panelOpen && !string.IsNullOrEmpty(name));
     }
 
     /// <summary>Rebuilds the native catalog after remote items are merged.</summary>
@@ -696,6 +847,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         {
             filterMode = FilterMode.Bilinear,
             wrapMode = TextureWrapMode.Clamp,
+            hideFlags = HideFlags.HideAndDontSave,
         };
         var clear = new Color(1f, 1f, 1f, 0f);
         var pixels = new Color[size * size];
@@ -779,192 +931,316 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         canvas.sortingOrder = 950;
         var scaler = root.AddComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1920, 1080);
+        scaler.referenceResolution = new Vector2(1080, 1920);
         scaler.matchWidthOrHeight = 0.5f;
         root.AddComponent<GraphicRaycaster>();
 
-        // ── Catalog dock (sidebar + list stay side-by-side, never overlap) ─
-        var dockGo = new GameObject("CatalogDock", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+        // ── IG-style filter carousel (opens above the action circles) ──────
+        var dockGo = new GameObject("FurnitureFilterDock", typeof(RectTransform));
         dockGo.transform.SetParent(root.transform, false);
-        var dockRt = dockGo.GetComponent<RectTransform>();
-        dockRt.anchorMin = new Vector2(0f, 0.18f);
-        dockRt.anchorMax = new Vector2(0f, 0.82f);
-        dockRt.pivot = new Vector2(0f, 0.5f);
-        dockRt.anchoredPosition = new Vector2(12f, 0f);
-        dockRt.sizeDelta = new Vector2(sidebarWidth + panelWidth + 10f, 0f);
+        furnitureDock = dockGo;
+        furnitureDockRt = dockGo.GetComponent<RectTransform>();
+        furnitureDockRt.anchorMin = new Vector2(0f, 0f);
+        furnitureDockRt.anchorMax = new Vector2(1f, 0f);
+        furnitureDockRt.pivot = new Vector2(0.5f, 0f);
+        furnitureDockRt.sizeDelta = new Vector2(0f, pickerDockHeight);
 
-        var dockLayout = dockGo.GetComponent<HorizontalLayoutGroup>();
-        dockLayout.spacing = 10f;
-        dockLayout.childAlignment = TextAnchor.UpperLeft;
-        dockLayout.childControlWidth = false;
-        dockLayout.childControlHeight = true;
-        dockLayout.childForceExpandWidth = false;
-        dockLayout.childForceExpandHeight = true;
-        dockLayout.padding = new RectOffset(0, 0, 0, 0);
-
-        // ── Left dark category sidebar ─────────────────────────────────────
-        var sidebar = ARDesignUiUtil.CreateRoundedImage(dockGo.transform, SidebarBg, 28);
-        sidebar.gameObject.name = "CategorySidebar";
-        var sidebarRt = sidebar.rectTransform;
-        sidebarRt.anchorMin = new Vector2(0f, 0f);
-        sidebarRt.anchorMax = new Vector2(0f, 1f);
-        sidebarRt.pivot = new Vector2(0f, 0.5f);
-        sidebarRt.sizeDelta = new Vector2(sidebarWidth, 0f);
-        var sidebarLayout = sidebar.gameObject.AddComponent<LayoutElement>();
-        sidebarLayout.preferredWidth = sidebarWidth;
-        sidebarLayout.flexibleHeight = 1f;
-
-        var catScroll = CreateVerticalScrollArea(sidebar.transform, new RectOffset(8, 8, 16, 16), 0f, out categoryContent);
-        catScroll.scrollSensitivity = 24f;
-        var catLayout = categoryContent.GetComponent<VerticalLayoutGroup>();
-        catLayout.childControlWidth = false;
-        catLayout.childForceExpandWidth = false;
-        catLayout.spacing = 10f;
-
-        // ── Item panel (IKEA product list) ─────────────────────────────────
-        var panel = ARDesignUiUtil.CreateRoundedImage(dockGo.transform, PanelBg, 28);
-        panel.gameObject.name = "ItemPanel";
-        var panelRt = panel.rectTransform;
-        panelRt.anchorMin = new Vector2(0f, 0f);
-        panelRt.anchorMax = new Vector2(0f, 1f);
-        panelRt.pivot = new Vector2(0f, 0.5f);
-        panelRt.sizeDelta = new Vector2(panelWidth, 0f);
-        var panelLayout = panel.gameObject.AddComponent<LayoutElement>();
-        panelLayout.preferredWidth = panelWidth;
-        panelLayout.flexibleHeight = 1f;
-
-        panelTitle = ARDesignUiUtil.CreateText(panel.transform, "All", 20, FontStyle.Bold, TextAnchor.MiddleLeft);
-        panelTitle.color = Ink;
-        panelTitle.raycastTarget = false;
-        var titleRt = panelTitle.rectTransform;
-        titleRt.anchorMin = new Vector2(0f, 1f);
-        titleRt.anchorMax = new Vector2(1f, 1f);
-        titleRt.pivot = new Vector2(0f, 1f);
-        titleRt.anchoredPosition = new Vector2(16f, -12f);
-        titleRt.sizeDelta = new Vector2(-28f, 28f);
-
-        panelCount = ARDesignUiUtil.CreateText(panel.transform, "0 items", 13, FontStyle.Normal, TextAnchor.MiddleLeft);
-        panelCount.color = InkMuted;
-        panelCount.raycastTarget = false;
-        var countRt = panelCount.rectTransform;
-        countRt.anchorMin = new Vector2(0f, 1f);
-        countRt.anchorMax = new Vector2(1f, 1f);
-        countRt.pivot = new Vector2(0f, 1f);
-        countRt.anchoredPosition = new Vector2(16f, -40f);
-        countRt.sizeDelta = new Vector2(-28f, 20f);
-
-        var closeGo = new GameObject("Close", typeof(RectTransform), typeof(Image), typeof(Button));
-        closeGo.transform.SetParent(panel.transform, false);
-        var closeImg = closeGo.GetComponent<Image>();
-        ARDesignUiUtil.ApplyRounded(closeImg, 18);
-        closeImg.color = new Color(0.92f, 0.92f, 0.93f, 1f);
-        var closeBtn = closeGo.GetComponent<Button>();
-        closeBtn.targetGraphic = closeImg;
-        closeBtn.onClick.AddListener(() =>
+        var filterScroll = CreateHorizontalScrollArea(
+            dockGo.transform,
+            anchorY: 1f,
+            pivotY: 1f,
+            anchoredY: -4f,
+            height: filterSelectedSize + 12f,
+            sidePad: 8f,
+            out itemContent);
+        filterScroll.scrollSensitivity = 36f;
+        filterScroll.movementType = ScrollRect.MovementType.Elastic;
+        var filterLayout = itemContent.GetComponent<HorizontalLayoutGroup>();
+        if (filterLayout != null)
         {
-            panelOpen = false;
-            UpdatePanelVisibility();
-        });
-        var closeRt = closeGo.GetComponent<RectTransform>();
-        closeRt.anchorMin = new Vector2(1f, 1f);
-        closeRt.anchorMax = new Vector2(1f, 1f);
-        closeRt.pivot = new Vector2(1f, 1f);
-        closeRt.sizeDelta = new Vector2(34f, 34f);
-        closeRt.anchoredPosition = new Vector2(-12f, -12f);
-        var closeX = ARDesignUiUtil.CreateText(closeGo.transform, "×", 22, FontStyle.Bold, TextAnchor.MiddleCenter);
-        closeX.color = Ink;
-        closeX.raycastTarget = false;
+            filterLayout.childAlignment = TextAnchor.MiddleCenter;
+            filterLayout.spacing = 22f;
+            filterLayout.padding = new RectOffset(28, 28, 0, 0);
+        }
 
-        var itemScroll = CreateVerticalScrollArea(panel.transform, new RectOffset(10, 10, 68, 12), 0f, out itemContent);
-        itemScroll.scrollSensitivity = 24f;
+        // Name pill under the carousel (like IG filter name)
+        var pill = ARDesignUiUtil.CreateRoundedImage(dockGo.transform, NamePillBg, 28);
+        pill.gameObject.name = "FurnitureNamePill";
+        namePill = pill.gameObject;
+        var pillRt = pill.rectTransform;
+        pillRt.anchorMin = new Vector2(0.5f, 0f);
+        pillRt.anchorMax = new Vector2(0.5f, 0f);
+        pillRt.pivot = new Vector2(0.5f, 0f);
+        pillRt.sizeDelta = new Vector2(360f, 44f);
+        pillRt.anchoredPosition = new Vector2(0f, 8f);
 
-        BuildToolsBar(root.transform);
+        panelTitle = ARDesignUiUtil.CreateText(pill.transform, "", 16, FontStyle.Bold, TextAnchor.MiddleCenter);
+        panelTitle.color = InkOnDark;
+        panelTitle.raycastTarget = false;
+        panelTitle.horizontalOverflow = HorizontalWrapMode.Overflow;
+        var titleRt = panelTitle.rectTransform;
+        titleRt.anchorMin = Vector2.zero;
+        titleRt.anchorMax = Vector2.one;
+        titleRt.offsetMin = new Vector2(16f, 0f);
+        titleRt.offsetMax = new Vector2(-16f, 0f);
+
+        categoryContent = null;
+        panelCount = null;
+
+        BuildBottomCircles(root.transform);
+        ApplyBottomSafeLayout();
+        UpdatePanelVisibility();
         RefreshToolButtons();
     }
 
-    static ScrollRect CreateVerticalScrollArea(
+    float ResolveBottomClearance()
+    {
+        // Lift controls above Android/iOS system nav / home indicator.
+        var safeBottomPx = Screen.safeArea.yMin;
+        var canvasBottom = Screen.height > 0
+            ? safeBottomPx * (1920f / Screen.height)
+            : 0f;
+        return Mathf.Max(bottomNavClearance, canvasBottom + 36f);
+    }
+
+    void ApplyBottomSafeLayout()
+    {
+        var clearance = ResolveBottomClearance();
+
+        if (bottomCirclesBar != null)
+            bottomCirclesBar.anchoredPosition = new Vector2(0f, clearance);
+
+        if (furnitureDockRt != null)
+        {
+            // Sit the filter carousel above the action circles.
+            var aboveCircles = clearance + saveCircleSize * 0.5f + 78f;
+            furnitureDockRt.anchoredPosition = new Vector2(0f, aboveCircles);
+        }
+    }
+
+    static ScrollRect CreateHorizontalScrollArea(
         Transform parent,
-        RectOffset padding,
-        float headerReserve,
+        float anchorY,
+        float pivotY,
+        float anchoredY,
+        float height,
+        float sidePad,
         out RectTransform content)
     {
-        var scrollGo = new GameObject("Scroll", typeof(RectTransform), typeof(ScrollRect), typeof(Image), typeof(RectMask2D));
+        var scrollGo = new GameObject("HScroll", typeof(RectTransform), typeof(ScrollRect), typeof(Image), typeof(RectMask2D));
         scrollGo.transform.SetParent(parent, false);
 
         var scrollRt = scrollGo.GetComponent<RectTransform>();
-        scrollRt.anchorMin = Vector2.zero;
-        scrollRt.anchorMax = Vector2.one;
-        scrollRt.offsetMin = new Vector2(padding.left, padding.bottom);
-        scrollRt.offsetMax = new Vector2(-padding.right, -padding.top - headerReserve);
+        scrollRt.anchorMin = new Vector2(0f, anchorY);
+        scrollRt.anchorMax = new Vector2(1f, anchorY);
+        scrollRt.pivot = new Vector2(0.5f, pivotY);
+        scrollRt.anchoredPosition = new Vector2(0f, anchoredY);
+        scrollRt.sizeDelta = new Vector2(-(sidePad * 2f), height);
 
         var scrollImg = scrollGo.GetComponent<Image>();
-        scrollImg.color = new Color(1f, 1f, 1f, 0.01f);
+        scrollImg.color = Color.clear;
+        scrollImg.raycastTarget = true;
 
         var scroll = scrollGo.GetComponent<ScrollRect>();
-        scroll.horizontal = false;
-        scroll.vertical = true;
+        scroll.horizontal = true;
+        scroll.vertical = false;
         scroll.movementType = ScrollRect.MovementType.Clamped;
-        scroll.scrollSensitivity = 24f;
+        scroll.scrollSensitivity = 28f;
 
-        var contentGo = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
+        var contentGo = new GameObject("Content", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(ContentSizeFitter));
         contentGo.transform.SetParent(scrollGo.transform, false);
         content = contentGo.GetComponent<RectTransform>();
-        content.anchorMin = new Vector2(0f, 1f);
-        content.anchorMax = new Vector2(1f, 1f);
-        content.pivot = new Vector2(0.5f, 1f);
+        content.anchorMin = new Vector2(0f, 0f);
+        content.anchorMax = new Vector2(0f, 1f);
+        content.pivot = new Vector2(0f, 0.5f);
         content.anchoredPosition = Vector2.zero;
-        content.sizeDelta = Vector2.zero;
+        content.sizeDelta = new Vector2(0f, 0f);
 
-        var layout = contentGo.GetComponent<VerticalLayoutGroup>();
-        layout.childAlignment = TextAnchor.UpperCenter;
+        var layout = contentGo.GetComponent<HorizontalLayoutGroup>();
+        layout.childAlignment = TextAnchor.MiddleLeft;
         layout.childControlHeight = false;
-        layout.childControlWidth = true;
+        layout.childControlWidth = false;
         layout.childForceExpandHeight = false;
-        layout.childForceExpandWidth = true;
-        layout.spacing = 8f;
-        layout.padding = new RectOffset(0, 0, 4, 8);
+        layout.childForceExpandWidth = false;
+        layout.spacing = 10f;
+        layout.padding = new RectOffset(4, 16, 0, 0);
 
         var fitter = contentGo.GetComponent<ContentSizeFitter>();
-        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+        fitter.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
 
         scroll.content = content;
         scroll.viewport = scrollRt;
         return scroll;
     }
 
-    void BuildToolsBar(Transform canvasRoot)
+    void BuildBottomCircles(Transform canvasRoot)
     {
-        var bar = ARDesignUiUtil.CreateRoundedImage(canvasRoot, ToolBg, 28);
-        bar.gameObject.name = "FurnitureTools";
-        var barRt = bar.rectTransform;
-        barRt.anchorMin = new Vector2(0.5f, 0f);
-        barRt.anchorMax = new Vector2(0.5f, 0f);
-        barRt.pivot = new Vector2(0.5f, 0f);
-        barRt.sizeDelta = new Vector2(360f, 64f);
-        barRt.anchoredPosition = new Vector2(0f, 20f);
+        var bar = new GameObject("BottomCircles", typeof(RectTransform));
+        bar.transform.SetParent(canvasRoot, false);
+        bottomCirclesBar = bar.GetComponent<RectTransform>();
+        bottomCirclesBar.anchorMin = new Vector2(0f, 0f);
+        bottomCirclesBar.anchorMax = new Vector2(1f, 0f);
+        bottomCirclesBar.pivot = new Vector2(0.5f, 0f);
+        bottomCirclesBar.sizeDelta = new Vector2(0f, 160f);
+        bottomCirclesBar.anchoredPosition = Vector2.zero;
 
-        var row = new GameObject("Row", typeof(RectTransform), typeof(HorizontalLayoutGroup));
-        row.transform.SetParent(bar.transform, false);
-        var rowRt = row.GetComponent<RectTransform>();
-        rowRt.anchorMin = Vector2.zero;
-        rowRt.anchorMax = Vector2.one;
-        rowRt.offsetMin = new Vector2(10f, 8f);
-        rowRt.offsetMax = new Vector2(-10f, -8f);
+        CreateCircleButton(
+            bar.transform,
+            "Undo",
+            LoadUiIcon("UIIcons/undo-icon", DrawIconUndo),
+            sideCircleSize,
+            ToolBg,
+            Ink,
+            new Vector2(-168f, 58f),
+            OnUndoPressed,
+            out undoButton,
+            out undoButtonBg,
+            out undoIcon);
 
-        var layout = row.GetComponent<HorizontalLayoutGroup>();
-        layout.childAlignment = TextAnchor.MiddleCenter;
-        layout.childControlHeight = false;
-        layout.childControlWidth = false;
-        layout.childForceExpandHeight = false;
-        layout.childForceExpandWidth = false;
-        layout.spacing = 8f;
+        CreateCircleButton(
+            bar.transform,
+            "SavePhoto",
+            null, // plain navy circle — no camera icon
+            saveCircleSize,
+            Navy,
+            InkOnDark,
+            new Vector2(0f, 62f),
+            OnSavePhotoPressed,
+            out saveButton,
+            out saveButtonBg,
+            out saveIcon);
 
-        CreateToolButton(row.transform, "Undo", DrawIconUndo(), OnUndoPressed, out undoButton, out undoButtonBg, out undoIcon);
-        CreateToolButton(row.transform, "Delete", DrawIconTrash(), OnDeletePressed, out deleteButton, out deleteButtonBg, out deleteIcon);
-        CreateToolButton(row.transform, "Redo", DrawIconRedo(), OnRedoPressed, out redoButton, out redoButtonBg, out redoIcon);
-        CreateToolButton(row.transform, "Export", DrawIconExport(), OnExportPressed, out exportButton, out exportButtonBg, out exportIcon);
-        CreateViewToggleButton(row.transform);
-        RefreshViewButton();
+        CreateCircleButton(
+            bar.transform,
+            "FurniturePicker",
+            LoadUiIconTintable("UIIcons/cube-icon", DrawIconFurniture),
+            sideCircleSize,
+            ToolBg,
+            Ink,
+            new Vector2(168f, 58f),
+            OnPickerTogglePressed,
+            out pickerButton,
+            out pickerButtonBg,
+            out pickerIcon);
+    }
+
+    void CreateCircleButton(
+        Transform parent,
+        string name,
+        Sprite icon,
+        float size,
+        Color bgColor,
+        Color iconColor,
+        Vector2 anchoredPos,
+        UnityEngine.Events.UnityAction onClick,
+        out Button button,
+        out Image background,
+        out Image iconImage)
+    {
+        var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
+        go.transform.SetParent(parent, false);
+
+        background = go.GetComponent<Image>();
+        ARDesignUiUtil.ApplyCircle(background);
+        background.color = bgColor;
+
+        button = go.GetComponent<Button>();
+        button.targetGraphic = background;
+        button.transition = Selectable.Transition.None;
+        button.onClick.AddListener(onClick);
+
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0.5f, 0f);
+        rt.anchorMax = new Vector2(0.5f, 0f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.sizeDelta = new Vector2(size, size);
+        rt.anchoredPosition = anchoredPos;
+
+        iconImage = null;
+        if (icon == null)
+            return;
+
+        var iconGo = new GameObject("Icon", typeof(RectTransform), typeof(Image));
+        iconGo.transform.SetParent(go.transform, false);
+        iconImage = iconGo.GetComponent<Image>();
+        iconImage.sprite = icon;
+        iconImage.preserveAspect = true;
+        iconImage.raycastTarget = false;
+        iconImage.color = iconColor;
+        var iconRt = iconGo.GetComponent<RectTransform>();
+        iconRt.anchorMin = new Vector2(0.22f, 0.22f);
+        iconRt.anchorMax = new Vector2(0.78f, 0.78f);
+        iconRt.offsetMin = Vector2.zero;
+        iconRt.offsetMax = Vector2.zero;
+
+        glyphSprites[$"tool_{name}"] = icon;
+    }
+
+    static Sprite LoadUiIcon(string resourcesPath, System.Func<Sprite> fallback)
+    {
+        var sprite = Resources.Load<Sprite>(resourcesPath);
+        if (sprite != null) return sprite;
+
+        var tex = Resources.Load<Texture2D>(resourcesPath);
+        if (tex != null)
+        {
+            return Sprite.Create(
+                tex,
+                new Rect(0f, 0f, tex.width, tex.height),
+                new Vector2(0.5f, 0.5f),
+                100f);
+        }
+
+        return fallback != null ? fallback() : null;
+    }
+
+    /// <summary>
+    /// Loads a black line-art icon as white so Image.color tinting works on both
+    /// light and dark button backgrounds (black pixels cannot be tinted lighter).
+    /// </summary>
+    static Sprite LoadUiIconTintable(string resourcesPath, System.Func<Sprite> fallback)
+    {
+        Texture2D source = null;
+        var sprite = Resources.Load<Sprite>(resourcesPath);
+        if (sprite != null)
+            source = sprite.texture;
+        if (source == null)
+            source = Resources.Load<Texture2D>(resourcesPath);
+
+        if (source == null)
+            return fallback != null ? fallback() : null;
+
+        var w = source.width;
+        var h = source.height;
+        var readable = new Texture2D(w, h, TextureFormat.RGBA32, false)
+        {
+            filterMode = FilterMode.Bilinear,
+            wrapMode = TextureWrapMode.Clamp,
+            hideFlags = HideFlags.HideAndDontSave,
+        };
+
+        var tmp = RenderTexture.GetTemporary(w, h, 0, RenderTextureFormat.ARGB32);
+        Graphics.Blit(source, tmp);
+        var prev = RenderTexture.active;
+        RenderTexture.active = tmp;
+        readable.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+        readable.Apply(false, false);
+        RenderTexture.active = prev;
+        RenderTexture.ReleaseTemporary(tmp);
+
+        var pixels = readable.GetPixels32();
+        for (var i = 0; i < pixels.Length; i++)
+        {
+            var p = pixels[i];
+            if (p.a < 8) continue;
+            // Keep alpha, force stroke to white so UI tint can darken/lighten it.
+            pixels[i] = new Color32(255, 255, 255, p.a);
+        }
+
+        readable.SetPixels32(pixels);
+        readable.Apply(false, true);
+        return Sprite.Create(readable, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), 100f);
     }
 
     void CreateViewToggleButton(Transform parent)
@@ -1063,6 +1339,33 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
             FillRect(tex, s, 18, 28, 28, 6, Color.white);
             FillRect(tex, s, 40, 20, 6, 22, Color.white);
             FillTriangle(tex, s, 52, 28, 40, 40, 40, 16, Color.white);
+        });
+    }
+
+    static Sprite DrawIconCamera()
+    {
+        return DrawIcon(64, (tex, s) =>
+        {
+            // Camera body
+            FillRect(tex, s, 12, 18, 40, 28, Color.white);
+            // Lens
+            FillRect(tex, s, 24, 24, 16, 16, new Color(1f, 1f, 1f, 0.35f));
+            FillRect(tex, s, 28, 28, 8, 8, Color.white);
+            // Viewfinder bump
+            FillRect(tex, s, 22, 46, 14, 6, Color.white);
+        });
+    }
+
+    static Sprite DrawIconFurniture()
+    {
+        return DrawIcon(64, (tex, s) =>
+        {
+            // Simple chair / cube glyph for the picker
+            FillRect(tex, s, 18, 14, 28, 6, Color.white);
+            FillRect(tex, s, 18, 20, 6, 22, Color.white);
+            FillRect(tex, s, 40, 20, 6, 22, Color.white);
+            FillRect(tex, s, 18, 36, 28, 8, Color.white);
+            FillRect(tex, s, 18, 44, 6, 10, Color.white);
         });
     }
 

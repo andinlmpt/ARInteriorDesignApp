@@ -11,6 +11,7 @@ import { Screen } from '@/components/ui/Screen';
 import { AppDialog, type AppDialogAction } from '@/components/ui/AppDialog';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, radii, shadows } from '@/components/ui/theme';
+import { BRAND } from '@/constants/branding';
 import { AUTH_USER_STORAGE_KEY } from '@/data/authData';
 import { getHorizontalPadding, isSmallScreen } from '@/utils/responsive';
 import { NotificationService } from '@/services/NotificationService';
@@ -255,8 +256,8 @@ export default function ProfileScreen() {
             </TouchableOpacity>
 
             <View style={[styles.menuItem, { borderBottomColor: colors.border }]}>
-              <View style={[styles.menuIconContainer, { backgroundColor: hexToRgba('#E87722', 0.1) }]}>
-                <Ionicons name="notifications-outline" size={20} color="#E87722" />
+              <View style={[styles.menuIconContainer, { backgroundColor: hexToRgba(BRAND.colors.orange, 0.1) }]}>
+                <Ionicons name="notifications-outline" size={20} color={BRAND.colors.orange} />
               </View>
               <View style={styles.menuTextBlock}>
                 <AppText variant="body" style={[styles.menuText, { color: colors.textPrimary }]}>
@@ -279,8 +280,8 @@ export default function ProfileScreen() {
               onPress={() => router.push('/about-us')}
               activeOpacity={0.7}
             >
-              <View style={[styles.menuIconContainer, { backgroundColor: hexToRgba('#1E3A8A', 0.1) }]}>
-                <Ionicons name="information-circle-outline" size={20} color="#1E3A8A" />
+              <View style={[styles.menuIconContainer, { backgroundColor: hexToRgba(BRAND.colors.navy, 0.1) }]}>
+                <Ionicons name="information-circle-outline" size={20} color={BRAND.colors.navy} />
               </View>
               <AppText variant="body" style={[styles.menuText, { color: colors.textPrimary }]}>
                 About Us
