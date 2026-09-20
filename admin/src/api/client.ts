@@ -22,6 +22,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers.set('Content-Type', 'application/json');
   }
 
+  // Always bypass HTTP cache — stale 304 responses were keeping quantity/status outdated
+  // after successful product updates.
+  if (!headers.has('Cache-Control')) {
+    headers.set('Cache-Control', 'no-cache');
+  }
+  if (!headers.has('Pragma')) {
+    headers.set('Pragma', 'no-cache');
+  }
+
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
@@ -31,6 +40,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     response = await fetch(`${API_BASE}${path}`, {
       ...options,
       headers,
+      cache: 'no-store',
     });
   } catch {
     throw new Error('Cannot reach backend yet. Start backend on port 3000 and try again.');

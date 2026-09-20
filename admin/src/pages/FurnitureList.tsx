@@ -65,6 +65,12 @@ export function FurnitureListPage() {
   }, []);
 
   useEffect(() => {
+    if (!message) return;
+    const timer = setTimeout(() => setMessage(''), 3000);
+    return () => clearTimeout(timer);
+  }, [message]);
+
+  useEffect(() => {
     function handleClick(event: MouseEvent) {
       if (!menuRef.current?.contains(event.target as Node)) {
         setMenuOpenId(null);
@@ -290,9 +296,9 @@ export function FurnitureListPage() {
           setFormOpen(false);
           setEditingItem(null);
         }}
-        onSaved={(text) => {
+        onSaved={async (text) => {
           setMessage(text);
-          load();
+          await load();
         }}
       />
 

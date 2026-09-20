@@ -80,6 +80,26 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
     }
   }
 
+  function buildPayload(): Partial<FurnitureItem> {
+    return {
+      displayName: form.displayName?.trim() || '',
+      category: form.category || 'other',
+      glbUrl: form.glbUrl || '',
+      thumbnailUrl: form.thumbnailUrl || '',
+      width: Number(form.width) || 0,
+      height: Number(form.height) || 0,
+      depth: Number(form.depth) || 0,
+      dimensionLabel: form.dimensionLabel || '',
+      lengthIn: Number(form.lengthIn) || 0,
+      widthIn: Number(form.widthIn) || 0,
+      heightIn: Number(form.heightIn) || 0,
+      quantity: Math.max(0, Math.floor(Number(form.quantity) || 0)),
+      availableColors: Array.isArray(form.availableColors) ? form.availableColors : [],
+      active: form.active !== false,
+      sortOrder: Number(form.sortOrder) || 0,
+    };
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSaving(true);
@@ -87,12 +107,13 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
     setMessage('');
 
     try {
+      const payload = buildPayload();
       if (isEdit && item?.id) {
-        await api.updateFurniture(item.id, form);
-        onSaved(`Updated ${form.displayName || item.id}`);
+        await api.updateFurniture(item.id, payload);
+        onSaved(`Updated ${payload.displayName || item.id}`);
       } else {
-        await api.createFurniture(form);
-        onSaved(`Created ${form.displayName || 'product'}`);
+        await api.createFurniture(payload);
+        onSaved(`Created ${payload.displayName || 'product'}`);
       }
       onClose();
     } catch (err) {
