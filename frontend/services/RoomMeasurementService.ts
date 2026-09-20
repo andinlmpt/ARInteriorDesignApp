@@ -14,7 +14,7 @@ export class RoomMeasurementService {
   static async save(input: SaveRoomMeasurementInput): Promise<RoomMeasurementRecord> {
     const response = await callApi<RoomMeasurementResponse>('/room-measurements', {
       method: 'POST',
-      body: JSON.stringify(input),
+      body: input,
     });
     return response.measurement;
   }
@@ -30,5 +30,16 @@ export class RoomMeasurementService {
       `/room-measurements/${encodeURIComponent(id)}`,
     );
     return response.measurement ?? null;
+  }
+
+  static async updateName(id: string, name: string): Promise<RoomMeasurementRecord> {
+    const response = await callApi<RoomMeasurementResponse>(
+      `/room-measurements/${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        body: { name },
+      },
+    );
+    return response.measurement;
   }
 }

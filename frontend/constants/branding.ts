@@ -7,6 +7,11 @@ export const BRAND = {
   fullName: 'Maharlika Furniture and Home Furnishing',
   tagline: 'Your vision, Our craft',
   legacyAppName: 'AR Interior Design',
+  contact: {
+    phoneDisplay: '0961 375 1520',
+    phoneTel: '09613751520',
+    email: 'maharlikafurniture2010@gmail.com',
+  },
   colors: {
     navy: '#0C295F',
     orange: '#E69868',

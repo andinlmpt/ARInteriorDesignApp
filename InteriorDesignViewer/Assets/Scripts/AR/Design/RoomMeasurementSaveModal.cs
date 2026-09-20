@@ -1,10 +1,13 @@
 using System;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 /// <summary>
 /// After room scan confirm, shows a modal with dimensions and a Save Measurement button
 /// that posts to MongoDB via <see cref="RoomMeasurementSync"/>.
+/// When embedded in React Native, the Unity keyboard modal is skipped — RN owns the
+/// room-name prompt and calls back via <see cref="CommitRoomNameFromRn"/>.
 /// </summary>
 [DefaultExecutionOrder(-80)]
 public class RoomMeasurementSaveModal : MonoBehaviour
@@ -34,29 +37,77 @@ public class RoomMeasurementSaveModal : MonoBehaviour
     InputField roomNameInput;
     Image saveButtonBg;
     Text saveButtonText;
-    bool active;
+    bool showNativeUi;
+    bool deferToReactNative;
     bool saving;
     RoomConfirmedPayload pendingPayload;
+    TouchScreenKeyboard mobileKeyboard;
+
+    /// <summary>
+    /// Called from <see cref="ARMeasurementRnBridge"/> after RN collects the room name.
+    /// </summary>
+    public static void CommitRoomNameFromRn(string roomName)
+    {
+        ARMeasurementSession.SetRoomName(roomName);
+        ARMainMenuBackButton.SetUiVisible(true);
+        RoomNameCommitted?.Invoke();
+    }
 
     void Awake()
     {
         if (scanController == null) scanController = FindFirstObjectByType<RoomScanController>();
         if (measurementSync == null) measurementSync = FindFirstObjectByType<RoomMeasurementSync>();
 
-        active = enableNativeModal && !ARDesignHostDetect.IsEmbeddedInReactNative();
-        if (!active)
+        // Unity InputField + TouchScreenKeyboard fails inside RN/UaaL — always defer to RN.
+        deferToReactNative = ARDesignHostDetect.IsEmbeddedInReactNative();
+        showNativeUi = enableNativeModal && !deferToReactNative;
+
+        if (!showNativeUi && !deferToReactNative)
         {
             enabled = false;
             return;
         }
 
-        BuildUi(measurementOnlyMode);
-        SetVisible(false);
+        if (showNativeUi)
+        {
+            BuildUi(measurementOnlyMode);
+            SetVisible(false);
+        }
+    }
+
+    void Update()
+    {
+        if (!showNativeUi || mobileKeyboard == null || roomNameInput == null) return;
+
+        roomNameInput.text = mobileKeyboard.text;
+        if (roomNameInput.placeholder != null)
+            roomNameInput.placeholder.enabled = string.IsNullOrEmpty(mobileKeyboard.text);
+
+        if (mobileKeyboard.status == TouchScreenKeyboard.Status.Done ||
+            mobileKeyboard.status == TouchScreenKeyboard.Status.Canceled ||
+            mobileKeyboard.status == TouchScreenKeyboard.Status.LostFocus)
+        {
+            roomNameInput.text = mobileKeyboard.text;
+            mobileKeyboard = null;
+        }
+    }
+
+    void OpenMobileKeyboard()
+    {
+        var seed = roomNameInput != null ? roomNameInput.text : string.Empty;
+        mobileKeyboard = TouchScreenKeyboard.Open(
+            seed,
+            TouchScreenKeyboardType.Default,
+            autocorrection: false,
+            multiline: false,
+            secure: false,
+            alert: false,
+            textPlaceholder: "Living room");
     }
 
     void OnEnable()
     {
-        if (!active || scanController == null) return;
+        if ((!showNativeUi && !deferToReactNative) || scanController == null) return;
         scanController.PhaseChanged += OnPhaseChanged;
     }
 
@@ -70,7 +121,8 @@ public class RoomMeasurementSaveModal : MonoBehaviour
     {
         if (phase != RoomScanController.ScanPhase.Confirmed)
         {
-            SetVisible(false);
+            if (showNativeUi)
+                SetVisible(false);
             return;
         }
 
@@ -78,6 +130,18 @@ public class RoomMeasurementSaveModal : MonoBehaviour
         if (pendingPayload == null || pendingPayload.width <= 0f)
         {
             Debug.LogWarning("[RoomMeasurementSaveModal] Room confirmed but dimensions are missing.");
+            return;
+        }
+
+        if (deferToReactNative)
+        {
+            // Measurement scene has no ARSceneBridge — RN needs this event to open the name modal.
+            // Furniture scene already emits roomScanConfirmed from ARSceneBridge.
+            if (measurementOnlyMode)
+            {
+                ARMainMenuBackButton.SetUiVisible(false);
+                UnityMessageBridge.SendToApp("roomScanConfirmed", JsonUtility.ToJson(pendingPayload));
+            }
             return;
         }
 
@@ -168,7 +232,7 @@ public class RoomMeasurementSaveModal : MonoBehaviour
             if (saveButtonBg != null) saveButtonBg.color = AccentOk;
             if (saveButtonText != null) saveButtonText.text = "Saved";
             if (continueButton != null) continueButton.interactable = true;
-        if (saveButton != null) saveButton.interactable = false;
+            if (saveButton != null) saveButton.interactable = false;
         }
         else
         {
@@ -193,7 +257,9 @@ public class RoomMeasurementSaveModal : MonoBehaviour
         if (canvas != null)
             canvas.gameObject.SetActive(visible);
 
-        // Avoid stacking the floating MainMenu back over this modal.
+        if (!visible)
+            mobileKeyboard = null;
+
         if (measurementOnlyMode)
             ARMainMenuBackButton.SetUiVisible(!visible);
     }
@@ -239,8 +305,8 @@ public class RoomMeasurementSaveModal : MonoBehaviour
             titleRt.offsetMax = Vector2.zero;
 
             roomNameInput = CreateRoomNameField(card.transform);
+            WireMobileKeyboard(roomNameInput);
 
-            // Action row: Cancel + Save measure on one line with comfortable spacing
             cancelButton = CreateTextButton(
                 card.transform,
                 "Cancel",
@@ -361,7 +427,18 @@ public class RoomMeasurementSaveModal : MonoBehaviour
         input.textComponent = text;
         input.placeholder = placeholder;
         input.lineType = InputField.LineType.SingleLine;
+        input.shouldHideMobileInput = true;
         return input;
+    }
+
+    void WireMobileKeyboard(InputField input)
+    {
+        if (input == null) return;
+
+        var trigger = input.gameObject.GetComponent<EventTrigger>() ?? input.gameObject.AddComponent<EventTrigger>();
+        var entry = new EventTrigger.Entry { eventID = EventTriggerType.PointerClick };
+        entry.callback.AddListener(_ => OpenMobileKeyboard());
+        trigger.triggers.Add(entry);
     }
 
     static Button CreateTextButton(Transform parent, string label, Vector2 anchorMin, Vector2 anchorMax, Action onClick)

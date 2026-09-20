@@ -86,6 +86,9 @@ public class RoomExportManager : MonoBehaviour
 
     public bool IsExporting { get; private set; }
 
+    /// <summary>Clears a stuck export flag so a later RN retry can run.</summary>
+    public void ResetExportState() => IsExporting = false;
+
     /// <summary>Fired when export starts (show spinner).</summary>
     public event Action ExportStarted;
 
@@ -253,7 +256,11 @@ public class RoomExportManager : MonoBehaviour
             int furnitureCount;
 
 #if UNITYGLTF_PRESENT
-            if (preferUnityGltfWhenAvailable)
+            // UnityGLTF can hang/block the player for room shells inside UaaL — use the
+            // proven GlbExporter path when embedded so RN always gets exportComplete.
+            var useUnityGltf = preferUnityGltfWhenAvailable
+                               && !ARDesignHostDetect.IsEmbeddedInReactNative();
+            if (useUnityGltf)
             {
                 wrote = TryExportWithUnityGltf(path, out roomCount, out furnitureCount, out error);
                 if (!wrote)
@@ -284,7 +291,8 @@ public class RoomExportManager : MonoBehaviour
             if (wrote)
             {
                 Debug.Log($"[RoomExportManager] Exported → {path}");
-                if (shareAfterExport)
+                // RN opens Projects / preview when embedded — skip the native share sheet.
+                if (shareAfterExport && !ARDesignHostDetect.IsEmbeddedInReactNative())
                     ShareExportedFile(path, fileName);
             }
             else
@@ -485,18 +493,42 @@ public class RoomExportManager : MonoBehaviour
         furnitureCount = 0;
         error = null;
 
+        var tempMeshes = new List<Mesh>();
+        Material floorMat = null;
+        Material wallMat = null;
+        Material ceilingMat = null;
+        Texture2D floorTex = null;
+        Texture2D wallTex = null;
+
         try
         {
+            EnsurePlannerExportMaterials(out floorMat, out wallMat, out ceilingMat, out floorTex, out wallTex);
+
             var entries = new List<GlbExporter.Entry>();
 
             foreach (var (name, mesh, localToWorld, color) in GatherRoomMeshes())
             {
+                if (mesh == null) continue;
+
+                var kind = InferSurfaceKind(name);
+                var meshCopy = UnityEngine.Object.Instantiate(mesh);
+                meshCopy.name = mesh.name;
+                ApplyPlannerExportUVs(meshCopy, kind);
+                tempMeshes.Add(meshCopy);
+
+                var mat = kind switch
+                {
+                    RoomGeometrySnapshot.SurfaceKind.Floor => floorMat,
+                    RoomGeometrySnapshot.SurfaceKind.Ceiling => ceilingMat,
+                    _ => wallMat,
+                };
+
                 entries.Add(new GlbExporter.Entry
                 {
                     name = name,
-                    mesh = mesh,
+                    mesh = meshCopy,
                     localToWorld = localToWorld,
-                    materials = null,
+                    materials = mat != null ? new[] { mat } : null,
                     doubleSided = true,
                     fallbackColor = color,
                 });
@@ -544,6 +576,127 @@ public class RoomExportManager : MonoBehaviour
             error = e.Message;
             return false;
         }
+        finally
+        {
+            for (var i = 0; i < tempMeshes.Count; i++)
+            {
+                if (tempMeshes[i] != null)
+                    UnityEngine.Object.Destroy(tempMeshes[i]);
+            }
+
+            if (floorMat != null) UnityEngine.Object.Destroy(floorMat);
+            if (wallMat != null) UnityEngine.Object.Destroy(wallMat);
+            if (ceilingMat != null) UnityEngine.Object.Destroy(ceilingMat);
+            if (floorTex != null) UnityEngine.Object.Destroy(floorTex);
+            if (wallTex != null) UnityEngine.Object.Destroy(wallTex);
+        }
+    }
+
+    static RoomGeometrySnapshot.SurfaceKind InferSurfaceKind(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return RoomGeometrySnapshot.SurfaceKind.Wall;
+        var lower = name.ToLowerInvariant();
+        if (lower.Contains("floor")) return RoomGeometrySnapshot.SurfaceKind.Floor;
+        if (lower.Contains("ceiling")) return RoomGeometrySnapshot.SurfaceKind.Ceiling;
+        return RoomGeometrySnapshot.SurfaceKind.Wall;
+    }
+
+    static void EnsurePlannerExportMaterials(
+        out Material floorMat,
+        out Material wallMat,
+        out Material ceilingMat,
+        out Texture2D floorTex,
+        out Texture2D wallTex)
+    {
+        // Match RoomMeshVisualizer planner palette.
+        floorTex = CreateGroutTileTexture(128, new Color(0.42f, 0.43f, 0.44f, 1f), new Color(0.62f, 0.63f, 0.64f, 1f), 2, "ExportFloorTiles");
+        wallTex = CreateGroutTileTexture(128, new Color(0.94f, 0.94f, 0.93f, 1f), new Color(0.78f, 0.78f, 0.76f, 1f), 2, "ExportWallTiles");
+        floorMat = CreateExportUnlit(Color.white, floorTex);
+        wallMat = CreateExportUnlit(Color.white, wallTex);
+        ceilingMat = CreateExportUnlit(new Color(0.97f, 0.97f, 0.96f, 1f), null);
+    }
+
+    static Material CreateExportUnlit(Color color, Texture2D albedo)
+    {
+        var shader = Shader.Find("Universal Render Pipeline/Unlit")
+                     ?? Shader.Find("Unlit/Texture")
+                     ?? Shader.Find("Unlit/Color")
+                     ?? Shader.Find("Sprites/Default");
+        var material = new Material(shader) { name = albedo != null ? albedo.name : "ExportCeiling" };
+        if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color);
+        if (material.HasProperty("_Color")) material.SetColor("_Color", color);
+        if (albedo != null)
+        {
+            if (material.HasProperty("_BaseMap")) material.SetTexture("_BaseMap", albedo);
+            if (material.HasProperty("_MainTex")) material.SetTexture("_MainTex", albedo);
+            material.mainTexture = albedo;
+        }
+
+        return material;
+    }
+
+    static void ApplyPlannerExportUVs(Mesh mesh, RoomGeometrySnapshot.SurfaceKind kind)
+    {
+        if (mesh == null) return;
+        var tileSize = kind == RoomGeometrySnapshot.SurfaceKind.Wall ? 0.32f : 0.40f;
+        var vertices = mesh.vertices;
+        if (vertices == null || vertices.Length == 0) return;
+
+        var uvs = new Vector2[vertices.Length];
+        var horizontal = kind == RoomGeometrySnapshot.SurfaceKind.Floor
+                         || kind == RoomGeometrySnapshot.SurfaceKind.Ceiling;
+        for (var i = 0; i < vertices.Length; i++)
+        {
+            var v = vertices[i];
+            if (horizontal)
+                uvs[i] = new Vector2(v.x / tileSize, v.z / tileSize);
+            else
+            {
+                var along = Mathf.Abs(v.x) >= Mathf.Abs(v.z) ? v.x : v.z;
+                uvs[i] = new Vector2(along / tileSize, v.y / tileSize);
+            }
+        }
+
+        mesh.SetUVs(0, uvs);
+    }
+
+    static Texture2D CreateGroutTileTexture(int resolution, Color tile, Color grout, int groutWidth, string name)
+    {
+        resolution = Mathf.ClosestPowerOfTwo(Mathf.Clamp(resolution, 32, 512));
+        groutWidth = Mathf.Clamp(groutWidth, 1, resolution / 8);
+        var tex = new Texture2D(resolution, resolution, TextureFormat.RGBA32, false)
+        {
+            filterMode = FilterMode.Bilinear,
+            wrapMode = TextureWrapMode.Repeat,
+            anisoLevel = 4,
+            name = name,
+        };
+
+        var pixels = new Color[resolution * resolution];
+        var edge = groutWidth;
+        var far = resolution - groutWidth;
+        for (var y = 0; y < resolution; y++)
+        {
+            for (var x = 0; x < resolution; x++)
+            {
+                var isGrout = x < edge || y < edge || x >= far || y >= far;
+                if (!isGrout && groutWidth > 0)
+                {
+                    var near = x == edge || y == edge || x == far - 1 || y == far - 1;
+                    if (near)
+                    {
+                        pixels[y * resolution + x] = Color.Lerp(tile, grout, 0.35f);
+                        continue;
+                    }
+                }
+
+                pixels[y * resolution + x] = isGrout ? grout : tile;
+            }
+        }
+
+        tex.SetPixels(pixels);
+        tex.Apply(false, false);
+        return tex;
     }
 
     static void AppendFurnitureMeshes(List<GlbExporter.Entry> entries, PlacedItem item)

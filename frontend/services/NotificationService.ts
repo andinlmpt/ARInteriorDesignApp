@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Notification Service (Mocked for Expo Go compatibility)
  * Push notifications have been removed so the app runs cleanly in Expo Go.
  */

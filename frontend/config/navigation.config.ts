@@ -14,7 +14,6 @@ export type ScreenName =
   | 'login'
   | 'signup'
   | '(tabs)'
-  | 'ai-design'
   | 'theme-recommend'
   | 'ar-view'
   | 'layout-3d'
@@ -114,12 +113,6 @@ export const NAVIGATION_SCREENS: Record<string, ScreenConfig[]> = {
 
   // AI & Design Features
   aiDesign: [
-    {
-      name: 'ai-design',
-      options: {
-        ...ANIMATION_PRESETS.slideRight,
-      },
-    },
     {
       name: 'theme-recommend',
       options: {

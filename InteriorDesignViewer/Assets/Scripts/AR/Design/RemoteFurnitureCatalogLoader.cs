@@ -13,8 +13,8 @@ public class RemoteFurnitureCatalogLoader : MonoBehaviour
     [SerializeField] private FurnitureCatalog catalog;
     [SerializeField] private ARDesignFurnitureCatalogUI catalogUi;
 
-    [Tooltip("Backend catalog endpoint, e.g. http://192.168.1.7:3000/api/v1/furniture")]
-    [SerializeField] private string catalogUrl = "http://192.168.1.7:3000/api/v1/furniture";
+    [Tooltip("Backend catalog endpoint, e.g. http://192.168.1.33:3000/api/v1/furniture")]
+    [SerializeField] private string catalogUrl = "http://192.168.1.33:3000/api/v1/furniture";
 
     [SerializeField] private bool loadOnStart = true;
     [SerializeField] private float requestTimeoutSeconds = 20f;
@@ -101,6 +101,7 @@ public class RemoteFurnitureCatalogLoader : MonoBehaviour
         RemoteFurnitureListResponse payload;
         try
         {
+            // JsonUtility needs arrays — List<T> often deserializes empty.
             payload = JsonUtility.FromJson<RemoteFurnitureListResponse>(request.downloadHandler.text);
         }
         catch (Exception e)
@@ -110,7 +111,8 @@ public class RemoteFurnitureCatalogLoader : MonoBehaviour
             yield break;
         }
 
-        if (payload?.furniture == null || payload.furniture.Count == 0)
+        var items = payload?.furniture;
+        if (items == null || items.Length == 0)
         {
             LastError = "Catalog response contained no furniture.";
             Debug.LogWarning($"[RemoteFurnitureCatalogLoader] {LastError}");
@@ -118,14 +120,14 @@ public class RemoteFurnitureCatalogLoader : MonoBehaviour
         }
 
         var merged = new List<FurnitureEntry>();
-        foreach (var item in payload.furniture)
+        foreach (var item in items)
         {
             if (item == null || string.IsNullOrWhiteSpace(item.id) || string.IsNullOrWhiteSpace(item.glbUrl))
                 continue;
 
             merged.Add(new FurnitureEntry
             {
-                id = item.id,
+                id = item.id.Trim().ToLowerInvariant(),
                 displayName = item.displayName,
                 category = item.category,
                 glbUrl = item.glbUrl,
@@ -137,7 +139,18 @@ public class RemoteFurnitureCatalogLoader : MonoBehaviour
             });
         }
 
+        if (merged.Count == 0)
+        {
+            LastError = "Catalog JSON parsed but no items had both id and glbUrl.";
+            Debug.LogWarning($"[RemoteFurnitureCatalogLoader] {LastError}");
+            yield break;
+        }
+
+        // Replace local-only stubs with the remote list so the UI only shows
+        // placeable cloud models.
+        catalog.ClearEntries();
         catalog.MergeRemoteEntries(merged);
+        catalog.RefreshBundledDimensionLabels();
         IsLoaded = true;
         var total = catalog.Entries.Count;
         var withGlb = 0;
@@ -148,7 +161,7 @@ public class RemoteFurnitureCatalogLoader : MonoBehaviour
         }
 
         Debug.Log($"[RemoteFurnitureCatalogLoader] Loaded {merged.Count} remote furniture items " +
-                  $"(catalog total {total}, {withGlb} with GLB URLs).");
+                  $"(catalog total {total}, {withGlb} with GLB URLs) from {catalogUrl}.");
 
         if (catalogUi != null)
             catalogUi.RefreshFromCatalog();
@@ -164,7 +177,7 @@ public class RemoteFurnitureListResponse
 {
     public bool success;
     public int count;
-    public List<RemoteFurnitureItem> furniture = new();
+    public RemoteFurnitureItem[] furniture;
 }
 
 [Serializable]

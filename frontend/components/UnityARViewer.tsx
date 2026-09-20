@@ -16,6 +16,7 @@ import {
   type UnityErrorPayload,
   type UnityInboundMessage,
   type UnityOutboundMessage,
+  type PlacementSafetyPayload,
 } from '@/types/unity-bridge';
 import { isUnityViewAvailable } from '@/utils/unityAvailability';
 
@@ -28,6 +29,12 @@ export interface UnityARViewerHandle {
 
   // ARDesignScene: scan → confirm → place → export
   startRoomScan: () => void;
+  /** Skip measurement; unlock live floor placement (RN AR Furniture). */
+  startFurniturePlacement: () => void;
+  /** Load Unity ARRoomMeasurement scene (native measurement HUDs). */
+  openRoomMeasurement: () => void;
+  /** Ensure ARDesignScene + furniture placement (safe after measurement). */
+  openFurnitureDesign: () => void;
   /** Asks Unity to push a fresh `scanStatus` event. Progress is also pushed automatically. */
   getScanStatus: () => void;
   confirmRoomScan: () => void;
@@ -38,13 +45,19 @@ export interface UnityARViewerHandle {
   getCurrentLayout: () => void;
   /** Writes the room + furniture GLB to disk; the path arrives via `onExportComplete`. */
   exportLayout: () => void;
+  /** Screenshots the AR view; result arrives via `onPhotoCaptured`. */
+  capturePhoto: () => void;
   undo: () => void;
   redo: () => void;
+  /** AR Measurement: apply room name from RN modal and open the plan HUD. */
+  commitRoomName: (name: string) => void;
+  /** AR Measurement: dismiss name modal with "Untitled room". */
+  cancelRoomName: () => void;
 }
 
 interface UnityARViewerProps {
   style?: ViewStyle;
-  onUnityReady?: () => void;
+  onUnityReady?: (sceneName?: string) => void;
   onUnityMessage?: (message: UnityOutboundMessage) => void;
   onUnityUnavailable?: () => void;
 
@@ -61,7 +74,14 @@ interface UnityARViewerProps {
   onExportComplete?: (payload: ExportResultPayload) => void;
   onPhotoCaptured?: (payload: ARPhotoCapturedPayload) => void;
   onHistoryChanged?: (payload: HistoryStatePayload) => void;
+  onPlacementSafety?: (payload: PlacementSafetyPayload) => void;
   onUnityError?: (payload: UnityErrorPayload) => void;
+  /** Unity native back / exit from ARRoomMeasurement. */
+  onRequestClose?: () => void;
+  /** Measurement plan HUD opened (after room name) — show RN Export. */
+  onMeasurementPlanReady?: () => void;
+  /** Measurement plan HUD closed. */
+  onMeasurementPlanClosed?: () => void;
 }
 
 type UnityViewComponent = React.ComponentType<{
@@ -107,7 +127,11 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
       onExportComplete,
       onPhotoCaptured,
       onHistoryChanged,
+      onPlacementSafety,
       onUnityError,
+      onRequestClose,
+      onMeasurementPlanReady,
+      onMeasurementPlanClosed,
     },
     ref
   ) {
@@ -142,6 +166,9 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
           sendToUnity('selectFurniture', unityCatalogId),
 
         startRoomScan: () => sendToUnity('startRoomScan', ''),
+        startFurniturePlacement: () => sendToUnity('startFurniturePlacement', ''),
+        openRoomMeasurement: () => sendToUnity('openRoomMeasurement', ''),
+        openFurnitureDesign: () => sendToUnity('openFurnitureDesign', ''),
         getScanStatus: () => sendToUnity('getScanStatus', ''),
         confirmRoomScan: () => sendToUnity('confirmRoomScan', ''),
         spawnFurniture: (request: SpawnFurnitureRequest) =>
@@ -150,8 +177,11 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
         clearScene: () => sendToUnity('clearScene', ''),
         getCurrentLayout: () => sendToUnity('getCurrentLayout', ''),
         exportLayout: () => sendToUnity('exportLayout', ''),
+        capturePhoto: () => sendToUnity('capturePhoto', ''),
         undo: () => sendToUnity('undo', ''),
         redo: () => sendToUnity('redo', ''),
+        commitRoomName: (name: string) => sendToUnity('commitRoomName', name ?? ''),
+        cancelRoomName: () => sendToUnity('cancelRoomName', ''),
       }),
       [sendToUnity]
     );
@@ -169,10 +199,8 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
 
         switch (msg.event) {
           case 'unityReady':
-            if (!readyRef.current) {
-              readyRef.current = true;
-              onUnityReady?.();
-            }
+            readyRef.current = true;
+            onUnityReady?.(typeof msg.data === 'string' ? msg.data : undefined);
             break;
 
           case 'furniturePlaced': {
@@ -212,7 +240,17 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
 
           case 'exportComplete': {
             const payload = parseUnityPayload<ExportResultPayload>(msg);
-            if (payload) onExportComplete?.(payload);
+            onExportComplete?.(
+              payload ?? {
+                success: false,
+                path: '',
+                fileName: '',
+                byteLength: 0,
+                furnitureCount: 0,
+                roomMeshCount: 0,
+                error: 'Invalid export response from Unity',
+              }
+            );
             break;
           }
 
@@ -228,11 +266,29 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
             break;
           }
 
+          case 'placementSafety': {
+            const payload = parseUnityPayload<PlacementSafetyPayload>(msg);
+            if (payload) onPlacementSafety?.(payload);
+            break;
+          }
+
           case 'error': {
             const payload = parseUnityPayload<UnityErrorPayload>(msg);
             onUnityError?.(payload ?? { code: 'unknown', message: msg.data });
             break;
           }
+
+          case 'requestClose':
+            onRequestClose?.();
+            break;
+
+          case 'measurementPlanReady':
+            onMeasurementPlanReady?.();
+            break;
+
+          case 'measurementPlanClosed':
+            onMeasurementPlanClosed?.();
+            break;
         }
       },
       [
@@ -243,7 +299,11 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
         onFurnitureRemoved,
         onFurnitureSelected,
         onHistoryChanged,
+        onPlacementSafety,
         onLayoutChanged,
+        onMeasurementPlanClosed,
+        onMeasurementPlanReady,
+        onRequestClose,
         onRoomScanConfirmed,
         onScanStatus,
         onUnityError,

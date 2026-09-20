@@ -6,6 +6,7 @@ export type UnityToRNEvent =
   | 'furniturePlaced'
   | 'planeDetected'
   | 'error'
+  | 'requestClose'
   // ARDesignScene (Unity: ARSceneBridge.cs)
   | 'scanStatus'
   | 'roomScanConfirmed'
@@ -14,13 +15,19 @@ export type UnityToRNEvent =
   | 'layoutChanged'
   | 'exportComplete'
   | 'photoCaptured'
-  | 'historyChanged';
+  | 'historyChanged'
+  | 'placementSafety'
+  | 'measurementPlanReady'
+  | 'measurementPlanClosed';
 
 export type RNToUnityMethod =
   | 'selectFurniture'
   | 'clearFurniture'
   // ARDesignScene (Unity: ARSceneBridge.cs)
   | 'startRoomScan'
+  | 'startFurniturePlacement'
+  | 'openRoomMeasurement'
+  | 'openFurnitureDesign'
   | 'getScanStatus'
   | 'confirmRoomScan'
   | 'spawnFurniture'
@@ -29,7 +36,11 @@ export type RNToUnityMethod =
   | 'getCurrentLayout'
   | 'exportLayout'
   | 'undo'
-  | 'redo';
+  | 'redo'
+  | 'capturePhoto'
+  | 'savePhoto'
+  | 'commitRoomName'
+  | 'cancelRoomName';
 
 export interface UnityOutboundMessage {
   event: UnityToRNEvent | string;
@@ -134,6 +145,8 @@ export interface RoomConfirmedPayload extends ScanStatusPayload {
   boundsMax?: UnityVec3;
   cornerCount?: number;
   floorPolygon?: { points?: UnityVec3[] };
+  /** True when Unity skipped real measurement (synthetic open floor). */
+  furniturePlacementOnly?: boolean;
 }
 
 /** Payload of the `furniturePlaced` event and of each entry in `layoutChanged`. */
@@ -163,6 +176,19 @@ export interface SelectionPayload {
   instanceId: string;
   modelId: string;
   selected: boolean;
+}
+
+/** Payload of the `placementSafety` event from Unity. */
+export interface PlacementSafetyPayload {
+  instanceId: string;
+  modelId: string;
+  isSafe: boolean;
+  hasFurnitureCollision: boolean;
+  hasWallCollision: boolean;
+  isTooCloseToWall: boolean;
+  nearestFurnitureDistance: number;
+  nearestWallDistance: number;
+  reason: string;
 }
 
 /**

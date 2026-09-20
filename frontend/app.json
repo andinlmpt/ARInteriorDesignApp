@@ -1,13 +1,15 @@
 {
   "expo": {
-    "name": "AR Interior Design",
+    "name": "Maharlika Furniture",
     "slug": "ARInteriorDesinApp",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
     "scheme": "arinteriordesinapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": false,
     "splash": {
+      "image": "./assets/images/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -16,6 +18,7 @@
     },
     "android": {
       "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#ffffff"
       }
     },
@@ -31,7 +34,6 @@
           "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera for room scanning and AR features."
         }
       ],
-      "./plugins/withARSessionNative",
       "./plugins/withUnity"
     ],
     "experiments": {

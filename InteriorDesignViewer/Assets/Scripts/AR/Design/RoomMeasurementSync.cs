@@ -11,8 +11,8 @@ using UnityEngine.Networking;
 public class RoomMeasurementSync : MonoBehaviour
 {
     [SerializeField] private RoomScanController scanController;
-    [Tooltip("Backend endpoint, e.g. http://192.168.1.7:3000/api/v1/room-measurements")]
-    [SerializeField] private string saveUrl = "http://192.168.1.7:3000/api/v1/room-measurements";
+    [Tooltip("Backend endpoint, e.g. http://192.168.1.33:3000/api/v1/room-measurements")]
+    [SerializeField] private string saveUrl = "http://192.168.1.33:3000/api/v1/room-measurements";
     [SerializeField] private bool saveOnConfirm = false;
     [SerializeField] private float requestTimeoutSeconds = 15f;
 

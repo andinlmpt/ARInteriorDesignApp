@@ -5,19 +5,28 @@ import { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AuthService from '@/services/AuthService';
 import { AUTH_USER_STORAGE_KEY } from '@/data/authData';
-import * as FileSystem from 'expo-file-system/legacy';
 import { callApi } from '@/services/apiClient';
 import { colors, radii, shadows, spacing } from '@/components/ui/theme';
 import { AppText } from '@/components/ui/Text';
 import { AppDialog, type AppDialogAction } from '@/components/ui/AppDialog';
+import { PhotoPickerSheet } from '@/components/ui/PhotoPickerSheet';
 import { BackIcon, CameraIcon } from '@/components/ui/Icons';
 import { launchImageLibrary, launchCamera, requestMediaLibraryPermissions, requestCameraPermissions } from '@/utils/imagePicker';
+import {
+  reclaimProfilePictureStorage,
+  removeLocalProfilePicture,
+  saveProfilePictureLocally,
+  toProfilePictureDataUrl,
+} from '@/utils/profilePictureStorage';
 
 type DialogState = {
   title: string;
   message?: string;
   actions: AppDialogAction[];
 };
+
+/** Keep picks small so base64 uploads stay under AsyncStorage / API limits. */
+const PICKER_QUALITY = 0.45;
 
 export default function EditProfileScreen() {
   const router = useRouter();
@@ -27,8 +36,10 @@ export default function EditProfileScreen() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  const [photoSheetVisible, setPhotoSheetVisible] = useState(false);
 
   const closeDialog = () => setDialog(null);
+  const closePhotoSheet = () => setPhotoSheetVisible(false);
 
   const showDialog = (title: string, message: string, actions?: AppDialogAction[]) => {
     setDialog({
@@ -41,6 +52,9 @@ export default function EditProfileScreen() {
   useEffect(() => {
     const loadUserData = async () => {
       try {
+        // Migrate any bloated base64 photos out of SQLite before edits.
+        await reclaimProfilePictureStorage();
+
         const userData = await AsyncStorage.getItem(AUTH_USER_STORAGE_KEY);
         if (userData) {
           const user = JSON.parse(userData);
@@ -67,21 +81,8 @@ export default function EditProfileScreen() {
     return true;
   };
 
-  const convertImageToBase64 = async (uri: string): Promise<string> => {
-    try {
-      const base64 = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      const mimeType = uri.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
-      return `data:${mimeType};base64,${base64}`;
-    } catch (error) {
-      console.error('[EditProfile] Error converting image to base64:', error);
-      throw error;
-    }
-  };
-
   const pickImage = async () => {
-    closeDialog();
+    closePhotoSheet();
     const hasPermission = await requestPermissions();
     if (!hasPermission) return;
 
@@ -90,7 +91,7 @@ export default function EditProfileScreen() {
         mediaTypes: 'images',
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.8,
+        quality: PICKER_QUALITY,
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
@@ -103,7 +104,7 @@ export default function EditProfileScreen() {
   };
 
   const takePhoto = async () => {
-    closeDialog();
+    closePhotoSheet();
     const hasPermission = await requestCameraPermissions();
     if (!hasPermission) {
       showDialog(
@@ -117,7 +118,7 @@ export default function EditProfileScreen() {
       const result = await launchCamera({
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.8,
+        quality: PICKER_QUALITY,
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
@@ -129,26 +130,52 @@ export default function EditProfileScreen() {
     }
   };
 
+  const removePhoto = () => {
+    setProfilePicture(null);
+    closePhotoSheet();
+  };
+
   const showImagePickerOptions = () => {
-    setDialog({
-      title: 'Change photo',
-      message: 'Choose how you’d like to update your profile picture.',
-      actions: [
-        { label: 'Take photo', tone: 'primary', onPress: takePhoto },
-        { label: 'Choose from library', tone: 'secondary', onPress: pickImage },
-        ...(profilePicture
-          ? [{
-              label: 'Remove photo',
-              tone: 'danger' as const,
-              onPress: () => {
-                setProfilePicture(null);
-                closeDialog();
-              },
-            }]
-          : []),
-        { label: 'Cancel', tone: 'ghost', onPress: closeDialog },
-      ],
-    });
+    setPhotoSheetVisible(true);
+  };
+
+  const persistLocalUser = async (
+    user: Record<string, unknown>,
+    userId: string,
+    updates: { name: string; email?: string; profilePicture: string | null }
+  ) => {
+    let localPicture = updates.profilePicture;
+    if (localPicture) {
+      localPicture = await saveProfilePictureLocally(userId, localPicture);
+    } else {
+      await removeLocalProfilePicture(userId);
+    }
+
+    const updatedUser = {
+      ...user,
+      name: updates.name,
+      email: updates.email || user.email,
+      profilePicture: localPicture,
+    };
+
+    const write = async () => {
+      await AsyncStorage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(updatedUser));
+      await AuthService.cacheProfilePicture(userId, localPicture);
+    };
+
+    try {
+      await write();
+    } catch (storageError) {
+      const message = storageError instanceof Error ? storageError.message : String(storageError);
+      if (/SQLITE_FULL|disk is full|database or disk is full/i.test(message)) {
+        await reclaimProfilePictureStorage(userId);
+        await write();
+      } else {
+        throw storageError;
+      }
+    }
+
+    return updatedUser;
   };
 
   const handleSave = async () => {
@@ -159,6 +186,9 @@ export default function EditProfileScreen() {
 
     setSaving(true);
     try {
+      // Free space from any old base64 blobs before writing again.
+      await reclaimProfilePictureStorage();
+
       const userData = await AsyncStorage.getItem(AUTH_USER_STORAGE_KEY);
       if (!userData) {
         showDialog('Session expired', 'Please sign in again.');
@@ -173,21 +203,18 @@ export default function EditProfileScreen() {
         return;
       }
 
-      let profilePictureBase64: string | null = null;
+      let profilePictureForApi: string | null = null;
       if (profilePicture) {
-        if (profilePicture.startsWith('data:image/')) {
-          profilePictureBase64 = profilePicture;
-        } else if (Platform.OS === 'web') {
-          profilePictureBase64 = profilePicture;
-        } else {
-          try {
-            profilePictureBase64 = await convertImageToBase64(profilePicture);
-          } catch (error) {
-            console.error('[EditProfile] Failed to convert image:', error);
-            showDialog('Couldn’t process image', 'Please try another photo.');
-            setSaving(false);
-            return;
-          }
+        try {
+          profilePictureForApi = await toProfilePictureDataUrl(profilePicture);
+        } catch (error) {
+          console.error('[EditProfile] Failed to convert image:', error);
+          showDialog(
+            'Couldn’t process image',
+            error instanceof Error ? error.message : 'Please try another photo.'
+          );
+          setSaving(false);
+          return;
         }
       }
 
@@ -198,20 +225,19 @@ export default function EditProfileScreen() {
             method: 'PUT',
             body: {
               name: name.trim(),
-              profilePicture: profilePictureBase64,
+              profilePicture: profilePictureForApi,
             },
           }
         );
 
         if (response.success && response.data?.user) {
-          const updatedUser = {
-            ...user,
+          const serverPicture =
+            response.data.user.profilePicture || profilePictureForApi || profilePicture;
+          await persistLocalUser(user, userId, {
             name: response.data.user.name || name.trim(),
             email: response.data.user.email || user.email,
-            profilePicture: response.data.user.profilePicture || profilePictureBase64,
-          };
-          await AsyncStorage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(updatedUser));
-          await AuthService.cacheProfilePicture(userId, updatedUser.profilePicture ?? null);
+            profilePicture: serverPicture ?? null,
+          });
 
           setDialog({
             title: 'Profile updated',
@@ -232,14 +258,11 @@ export default function EditProfileScreen() {
         }
       } catch (apiError: any) {
         console.error('[EditProfile] API error:', apiError);
-        const updatedUser = {
-          ...user,
+        await persistLocalUser(user, userId, {
           name: name.trim(),
           email: email.trim() || user.email,
-          profilePicture: profilePictureBase64,
-        };
-        await AsyncStorage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(updatedUser));
-        await AuthService.cacheProfilePicture(userId, profilePictureBase64);
+          profilePicture: profilePictureForApi || profilePicture,
+        });
         setDialog({
           title: 'Saved on this device',
           message: 'Could not sync with the server. Check your connection — your photo is kept locally for now.',
@@ -257,7 +280,16 @@ export default function EditProfileScreen() {
       }
     } catch (error) {
       console.error('[EditProfile] Failed to save profile:', error);
-      showDialog('Couldn’t save', 'Please try again.');
+      const message = error instanceof Error ? error.message : String(error);
+      if (/SQLITE_FULL|disk is full|database or disk is full/i.test(message)) {
+        await reclaimProfilePictureStorage();
+        showDialog(
+          'Storage was full',
+          'Cleared old cached photos. Please try saving again with a smaller picture.'
+        );
+      } else {
+        showDialog('Couldn’t save', 'Please try again.');
+      }
     } finally {
       setSaving(false);
     }
@@ -366,6 +398,15 @@ export default function EditProfileScreen() {
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      <PhotoPickerSheet
+        visible={photoSheetVisible}
+        hasPhoto={!!profilePicture}
+        onClose={closePhotoSheet}
+        onTakePhoto={takePhoto}
+        onChooseLibrary={pickImage}
+        onRemovePhoto={removePhoto}
+      />
 
       <AppDialog
         visible={!!dialog}

@@ -1,8 +1,60 @@
-# EAS upload rules — Unity export MUST be included for AR builds.
-# (Default: .gitignore is used when .easignore exists; negate important paths.)
+# EAS upload rules — Unity AR export included.
+# When .easignore exists it replaces .gitignore for the upload archive.
 
-/android
-/ios
+# Dependencies & tooling (reinstall on EAS)
+node_modules/
+node_modules._eas_skip/
+.expo/
+dist/
+web-build/
+expo-env.d.ts
 
-# Keep Unity native export (do not exclude)
-!unity/builds/android/unityLibrary/**
+# Generated native folders (local prebuild — EAS regenerates these)
+android/
+ios/
+android._eas_skip/
+unity._eas_skip/
+.kotlin/
+
+# Metro / debug
+.metro-health-check*
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Secrets & local env
+*.pem
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+.env
+.env.*
+!.env.example
+
+# OS / TS
+.DS_Store
+*.tsbuildinfo
+
+# Keep Unity Android library for RN embed; exclude only junk / alternate copies
+unity/builds._eas_skip/
+**/builds._eas_skip/**
+unity._eas_skip/
+**/InteriorDesignViewer/**
+
+# Do not upload Unity Editor project or old relocated exports
+../_unity_builds._eas_skip/
+_unity_builds._eas_skip/
+
+# Large local artifacts that must never upload
+**/*_BackUpThisFolder_ButDontShipItWithYourGame/**
+**/InteriorDesignViewer_BurstDebugInformation_DoNotShip/**
+**/*.apk
+**/*.aab
+
+# Unity export noise (keep unityLibrary + prebuilt jniLibs)
+unity/builds/android/**/build/
+unity/builds/android/**/.gradle/
+unity/builds/android/**/local.properties
+unity/builds/android/launcher/

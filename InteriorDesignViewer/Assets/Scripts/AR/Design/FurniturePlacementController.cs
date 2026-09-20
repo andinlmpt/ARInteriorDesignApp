@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -69,9 +70,9 @@ public class FurniturePlacementController : MonoBehaviour
     [Tooltip("Minimum plane area (m²) accepted for placement.")]
     [SerializeField] private float minFloorArea = 0.25f;
     [Tooltip("Push mesh feet slightly into the floor so they visually touch.")]
-    [SerializeField] private float floorContactInset = 0.012f;
-    [Tooltip("Extra sink in live AR. Keep small — the placement indicator is the floor we match.")]
-    [SerializeField] private float liveArFloorSink = 0.008f;
+    [SerializeField] private float floorContactInset = 0.006f;
+    [Tooltip("Extra sink in live AR so feet meet the detected plane (not the scan mesh).")]
+    [SerializeField] private float liveArFloorSink = 0.014f;
     [Tooltip("Keep furniture this far inside the room outline (metres from walls).")]
     [SerializeField] private float roomWallInset = 0.22f;
     [Tooltip("Clamp spawn/drag positions to the confirmed floor polygon.")]
@@ -97,6 +98,12 @@ public class FurniturePlacementController : MonoBehaviour
     /// <summary>Fired when a spawn request cannot be fulfilled.</summary>
     public event Action<string, string> SpawnFailed;
 
+    /// <summary>Fired when a model finished loading and is armed (or placed).</summary>
+    public event Action<string> ModelReady;
+
+    /// <summary>Fired when selected furniture placement safety changes.</summary>
+    public event Action<FurniturePlacementSafety.Result, PlacedFurniture> PlacementSafetyChanged;
+
     public IReadOnlyList<PlacedFurniture> Instances => instances;
     public PlacedFurniture Selected { get; private set; }
 
@@ -113,6 +120,7 @@ public class FurniturePlacementController : MonoBehaviour
     int nextInstanceIndex = 1;
     int activeGlbLoads;
     Vector2? deferredPlacementTap;
+    string lastSafetyKey = string.Empty;
 
     void Awake()
     {
@@ -308,8 +316,9 @@ public class FurniturePlacementController : MonoBehaviour
                     Debug.LogWarning($"[FurniturePlacementController] GLB load failed: {error}");
                     if (catalog != null && catalog.RemoteCatalogOnly && !allowLocalPrefabFallback)
                     {
+                        var detail = string.IsNullOrWhiteSpace(error) ? "Check Wi‑Fi and the GCS URL." : error;
                         SpawnFailed?.Invoke("glbLoadFailed",
-                            $"Could not download '{ResolveModelId(request)}'. Check Wi‑Fi and the GCS URL.");
+                            $"Could not load '{ResolveModelId(request)}'. {detail}");
                         return;
                     }
                     ArmFromPrefab(request, dimensions);
@@ -493,6 +502,7 @@ public class FurniturePlacementController : MonoBehaviour
             Selected.SetSelected(true);
 
         SelectionChanged?.Invoke(Selected);
+        RefreshPlacementSafety(Selected);
     }
 
     public LayoutPayload BuildLayout()
@@ -525,10 +535,11 @@ public class FurniturePlacementController : MonoBehaviour
         var clamped = ClampFurnitureInsideRoom(furniture, furniture.transform.position);
         furniture.transform.position = new Vector3(clamped.x, furniture.transform.position.y, clamped.z);
 
-        if (!TryGetStableFloorY(furniture.transform.position, out var floorY))
+        var floorSample = new Vector3(clamped.x, furniture.transform.position.y, clamped.z);
+        if (!TryGetStableFloorY(floorSample, out var floorY))
             return;
 
-        floorY = WithIndicatorFloorY(new Vector3(clamped.x, floorY, clamped.z)).y;
+        floorY = ResolveFloorHeight(new Vector3(clamped.x, floorY, clamped.z)).y;
         SeatOnFloor(furniture.gameObject, furniture.LocalBounds.min.y, new Vector3(clamped.x, floorY, clamped.z));
 
         clamped = ClampFurnitureInsideRoom(furniture, furniture.transform.position);
@@ -568,9 +579,16 @@ public class FurniturePlacementController : MonoBehaviour
 
     void SeatOnFloor(GameObject instance, float localFootY, Vector3 floorPoint)
     {
+        if (instance == null) return;
         var inset = EffectiveFloorInset();
-        if (!ARFurnitureGrounding.SnapLocalFootToFloor(instance.transform, localFootY, floorPoint, inset))
-            ARFurnitureGrounding.PlaceFeetOnFloor(instance, floorPoint, inset, 8);
+        Physics.SyncTransforms();
+
+        // Mesh-accurate grounding (handles legs/feet below the bounds pivot).
+        ARFurnitureGrounding.SnapToFloorPoint(instance, floorPoint, inset);
+
+        // Fallback if renderers are not ready on the first frame.
+        if (float.IsPositiveInfinity(ARFurnitureGrounding.GetSupportContactY(instance)))
+            ARFurnitureGrounding.SnapLocalFootToFloor(instance.transform, localFootY, floorPoint, inset);
     }
 
     /// <summary>
@@ -584,9 +602,41 @@ public class FurniturePlacementController : MonoBehaviour
     /// <summary>Re-pin to a fresh world anchor after drag/scale ends (live AR only).</summary>
     public void EndFurnitureManipulation(PlacedFurniture furniture)
     {
+        if (furniture != null)
+        {
+            var safe = ResolveCollisionFreePivot(
+                furniture, furniture.transform.position, furniture.transform.position);
+            furniture.transform.position = new Vector3(safe.x, furniture.transform.position.y, safe.z);
+        }
+
         GroundInstance(furniture);
         if (ShouldUseWorldAnchors())
             PinFurnitureToWorld(furniture);
+        RefreshPlacementSafety(furniture);
+    }
+
+    /// <summary>
+    /// Evaluates furniture/wall collisions for the selected (or given) piece and
+    /// turns the floor outline red when placement is unsafe.
+    /// </summary>
+    public FurniturePlacementSafety.Result RefreshPlacementSafety(PlacedFurniture furniture = null)
+    {
+        var target = furniture != null ? furniture : Selected;
+        if (target == null)
+            return FurniturePlacementSafety.Result.Safe();
+
+        var result = FurniturePlacementSafety.Evaluate(target, instances, scanController);
+        target.ApplyPlacementSafety(result.isSafe);
+
+        var key =
+            $"{target.InstanceId}|{result.isSafe}|{result.hasFurnitureCollision}|{result.hasWallCollision}|{result.isTooCloseToWall}|{result.reason}";
+        if (key != lastSafetyKey)
+        {
+            lastSafetyKey = key;
+            PlacementSafetyChanged?.Invoke(result, target);
+        }
+
+        return result;
     }
 
     /// <summary>Raycasts the floor under a screen point. Used by the manipulator's drag-to-reposition.</summary>
@@ -623,8 +673,40 @@ public class FurniturePlacementController : MonoBehaviour
             return false;
 
         if (furniture != null)
-            position = ClampFurnitureInsideRoom(furniture, position);
+            position = ClampToRoom(position);
         return true;
+    }
+
+    /// <summary>
+    /// Keeps a furniture pivot clear of other furniture footprints.
+    /// Wall hard-blocking is disabled — room edges are warn-only via placement safety.
+    /// If no clear spot is found near <paramref name="desiredPivot"/>, returns
+    /// <paramref name="fallbackPivot"/> (typically the last known safe position).
+    /// </summary>
+    public Vector3 ResolveCollisionFreePivot(
+        PlacedFurniture furniture,
+        Vector3 desiredPivot,
+        Vector3 fallbackPivot)
+    {
+        if (furniture == null)
+            return desiredPivot;
+
+        var resolved = FurniturePlacementSafety.ResolveAwayFromFurnitureOverlaps(
+            furniture, desiredPivot, instances, fallbackPivot);
+
+        var check = FurniturePlacementSafety.EvaluateAtPivot(furniture, resolved, instances, null);
+        if (check.hasFurnitureCollision)
+            return fallbackPivot;
+
+        return resolved;
+    }
+
+    /// <summary>True when the pose is clear of other furniture (walls are not hard-blocked).</summary>
+    public bool IsPlacementClear(PlacedFurniture furniture)
+    {
+        if (furniture == null) return true;
+        var check = FurniturePlacementSafety.Evaluate(furniture, instances, null);
+        return !check.hasFurnitureCollision;
     }
 
     /// <summary>Keeps a world point inside the confirmed room floor (inset from walls).</summary>
@@ -637,33 +719,12 @@ public class FurniturePlacementController : MonoBehaviour
     }
 
     /// <summary>
-    /// Clamps a furniture pivot so its full XZ footprint stays inside the room
-    /// (prevents beds/sofas from poking through walls).
+    /// Soft room clamp for the furniture pivot (does not hard-block drag against walls).
     /// </summary>
     public Vector3 ClampFurnitureInsideRoom(PlacedFurniture furniture, Vector3 desiredPivot)
     {
-        if (!clampToRoomBounds || scanController == null || !IsRoomConfirmed() || furniture == null)
-            return ClampToRoom(desiredPivot);
-
-        var footprintInset = EstimateFootprintInset(furniture);
-        var inset = Mathf.Max(roomWallInset, footprintInset + 0.04f);
-        var clamped = scanController.ClampToFloorPolygon(desiredPivot, inset);
-
-        // Fine-tune: push until every footprint corner is inside the floor polygon.
-        for (var step = 0; step < 10; step++)
-        {
-            if (AreFootprintCornersInside(furniture, clamped))
-                break;
-
-            var centroid = scanController.FloorPolygonCentroid;
-            var push = centroid - clamped;
-            push.y = 0f;
-            if (push.sqrMagnitude < 1e-6f) break;
-            clamped += push.normalized * 0.08f;
-            clamped = scanController.ClampToFloorPolygon(clamped, inset);
-        }
-
-        return clamped;
+        // Wall hard-blocking reverted — only a light pivot clamp to the room outline.
+        return ClampToRoom(desiredPivot);
     }
 
     static float EstimateFootprintInset(PlacedFurniture furniture)
@@ -742,6 +803,13 @@ public class FurniturePlacementController : MonoBehaviour
                     "This item streams from the cloud. Wait for the catalog to finish loading, then try again.");
                 return;
             }
+
+            // No local Resources/Furniture meshes anymore — never fall back to the
+            // green placeholder cube when remote catalog URLs are missing.
+            SpawnFailed?.Invoke("missingGlbUrl",
+                $"No cloud model URL for '{ResolveModelId(request)}'. " +
+                "Check that the backend is reachable and RemoteFurnitureCatalogLoader.catalogUrl is correct.");
+            return;
         }
 
         var prefab = ResolvePrefab(request);
@@ -767,6 +835,8 @@ public class FurniturePlacementController : MonoBehaviour
         DiscardPending();
         pending = model;
         Select(null);
+        if (model != null && !string.IsNullOrEmpty(model.modelId))
+            ModelReady?.Invoke(model.modelId);
 
         // Live AR: wait for a floor tap so feet land on the real surface.
         // Planner: drop immediately on the stylized room floor.
@@ -867,6 +937,8 @@ public class FurniturePlacementController : MonoBehaviour
         instance.name = $"{model.modelId}_{nextInstanceIndex}";
 
         ARFurniturePrefabCleanup.HideEmbeddedBaseMeshes(instance);
+        if (model.instanceTemplate != null)
+            GltfUrpMaterialFixer.Apply(instance);
 
         // Reset to identity before measuring, so the bounds we read are the
         // model's authored size and not whatever the prefab happened to be scaled to.
@@ -939,6 +1011,16 @@ public class FurniturePlacementController : MonoBehaviour
         FlattenUpright(instance.transform);
 
         instances.Add(placed);
+
+        // Push clear of any existing furniture (large sofas need footprint checks, not point clearance alone).
+        var clearPivot = ResolveCollisionFreePivot(placed, placed.transform.position, FindClearSpawnPosition(placed.transform.position));
+        if ((clearPivot - placed.transform.position).sqrMagnitude > 1e-6f)
+        {
+            var clearFloorY = ResolveFloorHeight(clearPivot).y;
+            SeatOnFloor(instance, localBounds.min.y, new Vector3(clearPivot.x, clearFloorY, clearPivot.z));
+            FlattenUpright(instance.transform);
+        }
+
         Select(placed);
 
         GroundInstance(placed);
@@ -948,10 +1030,20 @@ public class FurniturePlacementController : MonoBehaviour
         if (ShouldUseWorldAnchors())
             PinFurnitureToWorld(placed);
 
+        StartCoroutine(ReGroundAfterRender(placed));
+
         Debug.Log($"[FurniturePlacementController] Placed '{placed.InstanceId}' ({placed.ModelId}) " +
                   $"at {placed.transform.position} sized {placed.CurrentDimensions}.");
 
         FurniturePlaced?.Invoke(placed);
+    }
+
+    IEnumerator ReGroundAfterRender(PlacedFurniture placed)
+    {
+        yield return null;
+        if (placed == null) yield break;
+        Physics.SyncTransforms();
+        GroundInstance(placed);
     }
 
     void DiscardPending()
@@ -1378,6 +1470,31 @@ public class FurniturePlacementController : MonoBehaviour
 
         if (!found) return false;
         floorY = bestY;
+
+        if (IsRoomConfirmed() && TryGetConfirmedFloorY(out var confirmedY))
+        {
+            // When several horizontal planes overlap, prefer the one nearest the scanned room floor.
+            var bestDelta = float.PositiveInfinity;
+            var bestPlaneY = floorY;
+            foreach (var plane in planeManager.trackables)
+            {
+                if (plane == null) continue;
+                if (plane.alignment != PlaneAlignment.HorizontalUp) continue;
+                if (plane.trackingState != TrackingState.Tracking) continue;
+                if (plane.size.x * plane.size.y < minFloorArea) continue;
+                var y = plane.transform.position.y;
+                if (y > cameraY - minDepth) continue;
+                if (!PlaneContainsXZ(plane, worldPoint)) continue;
+                var delta = Mathf.Abs(y - confirmedY);
+                if (delta >= bestDelta) continue;
+                bestDelta = delta;
+                bestPlaneY = y;
+            }
+
+            if (bestDelta < float.PositiveInfinity)
+                floorY = bestPlaneY;
+        }
+
         return true;
     }
 

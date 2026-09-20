@@ -116,50 +116,6 @@ class ProjectService {
   }
 
   /**
-   * Update project status
-   */
-  async updateProjectStatus(id: string, status: ProjectStatus): Promise<Project | null> {
-    return this.updateProject(id, { status });
-  }
-
-  /**
-   * Get projects by status
-   */
-  async getProjectsByStatus(status: ProjectStatus): Promise<Project[]> {
-    await this.initialize();
-    return this.projects.filter(p => p.status === status);
-  }
-
-  /**
-   * Get recent projects
-   */
-  async getRecentProjects(limit: number = 5): Promise<Project[]> {
-    await this.initialize();
-    return [...this.projects]
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, Math.max(1, Math.min(limit, 50)));
-  }
-
-  /**
-   * Search projects by name or tags
-   */
-  async searchProjects(query: string): Promise<Project[]> {
-    await this.initialize();
-    const lowerQuery = query.toLowerCase().trim();
-
-    if (!lowerQuery) return [];
-
-    return this.projects.filter(project => {
-      const nameMatch = project.name.toLowerCase().includes(lowerQuery);
-      const descMatch = project.description?.toLowerCase().includes(lowerQuery);
-      const tagMatch = project.tags?.some(tag => tag.toLowerCase().includes(lowerQuery));
-      const roomMatch = project.roomType.toLowerCase().includes(lowerQuery);
-
-      return nameMatch || descMatch || tagMatch || roomMatch;
-    }).sort((a, b) => b.updatedAt - a.updatedAt);
-  }
-
-  /**
    * Persist a successful Unity 3D layout export as a project (Profile → Projects).
    */
   async saveUnityLayoutExport(payload: ExportResultPayload): Promise<Project> {

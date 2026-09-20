@@ -18,10 +18,11 @@ public class ARDesignLighting : MonoBehaviour
     [Header("Estimation")]
     [Tooltip("Requested modes. Providers silently downgrade to what they support.")]
     [SerializeField]
+    // Keep AR light estimation mild so fabric textures stay readable.
+    // Spherical harmonics from bright rooms wash Shader Graph materials to chalk.
     private LightEstimation requestedLightEstimation =
         LightEstimation.AmbientIntensity |
         LightEstimation.AmbientColor |
-        LightEstimation.AmbientSphericalHarmonics |
         LightEstimation.MainLightDirection |
         LightEstimation.MainLightIntensity;
 
@@ -29,15 +30,13 @@ public class ARDesignLighting : MonoBehaviour
     [Tooltip("How quickly the light follows the estimate. Raw estimates flicker frame to frame.")]
     [SerializeField] private float smoothing = 6f;
     [Tooltip("Floor on brightness so a dim room does not render furniture as a silhouette.")]
-    [SerializeField] private float minIntensity = 0.45f;
-    [SerializeField] private float maxIntensity = 1.15f;
+    [SerializeField] private float minIntensity = 0.35f;
+    [SerializeField] private float maxIntensity = 0.65f;
 
     Light directionalLight;
     float targetIntensity = 1f;
     Color targetColor = Color.white;
     Quaternion targetRotation;
-    SphericalHarmonicsL2 targetAmbient;
-    bool hasAmbientProbe;
 
     void Reset() => EnsureDirectionalLight();
 
@@ -47,7 +46,6 @@ public class ARDesignLighting : MonoBehaviour
         targetIntensity = Mathf.Max(directionalLight.intensity, minIntensity);
         targetColor = directionalLight.color;
         targetRotation = transform.rotation;
-        targetAmbient = RenderSettings.ambientProbe;
 
         if (cameraManager == null)
             cameraManager = FindFirstObjectByType<ARCameraManager>();
@@ -67,7 +65,8 @@ public class ARDesignLighting : MonoBehaviour
         // Flat ambient floor so furniture stays readable against passthrough
         // before the first light-estimation sample arrives.
         RenderSettings.ambientMode = AmbientMode.Flat;
-        RenderSettings.ambientLight = new Color(0.55f, 0.55f, 0.58f, 1f);
+        // Soft ambient — bright white ambient was washing textured furniture to chalk.
+        RenderSettings.ambientLight = new Color(0.42f, 0.43f, 0.46f, 1f);
     }
 
     void OnDisable()
@@ -86,23 +85,13 @@ public class ARDesignLighting : MonoBehaviour
         directionalLight.color = Color.Lerp(directionalLight.color, targetColor, t);
         transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, t);
 
-        if (hasAmbientProbe)
-        {
-            RenderSettings.ambientMode = AmbientMode.Skybox;
-            // Blend toward the estimated probe so frame-to-frame SH noise doesn't
-            // make furniture shimmer against the live camera feed.
-            var blended = default(SphericalHarmonicsL2);
-            for (var rgb = 0; rgb < 3; rgb++)
-            {
-                for (var i = 0; i < 9; i++)
-                {
-                    var current = RenderSettings.ambientProbe[rgb, i];
-                    blended[rgb, i] = Mathf.Lerp(current, targetAmbient[rgb, i], t);
-                }
-            }
-
-            RenderSettings.ambientProbe = blended;
-        }
+        // Keep flat ambient in AR — spherical harmonics from the live camera feed
+        // blow out any Lit fallback materials to flat white on bright floors.
+        RenderSettings.ambientMode = AmbientMode.Flat;
+        RenderSettings.ambientLight = Color.Lerp(
+            RenderSettings.ambientLight,
+            new Color(0.42f, 0.43f, 0.46f, 1f),
+            t);
     }
 
     void OnFrameReceived(ARCameraFrameEventArgs args)
@@ -111,15 +100,15 @@ public class ARDesignLighting : MonoBehaviour
 
         var estimation = args.lightEstimation;
 
-        if (estimation.averageBrightness.HasValue)
+            if (estimation.averageBrightness.HasValue)
         {
             targetIntensity = Mathf.Clamp(
-                estimation.averageBrightness.Value * 1.15f, minIntensity, maxIntensity);
+                estimation.averageBrightness.Value * 0.9f, minIntensity, maxIntensity);
         }
         else if (estimation.mainLightIntensityLumens.HasValue)
         {
             targetIntensity = Mathf.Clamp(
-                estimation.mainLightIntensityLumens.Value / 1000f, minIntensity, maxIntensity);
+                estimation.mainLightIntensityLumens.Value / 1200f, minIntensity, maxIntensity);
         }
 
         if (estimation.mainLightColor.HasValue)
@@ -134,12 +123,7 @@ public class ARDesignLighting : MonoBehaviour
                 targetRotation = Quaternion.LookRotation(direction.normalized);
         }
 
-        if (estimation.ambientSphericalHarmonics.HasValue)
-        {
-            targetAmbient = estimation.ambientSphericalHarmonics.Value;
-            hasAmbientProbe = true;
-        }
-        else if (estimation.averageColorTemperature.HasValue)
+        if (estimation.averageColorTemperature.HasValue)
         {
             directionalLight.useColorTemperature = true;
             directionalLight.colorTemperature = estimation.averageColorTemperature.Value;

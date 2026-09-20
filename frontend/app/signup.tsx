@@ -223,16 +223,11 @@ export default function SignUpScreen() {
       setIsLoading(false);
 
       if (response && response.user) {
-        // Automatically redirect to home screen after successful signup
+        await AsyncStorage.setItem(
+          'pendingWelcomeName',
+          trimmedName || response.user.name || 'there'
+        );
         router.replace('/(tabs)');
-
-        // Brief notification
-        setTimeout(() => {
-          Alert.alert(
-            'Welcome! 🎉',
-            `Your account has been created, ${trimmedName}.`
-          );
-        }, 500);
       }
     } catch (error: any) {
       console.error('[SignUp] Failed to create account', error);

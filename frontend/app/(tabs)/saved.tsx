@@ -1,24 +1,65 @@
-import { View, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, Image } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  Image,
+  Pressable,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AppText } from '@/components/ui/Text';
 import { Screen } from '@/components/ui/Screen';
+import { AppDialog, type AppDialogAction } from '@/components/ui/AppDialog';
+import { ImageViewerModal } from '@/components/ui/ImageViewerModal';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, radii } from '@/components/ui/theme';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { savedItemsService, type SavedItem } from '@/services/SavedItemsService';
-import { AnimatedButton, AnimatedCard, FadeInView, SlideInView, ScaleInView } from '@/components/interactive';
-import { getHorizontalPadding, isSmallScreen } from '@/utils/responsive';
+import { FadeInView, SlideInView } from '@/components/interactive';
+import { getHorizontalPadding } from '@/utils/responsive';
+import { BRAND } from '@/constants/branding';
+import { formatArPhotoDisplayName, isArPhotoFileName } from '@/utils/arPhotoNaming';
 
-// Helper function to convert hex color to rgba with opacity
-const hexToRgba = (hex: string, alpha: number): string => {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+type DialogState = {
+  title: string;
+  message: string;
+  actions: AppDialogAction[];
 };
+
+type PreviewState = {
+  uri: string;
+  title: string;
+  subtitle?: string;
+};
+
+function displayTitleForItem(item: SavedItem): string {
+  const metaSource = item.metadata?.source;
+  if (
+    metaSource === 'unity-ar-photo' ||
+    item.type === 'design' && isArPhotoFileName(item.name)
+  ) {
+    return formatArPhotoDisplayName(item.name, item.savedAt);
+  }
+  return item.name;
+}
+
+function typeLabel(type: SavedItem['type']): string {
+  switch (type) {
+    case 'furniture':
+      return 'Product';
+    case 'design':
+      return 'Design';
+    case 'theme':
+      return 'Theme';
+    case 'project':
+      return 'Project';
+    default:
+      return 'Saved';
+  }
+}
 
 export default function SavedScreen() {
   const { colors, statusBarStyle } = useTheme();
@@ -27,138 +68,146 @@ export default function SavedScreen() {
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [savedItems, setSavedItems] = useState<SavedItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<DialogState | null>(null);
+  const [preview, setPreview] = useState<PreviewState | null>(null);
+
+  const closeDialog = () => setDialog(null);
+  const closePreview = () => setPreview(null);
+
+  const showDialog = (title: string, message: string, actions?: AppDialogAction[]) => {
+    setDialog({
+      title,
+      message,
+      actions: actions ?? [{ label: 'OK', tone: 'primary', onPress: closeDialog }],
+    });
+  };
 
   const toggleMultiSelect = () => {
     setMultiSelectMode(!multiSelectMode);
-    setSelectedItems(new Set()); // Clear selection when toggling mode
-  };
-
-  const toggleItemSelection = (itemId: string) => {
-    const newSelection = new Set(selectedItems);
-    if (newSelection.has(itemId)) {
-      newSelection.delete(itemId);
-    } else {
-      newSelection.add(itemId);
-    }
-    setSelectedItems(newSelection);
-  };
-
-  const selectAll = () => {
-    setSelectedItems(new Set(savedItems.map(item => item.id)));
-  };
-
-  const deselectAll = () => {
     setSelectedItems(new Set());
   };
 
-  // Load saved items when screen comes into focus
-  useFocusEffect(
-    useCallback(() => {
-      const initializeAndLoad = async () => {
-        try {
-          // Initialize with sample items if first time
-          const { initializeSavedItems } = await import('@/utils/initializeSavedItems');
-          await initializeSavedItems();
-        } catch (error) {
-          console.warn('[SavedScreen] Failed to initialize sample items:', error);
-        }
-        // Load saved items
-        await loadSavedItems();
-      };
+  const toggleItemSelection = (itemId: string) => {
+    const next = new Set(selectedItems);
+    if (next.has(itemId)) next.delete(itemId);
+    else next.add(itemId);
+    setSelectedItems(next);
+  };
 
-      initializeAndLoad();
-    }, [])
-  );
+  const selectAll = () => setSelectedItems(new Set(savedItems.map((item) => item.id)));
+  const deselectAll = () => setSelectedItems(new Set());
 
-  const loadSavedItems = async () => {
+  const loadSavedItems = useCallback(async () => {
     try {
       setIsLoading(true);
       const items = await savedItemsService.getSavedItems();
       setSavedItems(items);
     } catch (error) {
       console.error('[SavedScreen] Failed to load saved items:', error);
-      Alert.alert('Error', 'Failed to load saved items. Please try again.');
+      showDialog('Couldn’t load saved items', 'Check that you’re signed in and the backend is running.');
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      const initializeAndLoad = async () => {
+        try {
+          const { initializeSavedItems } = await import('@/utils/initializeSavedItems');
+          await initializeSavedItems();
+        } catch (error) {
+          console.warn('[SavedScreen] Failed to initialize sample items:', error);
+        }
+        await loadSavedItems();
+      };
+      void initializeAndLoad();
+    }, [loadSavedItems]),
+  );
 
   const handleDeleteSelected = () => {
     if (selectedItems.size === 0) return;
-    
-    Alert.alert(
-      'Delete Items',
-      `Are you sure you want to delete ${selectedItems.size} item(s)?`,
+
+    showDialog(
+      'Delete items',
+      `Remove ${selectedItems.size} item${selectedItems.size === 1 ? '' : 's'} from saved?`,
       [
-        { text: 'Cancel', style: 'cancel' },
+        { label: 'Cancel', tone: 'ghost', onPress: closeDialog },
         {
-          text: 'Delete',
-          style: 'destructive',
+          label: 'Delete',
+          tone: 'danger',
           onPress: async () => {
+            closeDialog();
             try {
               const idsToDelete = Array.from(selectedItems);
               const deletedCount = await savedItemsService.removeSavedItems(idsToDelete);
-              
               if (deletedCount > 0) {
-                // Reload items
                 await loadSavedItems();
                 setSelectedItems(new Set());
-                
-                if (selectedItems.size === savedItems.length) {
+                if (idsToDelete.length === savedItems.length) {
                   setMultiSelectMode(false);
                 }
               }
             } catch (error) {
               console.error('[SavedScreen] Failed to delete items:', error);
-              Alert.alert('Error', 'Failed to delete items. Please try again.');
+              showDialog('Couldn’t delete', 'Please try again.');
             }
           },
         },
-      ]
+      ],
     );
   };
 
   const handleItemPress = (item: SavedItem) => {
     if (multiSelectMode) {
       toggleItemSelection(item.id);
+      return;
+    }
+
+    if (item.imageUrl) {
+      setPreview({
+        uri: item.imageUrl,
+        title: displayTitleForItem(item),
+        subtitle: item.description || typeLabel(item.type),
+      });
+      return;
+    }
+
+    if (item.type === 'project') {
+      router.push('/projects');
+    } else if (item.type === 'theme') {
+      router.push(`/explore?id=${item.id}`);
     } else {
-      // Navigate to item details based on type
-      if (item.type === 'project') {
-        router.push('/projects');
-      } else if (item.type === 'design') {
-        router.push(`/ai-design?id=${item.id}`);
-      } else if (item.type === 'theme') {
-        router.push(`/explore?id=${item.id}`);
-      } else {
-        // For furniture items, could navigate to a detail screen
-        // For now, show an alert
-        Alert.alert(item.name, item.description || `Price: ${item.price || 'N/A'}`);
-      }
+      showDialog(item.name, item.description || item.price || 'Saved item');
     }
   };
 
-  const handleUnsaveItem = async (itemId: string) => {
-    Alert.alert(
-      'Remove Item',
-      'Are you sure you want to remove this item from your saved items?',
+  const handleUnsaveItem = (itemId: string) => {
+    showDialog(
+      'Remove item',
+      'Remove this from your saved items?',
       [
-        { text: 'Cancel', style: 'cancel' },
+        { label: 'Cancel', tone: 'ghost', onPress: closeDialog },
         {
-          text: 'Remove',
-          style: 'destructive',
+          label: 'Remove',
+          tone: 'danger',
           onPress: async () => {
+            closeDialog();
+            if (removingId) return;
+            setRemovingId(itemId);
             try {
               const success = await savedItemsService.removeSavedItem(itemId);
-              if (success) {
-                await loadSavedItems();
-              }
+              if (success) await loadSavedItems();
             } catch (error) {
               console.error('[SavedScreen] Failed to unsave item:', error);
-              Alert.alert('Error', 'Failed to remove item. Please try again.');
+              showDialog('Couldn’t remove item', 'Please try again.');
+            } finally {
+              setRemovingId(null);
             }
           },
         },
-      ]
+      ],
     );
   };
 
@@ -166,155 +215,188 @@ export default function SavedScreen() {
     <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       <StatusBar style={statusBarStyle} />
       <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.surfaceSecondary }]} edges={['top']}>
-        <Screen 
-          contentContainerStyle={[
-            styles.screenContent,
-            { paddingTop: spacing.md }
-          ]}
-        >
-          {/* Header */}
-          <View style={styles.header}>
+        <Screen contentContainerStyle={styles.screenContent}>
+          <FadeInView delay={80}>
             <View style={styles.headerRow}>
-              <AppText variant="h1" style={[styles.title, { color: colors.textPrimary }]}>
-                Saved Items
-              </AppText>
-              <AnimatedButton
-                style={styles.actionButton}
+              <View style={styles.headerCopy}>
+                <AppText variant="h2" weight="700" style={[styles.title, { color: colors.textPrimary }]}>
+                  Saved
+                </AppText>
+                <AppText variant="caption" style={{ color: colors.textSecondary }}>
+                  Products and designs you’ve kept
+                </AppText>
+              </View>
+              <Pressable
                 onPress={toggleMultiSelect}
-                hapticType="light"
+                style={[
+                  styles.selectBtn,
+                  {
+                    backgroundColor: multiSelectMode ? colors.accent : colors.surfaceSecondary,
+                    borderColor: multiSelectMode ? colors.accent : colors.border,
+                  },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={multiSelectMode ? 'Cancel selection' : 'Select items'}
               >
-                <AppText variant="body" style={{ color: colors.accent }}>
+                <AppText
+                  variant="caption"
+                  weight="600"
+                  style={{ color: multiSelectMode ? '#FFFFFF' : colors.textSecondary }}
+                >
                   {multiSelectMode ? 'Cancel' : 'Select'}
                 </AppText>
-              </AnimatedButton>
+              </Pressable>
             </View>
-            
-            {multiSelectMode && (
-              <View style={[styles.multiSelectToolbar, { borderBottomColor: colors.border }]}>
-                <AppText variant="body" style={[styles.selectionCount, { color: colors.textSecondary }]}>
-                  {selectedItems.size} {selectedItems.size === 1 ? 'item' : 'items'} selected
-                </AppText>
-                
-                <View style={styles.bulkActions}>
-                  {selectedItems.size > 0 && (
-                    <TouchableOpacity
-                      style={styles.actionButton}
-                      onPress={deselectAll}
-                      activeOpacity={0.7}
-                    >
-                      <AppText variant="body" style={{ color: colors.accent }}>
-                        Deselect All
-                      </AppText>
-                    </TouchableOpacity>
-                  )}
-                  {selectedItems.size < savedItems.length && (
-                    <TouchableOpacity
-                      style={styles.actionButton}
-                      onPress={selectAll}
-                      activeOpacity={0.7}
-                    >
-                      <AppText variant="body" style={{ color: colors.accent }}>
-                        Select All
-                      </AppText>
-                    </TouchableOpacity>
-                  )}
-                  {selectedItems.size > 0 && (
-                    <AnimatedButton
-                      style={[styles.actionButton, styles.deleteButton]}
-                      onPress={handleDeleteSelected}
-                      hapticType="warning"
-                    >
-                      <Ionicons name="trash-outline" size={22} color="#EF4444" />
-                    </AnimatedButton>
-                  )}
-                </View>
-              </View>
-            )}
-          </View>
+          </FadeInView>
 
-          {/* Saved Items List */}
+          {multiSelectMode ? (
+            <View style={[styles.multiSelectToolbar, { borderBottomColor: colors.border }]}>
+              <AppText variant="caption" style={{ color: colors.textSecondary }}>
+                {selectedItems.size} selected
+              </AppText>
+              <View style={styles.bulkActions}>
+                {selectedItems.size > 0 ? (
+                  <TouchableOpacity onPress={deselectAll} hitSlop={8}>
+                    <AppText variant="caption" weight="600" style={{ color: colors.accent }}>
+                      Clear
+                    </AppText>
+                  </TouchableOpacity>
+                ) : null}
+                {selectedItems.size < savedItems.length ? (
+                  <TouchableOpacity onPress={selectAll} hitSlop={8}>
+                    <AppText variant="caption" weight="600" style={{ color: colors.accent }}>
+                      All
+                    </AppText>
+                  </TouchableOpacity>
+                ) : null}
+                {selectedItems.size > 0 ? (
+                  <Pressable
+                    onPress={handleDeleteSelected}
+                    style={[styles.trashBtn, { backgroundColor: colors.accentSoft }]}
+                    accessibilityLabel="Delete selected"
+                  >
+                    <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
+
           {isLoading ? (
-            <View style={styles.loadingContainer}>
+            <View style={styles.stateBlock}>
               <ActivityIndicator size="large" color={colors.accent} />
-              <AppText variant="body" style={[styles.loadingText, { color: colors.textSecondary }]}>
-                Loading saved items...
+              <AppText variant="body" style={{ color: colors.textSecondary, marginTop: spacing.md }}>
+                Loading saved items…
               </AppText>
             </View>
           ) : savedItems.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <Ionicons name="bookmark-outline" size={64} color={colors.textMuted} />
-              <AppText variant="subtitle" weight="600" style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-                No Saved Items
+            <View style={styles.stateBlock}>
+              <View style={[styles.emptyIcon, { backgroundColor: colors.accentSoft }]}>
+                <Ionicons name="heart-outline" size={36} color={BRAND.colors.orange} />
+              </View>
+              <AppText variant="subtitle" weight="600" style={{ color: colors.textPrimary }}>
+                Nothing saved yet
               </AppText>
-              <AppText variant="body" style={[styles.emptyText, { color: colors.textSecondary }]}>
-                Items you save will appear here
+              <AppText
+                variant="body"
+                style={{ color: colors.textSecondary, textAlign: 'center', paddingHorizontal: spacing.xl }}
+              >
+                Tap the heart on a product to keep it here.
               </AppText>
             </View>
           ) : (
             <View style={styles.itemsList}>
-              {savedItems.map((item) => {
+              {savedItems.map((item, index) => {
                 const isSelected = selectedItems.has(item.id);
                 const iconName = (item.iconName as keyof typeof Ionicons.glyphMap) || 'cube-outline';
-                const iconColor = item.iconColor || colors.accent;
+                const isRemoving = removingId === item.id;
+
                 return (
-                  <SlideInView key={item.id} direction="right" delay={savedItems.indexOf(item) * 50}>
-                    <AnimatedCard
-                      style={[
-                        styles.savedCard, 
-                        { 
-                          backgroundColor: colors.surfacePrimary, 
-                          borderColor: isSelected ? colors.accent : colors.border,
-                          borderWidth: isSelected ? 2 : 1,
-                        }
-                      ]} 
+                  <SlideInView key={item.id} direction="up" delay={Math.min(index * 40, 240)}>
+                    <Pressable
                       onPress={() => handleItemPress(item)}
-                      hapticFeedback={true}
-                    >
-                    {multiSelectMode && (
-                      <View style={[
-                        styles.checkbox,
-                        { 
-                          backgroundColor: isSelected ? colors.accent : 'transparent',
+                      style={[
+                        styles.savedCard,
+                        {
+                          backgroundColor: colors.surfacePrimary,
                           borderColor: isSelected ? colors.accent : colors.border,
-                        }
-                      ]}>
-                        {isSelected && (
-                          <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+                        },
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel={item.name}
+                    >
+                      {multiSelectMode ? (
+                        <View
+                          style={[
+                            styles.checkbox,
+                            {
+                              backgroundColor: isSelected ? colors.accent : colors.surfacePrimary,
+                              borderColor: isSelected ? colors.accent : colors.border,
+                            },
+                          ]}
+                        >
+                          {isSelected ? (
+                            <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+                          ) : null}
+                        </View>
+                      ) : null}
+
+                      <View style={[styles.thumb, { backgroundColor: colors.surfaceTertiary }]}>
+                        {item.imageUrl ? (
+                          <Image
+                            source={{ uri: item.imageUrl }}
+                            style={styles.thumbImage}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <Ionicons name={iconName} size={28} color={colors.accent} />
                         )}
                       </View>
-                    )}
-                    <View style={[styles.itemIconContainer, { backgroundColor: hexToRgba(iconColor, 0.15) }]}>
-                      {item.imageUrl ? (
-                        <Image source={{ uri: item.imageUrl }} style={{ width: '100%', height: '100%', borderRadius: radii.md }} resizeMode="cover" />
-                      ) : (
-                        <Ionicons name={iconName} size={28} color={iconColor} />
-                      )}
-                    </View>
-                    <View style={styles.itemInfo}>
-                      <AppText variant="subtitle" weight="600" style={[styles.itemName, { color: colors.textPrimary }]}>
-                        {item.name}
-                      </AppText>
-                      {item.price && (
-                        <AppText variant="body" style={[styles.itemPrice, { color: colors.accent }]}>
-                          {item.price}
+
+                      <View style={styles.itemInfo}>
+                        <View style={[styles.typeChip, { backgroundColor: colors.accentSoft }]}>
+                          <AppText variant="caption" weight="600" style={{ color: colors.accent, fontSize: 11 }}>
+                            {typeLabel(item.type)}
+                          </AppText>
+                        </View>
+                        <AppText
+                          variant="body"
+                          weight="600"
+                          numberOfLines={2}
+                          style={{ color: colors.textPrimary }}
+                        >
+                          {displayTitleForItem(item)}
                         </AppText>
-                      )}
-                      {item.description && (
-                        <AppText variant="caption" color="textMuted" numberOfLines={1}>
-                          {item.description}
-                        </AppText>
-                      )}
-                    </View>
-                    {!multiSelectMode && (
-                      <AnimatedButton 
-                        style={styles.heartButton} 
-                        onPress={() => handleUnsaveItem(item.id)}
-                        hapticType="light"
-                      >
-                        <Ionicons name="heart" size={22} color="#EC4899" />
-                      </AnimatedButton>
-                    )}
-                    </AnimatedCard>
+                        {item.description || item.price ? (
+                          <AppText
+                            variant="caption"
+                            numberOfLines={2}
+                            style={{ color: colors.textSecondary }}
+                          >
+                            {item.description || item.price}
+                          </AppText>
+                        ) : null}
+                      </View>
+
+                      {!multiSelectMode ? (
+                        <Pressable
+                          onPress={() => handleUnsaveItem(item.id)}
+                          hitSlop={8}
+                          disabled={isRemoving}
+                          style={[
+                            styles.heartBtn,
+                            {
+                              backgroundColor: colors.surfacePrimary,
+                              opacity: isRemoving ? 0.55 : 1,
+                            },
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityLabel="Remove from saved"
+                        >
+                          <Ionicons name="heart" size={18} color={BRAND.colors.orange} />
+                        </Pressable>
+                      ) : null}
+                    </Pressable>
                   </SlideInView>
                 );
               })}
@@ -322,6 +404,22 @@ export default function SavedScreen() {
           )}
         </Screen>
       </SafeAreaView>
+
+      <AppDialog
+        visible={Boolean(dialog)}
+        title={dialog?.title ?? ''}
+        message={dialog?.message}
+        actions={dialog?.actions}
+        onRequestClose={closeDialog}
+      />
+
+      <ImageViewerModal
+        visible={Boolean(preview)}
+        uri={preview?.uri ?? null}
+        title={preview?.title}
+        subtitle={preview?.subtitle}
+        onClose={closePreview}
+      />
     </View>
   );
 }
@@ -334,45 +432,48 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   screenContent: {
-    paddingHorizontal: getHorizontalPadding(spacing.xl),
+    paddingHorizontal: getHorizontalPadding(24),
+    paddingTop: spacing.md,
     paddingBottom: spacing.xxl * 2.5,
-    gap: isSmallScreen ? spacing.lg : spacing.xxl,
-  },
-  header: {
-    marginBottom: spacing.md,
-    paddingTop: spacing.xs,
+    gap: spacing.lg,
   },
   headerRow: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.xs,
+    gap: spacing.md,
+  },
+  headerCopy: {
+    flex: 1,
+    gap: 4,
   },
   title: {
-    flex: 1,
+    letterSpacing: 0.2,
+  },
+  selectBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.md,
+    borderWidth: 1,
   },
   multiSelectToolbar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: spacing.xs,
-    paddingVertical: spacing.xs,
+    paddingBottom: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   bulkActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: spacing.md,
   },
-  actionButton: {
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
-  },
-  deleteButton: {
-    padding: spacing.xs,
-  },
-  selectionCount: {
-    fontSize: 14,
+  trashBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   itemsList: {
     gap: spacing.md,
@@ -380,60 +481,62 @@ const styles = StyleSheet.create({
   savedCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: radii.md,
-    padding: spacing.lg,
+    borderRadius: radii.lg,
+    padding: spacing.md,
     gap: spacing.md,
+    borderWidth: 2,
   },
   checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: radii.sm,
+    width: 22,
+    height: 22,
+    borderRadius: 6,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  itemIconContainer: {
-    width: 64,
-    height: 64,
+  thumb: {
+    width: 72,
+    height: 72,
     borderRadius: radii.md,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  thumbImage: {
+    width: '100%',
+    height: '100%',
   },
   itemInfo: {
     flex: 1,
-    gap: spacing.xs,
-  },
-  itemName: {
-    marginBottom: spacing.xs - 2,
-  },
-  itemPrice: {
-    fontWeight: '700',
-  },
-  heartButton: {
-    padding: spacing.xs,
-  },
-  loadingContainer: {
-    flex: 1,
+    gap: 4,
+    minHeight: 64,
     justifyContent: 'center',
+  },
+  typeChip: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radii.sm,
+  },
+  heartBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
-    gap: spacing.md,
-    paddingVertical: spacing.xxl * 2,
-  },
-  loadingText: {
-    marginTop: spacing.sm,
-  },
-  emptyContainer: {
-    flex: 1,
     justifyContent: 'center',
+  },
+  stateBlock: {
     alignItems: 'center',
-    gap: spacing.md,
+    justifyContent: 'center',
     paddingVertical: spacing.xxl * 2,
+    gap: spacing.sm,
   },
-  emptyTitle: {
-    marginTop: spacing.md,
-  },
-  emptyText: {
-    textAlign: 'center',
-    paddingHorizontal: getHorizontalPadding(spacing.xl),
+  emptyIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.sm,
   },
 });

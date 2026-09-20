@@ -104,7 +104,22 @@ const roomMeasurementController = {
       if (!requireMongo(res)) return;
 
       const userId = req.user?.userId || req.user?.id;
-      const filter = userId ? { userId } : {};
+      const isDev =
+        process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production';
+
+      // Older AR saves used the unauthenticated "dev-user" id. Claim them for the
+      // signed-in account so Room Measurements isn't empty after signup/login.
+      if (userId && userId !== 'dev-user') {
+        await RoomMeasurement.updateMany(
+          { $or: [{ userId: 'dev-user' }, { userId: '' }, { userId: null }] },
+          { $set: { userId: String(userId) } },
+        );
+      }
+
+      const filter = {};
+      if (userId) {
+        filter.userId = String(userId);
+      }
 
       if (req.query.projectId) {
         filter.projectId = String(req.query.projectId).trim();
@@ -114,6 +129,12 @@ const roomMeasurementController = {
         .sort({ createdAt: -1 })
         .limit(Math.min(Number(req.query.limit) || 50, 100))
         .lean();
+
+      if (isDev) {
+        console.log(
+          `[RoomMeasurements] list userId=${userId || '(none)'} count=${items.length}`,
+        );
+      }
 
       res.json({
         success: true,
@@ -144,6 +165,50 @@ const roomMeasurementController = {
           error: 'Not authorized to view this measurement.',
         });
       }
+
+      res.json({
+        success: true,
+        measurement: toPublicMeasurement(item),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async updateMeasurement(req, res, next) {
+    try {
+      if (!requireMongo(res)) return;
+
+      const { name } = req.body ?? {};
+      if (typeof name !== 'string' || !name.trim()) {
+        return res.status(400).json({
+          success: false,
+          error: 'A non-empty name is required.',
+        });
+      }
+
+      const trimmed = name.trim().slice(0, 100);
+      const item = await RoomMeasurement.findById(req.params.id);
+      if (!item) {
+        return res.status(404).json({
+          success: false,
+          error: 'Room measurement not found.',
+        });
+      }
+
+      const userId = req.user?.userId || req.user?.id;
+      if (userId && item.userId && item.userId !== userId && item.userId !== 'dev-user') {
+        return res.status(403).json({
+          success: false,
+          error: 'Not authorized to update this measurement.',
+        });
+      }
+
+      item.name = trimmed;
+      if (userId && (!item.userId || item.userId === 'dev-user')) {
+        item.userId = String(userId);
+      }
+      await item.save();
 
       res.json({
         success: true,

@@ -67,6 +67,10 @@ export function enhanceModelMaterials(
           // Mid-tone authored color (Accent Chair mango / wood).
           map = null;
           color = authored;
+        } else if (nearWhite && isRoomShellName(name)) {
+          // Keep planner cream/white room shells — don't force furniture gray.
+          map = null;
+          color = authored;
         } else {
           map = null;
           color = heuristicColor(name, nearBlack);
@@ -148,6 +152,16 @@ function isTextureReady(texture: THREE.Texture | null | undefined): boolean {
   }
 
   return true;
+}
+
+function isRoomShellName(name: string): boolean {
+  return (
+    name.includes('room_') ||
+    name.includes('floor') ||
+    name.includes('wall') ||
+    name.includes('ceiling') ||
+    name.includes('surface_')
+  );
 }
 
 function heuristicColor(name: string, preferLight: boolean): THREE.Color {

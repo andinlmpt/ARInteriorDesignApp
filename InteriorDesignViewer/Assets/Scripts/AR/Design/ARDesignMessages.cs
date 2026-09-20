@@ -129,6 +129,8 @@ public class RoomConfirmedPayload
     public ARDesignVec3 boundsMax;
     public int cornerCount;
     public RoomPolygonPayload floorPolygon;
+    /// <summary>True when the scene skipped real measurement (synthetic open floor).</summary>
+    public bool furniturePlacementOnly;
 
     public RoomMeasurementSaveRequest ToSaveRequest()
     {
@@ -203,6 +205,21 @@ public class PlacedFurniturePayload
     public ARDesignVec3 dimensions;
 
     public bool selected;
+}
+
+/// <summary>Placement safety feedback for the selected furniture piece.</summary>
+[Serializable]
+public class PlacementSafetyPayload
+{
+    public string instanceId;
+    public string modelId;
+    public bool isSafe;
+    public bool hasFurnitureCollision;
+    public bool hasWallCollision;
+    public bool isTooCloseToWall;
+    public float nearestFurnitureDistance;
+    public float nearestWallDistance;
+    public string reason;
 }
 
 /// <summary>Full in-session layout returned by GetCurrentLayout.</summary>

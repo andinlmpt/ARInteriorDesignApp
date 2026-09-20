@@ -182,8 +182,8 @@ MonoBehaviour:
   cameraManager: {fileID: 0}
   requestedLightEstimation: 31
   smoothing: 6
-  minIntensity: 0.55
-  maxIntensity: 2
+  minIntensity: 0.35
+  maxIntensity: 0.95
 --- !u!108 &477532503
 Light:
   m_ObjectHideFlags: 0
@@ -377,10 +377,22 @@ MonoBehaviour:
   floorLineWidth: 0.028
   wallLineWidth: 0.022
   wallHeight: 2.5
+  requireHeightBeforeCorners: 1
+  requireStartButtonForHeightBase: 0
+  minWallHeight: 0.5
+  defaultWallHeight: 2.5
+  maxWallHeight: 5
+  ceilingSnapTolerance: 0.25
+  minCeilingHeightAboveBase: 1.8
+  minReliableLockHeight: 1.8
+  heightAimScreenY: 0.62
+  heightPlacementIconSize: 0.32
+  measurementIconResourcePath: MeasurementIcons/measurement-icon
   cornerMarkerSize: 0.06
   closeSnapDistance: 0.35
   maxCorners: 24
   showEdgeMeasurements: 1
+  showLivePreviewMeasurement: 1
   keepMeasurementsAfterConfirm: 0
 --- !u!114 &521325908
 MonoBehaviour:
@@ -423,11 +435,13 @@ MonoBehaviour:
   layoutMode: {fileID: 521325906}
   exportManager: {fileID: 521325912}
   enableNativeCatalog: 1
-  sidebarWidth: 72
-  panelWidth: 220
-  categoryButtonSize: 52
-  itemTileSize: 64
-  toolButtonSize: 52
+  pickerDockHeight: 480
+  filterIdleSize: 280
+  filterSelectedSize: 340
+  sideCircleSize: 112
+  saveCircleSize: 144
+  bottomNavClearance: 100
+  toolButtonSize: 96
 --- !u!114 &521325910
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -596,7 +610,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2700925034821e744831239e89e5ab69, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RuntimeGltfLoader
-  timeoutSeconds: 30
+  timeoutSeconds: 180
 --- !u!114 &521325918
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -664,7 +678,7 @@ MonoBehaviour:
   minPlaneArea: 0.08
   statusPushInterval: 0.4
   cornerBuilder: {fileID: 521325907}
-  furniturePlacementOnly: 1
+  furniturePlacementOnly: 0
   autoStartScanOnLoad: 0
 --- !u!114 &521325921
 MonoBehaviour:
@@ -680,7 +694,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::RemoteFurnitureCatalogLoader
   catalog: {fileID: 521325902}
   catalogUi: {fileID: 521325909}
-  catalogUrl: http://192.168.1.7:3000/api/v1/furniture
+  catalogUrl: http://192.168.1.33:3000/api/v1/furniture
   loadOnStart: 1
   requestTimeoutSeconds: 20
 --- !u!114 &521325922
@@ -696,7 +710,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RoomMeasurementSync
   scanController: {fileID: 521325920}
-  saveUrl: http://192.168.1.7:3000/api/v1/room-measurements
+  saveUrl: http://192.168.1.33:3000/api/v1/room-measurements
   saveOnConfirm: 0
   requestTimeoutSeconds: 15
 --- !u!114 &521325923
@@ -713,6 +727,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::RoomMeasurementSaveModal
   scanController: {fileID: 521325920}
   measurementSync: {fileID: 521325922}
+  measurementOnlyMode: 0
   enableNativeModal: 0
 --- !u!1 &535005051
 GameObject:

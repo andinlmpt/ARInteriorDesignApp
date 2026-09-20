@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   Platform,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts/ThemeContext';
 import { AppText } from '@/components/ui/Text';
 import { radii, spacing, shadows } from '@/components/ui/theme';
@@ -31,6 +32,10 @@ export interface AppDialogProps {
   onRequestClose?: () => void;
   /** Dismiss when tapping the dimmed backdrop (default true). */
   dismissOnBackdrop?: boolean;
+  /** Optional leading icon in a soft badge. */
+  icon?: keyof typeof Ionicons.glyphMap;
+  /** Visual intent — `danger` uses error red for icon badge (and suits danger actions). */
+  variant?: 'default' | 'danger';
 }
 
 export function AppDialog({
@@ -40,6 +45,8 @@ export function AppDialog({
   actions = [{ label: 'OK', onPress: () => {}, tone: 'primary' }],
   onRequestClose,
   dismissOnBackdrop = true,
+  icon,
+  variant = 'default',
 }: AppDialogProps) {
   const { colors } = useTheme();
 
@@ -74,6 +81,10 @@ export function AppDialog({
     }
   };
 
+  const iconBadgeBg =
+    variant === 'danger' ? `${colors.danger}18` : colors.accentSoft;
+  const iconColor = variant === 'danger' ? colors.danger : colors.accent;
+
   return (
     <Modal
       visible={visible}
@@ -102,7 +113,13 @@ export function AppDialog({
             },
           ]}
         >
-          <AppText variant="h3" style={[styles.title, { color: colors.textPrimary }]}>
+          {icon ? (
+            <View style={[styles.iconBadge, { backgroundColor: iconBadgeBg }]}>
+              <Ionicons name={icon} size={28} color={iconColor} />
+            </View>
+          ) : null}
+
+          <AppText variant="h2" style={[styles.title, { color: colors.textPrimary }]}>
             {title}
           </AppText>
           {message ? (
@@ -151,7 +168,7 @@ export function AppDialog({
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.xl,
@@ -163,8 +180,16 @@ const styles = StyleSheet.create({
     paddingTop: spacing.xl,
     paddingHorizontal: spacing.xl,
     paddingBottom: spacing.lg,
-    // No hard stroke — soft elevation only
     borderWidth: 0,
+    alignItems: 'center',
+  },
+  iconBadge: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
   },
   title: {
     fontWeight: '700',
@@ -180,6 +205,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     marginTop: spacing.sm,
+    width: '100%',
   },
   actionsSingle: {
     justifyContent: 'center',
@@ -193,12 +219,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.xl,
+    flex: 1,
   },
   actionBtnFlex: {
     flex: 1,
   },
   actionBtnFull: {
     width: '100%',
+    flex: 0,
   },
   actionLabel: {
     fontWeight: '600',

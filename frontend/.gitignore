@@ -41,3 +41,6 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Unity Android/iOS export (regenerate locally; exclude from EAS uploads)
+/unity/

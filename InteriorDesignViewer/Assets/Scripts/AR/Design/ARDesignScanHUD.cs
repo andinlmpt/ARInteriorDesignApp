@@ -47,6 +47,13 @@ public class ARDesignScanHUD : MonoBehaviour
     Image[] stepDots = System.Array.Empty<Image>();
     bool active;
 
+    bool ShouldShowNativeHud()
+    {
+        // Dedicated AR Measurement scene keeps Unity chrome even when embedded in RN.
+        if (measurementOnlyMode) return true;
+        return !ARDesignHostDetect.IsEmbeddedInReactNative();
+    }
+
     void Awake()
     {
         if (scanController == null) scanController = FindFirstObjectByType<RoomScanController>();
@@ -55,7 +62,7 @@ public class ARDesignScanHUD : MonoBehaviour
         if (placementIndicator == null) placementIndicator = FindFirstObjectByType<ARPlacementIndicator>();
         if (cornerBuilder == null) cornerBuilder = FindFirstObjectByType<ARDesignCornerRoomBuilder>();
 
-        active = enableNativeHud && !ARDesignHostDetect.IsEmbeddedInReactNative();
+        active = enableNativeHud && ShouldShowNativeHud();
         if (!active)
         {
             Debug.Log("[ARDesignScanHUD] Native HUD disabled (React Native host or flag off).");
@@ -64,7 +71,11 @@ public class ARDesignScanHUD : MonoBehaviour
         }
 
         if (measurementOnlyMode)
-            ARMainMenuBackButton.EnsureOn(gameObject);
+        {
+            if (!ARDesignHostDetect.IsEmbeddedInReactNative())
+                ARMainMenuBackButton.EnsureOn(gameObject);
+            ARMeasurementRnBridge.EnsureOn(gameObject);
+        }
 
         try
         {

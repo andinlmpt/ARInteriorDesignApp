@@ -54,7 +54,13 @@ public class FurnitureCatalog : MonoBehaviour
     void Awake()
     {
         if (remoteCatalogOnly)
+        {
+            // Remote mode: wait for MongoDB/GCS URLs. Do NOT seed local icon-only
+            // entries (e.g. bahrain-accent-chair) that have no glbUrl — that caused
+            // missingGlbUrl / green-cube fallbacks after bundled meshes were removed.
             entries.Clear();
+            return;
+        }
 
         EnsureBundledResourceEntries();
         ApplyBundledDimensionLabels();
@@ -79,7 +85,9 @@ public class FurnitureCatalog : MonoBehaviour
 
         foreach (var entry in entries)
         {
-            if (entry != null && entry.id == id)
+            if (entry != null &&
+                !string.IsNullOrEmpty(entry.id) &&
+                string.Equals(entry.id, id, StringComparison.OrdinalIgnoreCase))
                 return entry;
         }
 
@@ -208,7 +216,7 @@ public class FurnitureCatalog : MonoBehaviour
 
             entries.Add(new FurnitureEntry
             {
-                id = remote.id,
+                id = remote.id.Trim().ToLowerInvariant(),
                 displayName = remote.displayName,
                 category = remote.category,
                 glbUrl = remote.glbUrl,
@@ -219,6 +227,12 @@ public class FurnitureCatalog : MonoBehaviour
                 depth = remote.depth > 0.01f ? remote.depth : 0.6f,
             });
         }
+    }
+
+    /// <summary>Applies FurnitureDimensions.json labels/sizes onto current entries.</summary>
+    public void RefreshBundledDimensionLabels()
+    {
+        ApplyBundledDimensionLabels();
     }
 
     public Vector3 GetDefaultDimensions(string id)

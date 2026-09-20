@@ -158,7 +158,7 @@ public static class ARDesignSceneBuilder
             "AR Design",
             "Remote Furniture Catalog Loader added to Managers.\n\n" +
             "Set Catalog Url to your backend, e.g.:\n" +
-            "http://192.168.1.7:3000/api/v1/furniture",
+            "http://192.168.1.33:3000/api/v1/furniture",
             "OK");
     }
 
@@ -271,14 +271,6 @@ public static class ARDesignSceneBuilder
             // component with a matching method name, and ARSceneBridge now owns
             // ReceiveMessage for this scene.
             RemoveComponent<UnityMessageBridge>(managers);
-            RemoveComponent<ARFurniturePlacer>(managers);
-            RemoveComponent<ARFurnitureGestureController>(managers);
-            RemoveComponent<ARFurniturePickerUI>(managers);
-            RemoveComponent<ARFurnitureLighting>(managers);
-            RemoveComponent<ARModeSwitcher>(managers);
-            RemoveComponent<WallSelector>(managers);
-            RemoveComponent<WallPainter>(managers);
-            RemoveComponent<ColorPickerUIController>(managers);
             // These belong on XR Origin only — a second copy on Managers breaks
             // FindFirstObjectByType lookups and can leave the camera black.
             // Remove dependents before XROrigin (RequireComponent order).
@@ -287,13 +279,6 @@ public static class ARDesignSceneBuilder
             RemoveComponent<ARAnchorManager>(managers);
             RemoveComponent<ARPointCloudManager>(managers);
             RemoveComponent<XROrigin>(managers);
-        }
-
-        var xrOrigin = FindRoot(scene, "XR Origin");
-        if (xrOrigin != null)
-        {
-            // ScanVisualizationController owns plane visibility now.
-            RemoveComponent<ARFloorGuide>(xrOrigin);
         }
 
         DestroyRoot(scene, "FurniturePickerUI");
@@ -425,7 +410,9 @@ public static class ARDesignSceneBuilder
             so.Set("meshManager", rig.meshManager);
             so.Set("arCamera", rig.camera);
             so.Set("cornerBuilder", cornerBuilder);
-            so.SetBool("furniturePlacementOnly", true);
+            // false = full height/corner scan flow (required for RN embed measurement).
+            // true skips measurement and unlocks a synthetic 24×24 m floor for furniture-only testing.
+            so.SetBool("furniturePlacementOnly", false);
             so.SetBool("autoStartScanOnLoad", false);
         });
 

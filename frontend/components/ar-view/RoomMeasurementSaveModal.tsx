@@ -1,5 +1,7 @@
 /**
- * Modal shown after room scan confirm — lets the user save dimensions to MongoDB.
+ * Modal after room scan confirm.
+ * - furniture: save dimensions + continue to placement
+ * - measure: enter room name (RN TextInput — Unity keyboard does not work in UaaL)
  */
 
 import React from 'react';
@@ -11,6 +13,9 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { RoomConfirmedPayload } from '@/types/unity-bridge';
@@ -24,6 +29,11 @@ interface RoomMeasurementSaveModalProps {
   error: string | null;
   onSave: () => void;
   onContinue: () => void;
+  /** When true, shows "Enter room's name" with TextInput (AR Measurement flow). */
+  measureMode?: boolean;
+  roomName?: string;
+  onChangeRoomName?: (name: string) => void;
+  onCancel?: () => void;
 }
 
 export function RoomMeasurementSaveModal({
@@ -34,6 +44,10 @@ export function RoomMeasurementSaveModal({
   error,
   onSave,
   onContinue,
+  measureMode = false,
+  roomName = '',
+  onChangeRoomName,
+  onCancel,
 }: RoomMeasurementSaveModalProps) {
   const dimensionText =
     payload?.dimensionLabel?.trim() ||
@@ -45,6 +59,78 @@ export function RoomMeasurementSaveModal({
     payload && payload.floorAreaSqm > 0
       ? `${payload.floorAreaSqm.toFixed(1)} m² floor area`
       : '';
+
+  if (measureMode) {
+    return (
+      <Modal
+        visible={visible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={saving ? undefined : onCancel}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.backdrop}
+        >
+          <Pressable
+            style={StyleSheet.absoluteFillObject}
+            onPress={saving ? undefined : onCancel}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss room name dialog"
+          />
+          <View style={styles.card}>
+            <Text style={styles.title}>Enter room&apos;s name</Text>
+
+            <TextInput
+              value={roomName}
+              onChangeText={onChangeRoomName}
+              placeholder="Living room"
+              placeholderTextColor="#9CA3AF"
+              maxLength={100}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={saving ? undefined : onSave}
+              editable={!saving}
+              style={styles.nameInput}
+              accessibilityLabel="Room name"
+            />
+
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+            {dimensionText !== '—' ? (
+              <Text style={styles.measureDims}>{dimensionText}</Text>
+            ) : null}
+            {floorAreaText ? <Text style={styles.subtitle}>{floorAreaText}</Text> : null}
+
+            <View style={styles.measureActions}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={onCancel}
+                disabled={saving}
+                accessibilityRole="button"
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.saveMeasureButton, saving && styles.primaryButtonDisabled]}
+                onPress={onSave}
+                disabled={saving || !payload}
+                accessibilityRole="button"
+              >
+                {saving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>Save measure</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    );
+  }
 
   return (
     <Modal
@@ -139,6 +225,24 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     color: '#1C1B19',
+    marginBottom: spacing.sm,
+    textAlign: 'center',
+  },
+  nameInput: {
+    width: '100%',
+    borderRadius: radii.md,
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: spacing.md,
+    paddingVertical: Platform.OS === 'ios' ? 14 : 12,
+    fontSize: 16,
+    color: '#1C1B19',
+    marginBottom: spacing.sm,
+  },
+  measureDims: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2563EB',
+    textAlign: 'center',
     marginBottom: spacing.xs,
   },
   dimensions: {
@@ -152,6 +256,32 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7280',
     marginBottom: spacing.md,
+  },
+  measureActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  cancelButton: {
+    flex: 0.38,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButtonText: {
+    color: '#2563EB',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  saveMeasureButton: {
+    flex: 0.62,
+    backgroundColor: '#2563EB',
+    borderRadius: radii.md,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   successRow: {
     flexDirection: 'row',

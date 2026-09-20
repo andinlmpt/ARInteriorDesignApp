@@ -1,5 +1,6 @@
 /**
  * Bottom sheet for a single admin Products catalog item on Home.
+ * Large image, compact details — fits on one screen without scrolling.
  */
 
 import React, { useState } from 'react';
@@ -9,7 +10,6 @@ import {
   StyleSheet,
   Image,
   TouchableOpacity,
-  ScrollView,
   Pressable,
   ActivityIndicator,
 } from 'react-native';
@@ -23,6 +23,8 @@ import type { HomeProduct } from '@/types/home-product';
 import {
   formatHomeProductInches,
   formatHomeProductMeters,
+  isOutOfStock,
+  resolveAvailableColorHex,
 } from '@/utils/furnitureCatalogHelpers';
 
 interface ProductDetailSheetProps {
@@ -58,6 +60,12 @@ export function ProductDetailSheet({
   const inches = formatHomeProductInches(product);
   const meters = formatHomeProductMeters(product);
   const showImage = Boolean(product.thumbnailUrl) && !imageFailed;
+  const primaryDimension = inches || product.dimensionLabel || meters;
+  const secondaryDimension =
+    meters && meters.trim().toLowerCase() !== primaryDimension.trim().toLowerCase()
+      ? meters
+      : null;
+  const outOfStock = isOutOfStock(product.quantity);
 
   return (
     <Modal
@@ -73,84 +81,77 @@ export function ProductDetailSheet({
             styles.sheet,
             {
               backgroundColor: colors.surfacePrimary,
-              paddingBottom: Math.max(insets.bottom, spacing.md) + spacing.sm,
+              paddingBottom: Math.max(insets.bottom, spacing.sm) + spacing.sm,
             },
           ]}
           onPress={(e) => e.stopPropagation()}
         >
           <View style={[styles.handle, { backgroundColor: colors.border }]} />
 
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.scrollContent}
-          >
-            <View style={[styles.imageWrap, { backgroundColor: colors.surfaceSecondary }]}>
-              {showImage ? (
-                <Image
-                  source={{ uri: product.thumbnailUrl }}
-                  style={styles.image}
-                  resizeMode="cover"
-                  onError={() => setImageFailed(true)}
-                />
-              ) : (
-                <Ionicons name="cube-outline" size={64} color={colors.textMuted} />
-              )}
-            </View>
-
-            <View style={styles.headerRow}>
-              <View style={styles.titleBlock}>
-                <AppText variant="h2" weight="700" style={{ color: colors.textPrimary }}>
-                  {product.name}
-                </AppText>
-                <View style={[styles.categoryChip, { backgroundColor: colors.accentSoft }]}>
-                  <AppText variant="caption" weight="600" style={{ color: colors.accent }}>
-                    {titleCaseCategory(product.category)}
+          <View style={[styles.imageWrap, { backgroundColor: colors.surfaceSecondary }]}>
+            {showImage ? (
+              <Image
+                source={{ uri: product.thumbnailUrl }}
+                style={[styles.image, outOfStock && styles.imageDimmed]}
+                resizeMode="contain"
+                onError={() => setImageFailed(true)}
+              />
+            ) : (
+              <Ionicons name="cube-outline" size={56} color={colors.textMuted} />
+            )}
+            {outOfStock ? (
+              <View style={styles.lockOverlay} pointerEvents="none">
+                <View style={styles.lockBadge}>
+                  <Ionicons name="lock-closed" size={16} color="#FFFFFF" />
+                  <AppText variant="caption" weight="700" style={styles.lockBadgeText}>
+                    Out of stock
                   </AppText>
                 </View>
               </View>
-              <TouchableOpacity
-                onPress={onClose}
-                hitSlop={12}
-                style={[styles.closeBtn, { backgroundColor: colors.surfaceSecondary }]}
-                accessibilityLabel="Close"
-              >
-                <Ionicons name="close" size={18} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
+            ) : null}
+          </View>
 
-            <View style={[styles.dimCard, { backgroundColor: colors.surfaceSecondary }]}>
+          <View style={styles.headerRow}>
+            <View style={styles.titleBlock}>
               <AppText
-                variant="caption"
-                weight="600"
-                style={[styles.dimLabel, { color: colors.textSecondary }]}
+                variant="h3"
+                weight="700"
+                numberOfLines={1}
+                style={{ color: colors.textPrimary }}
               >
-                Dimensions
+                {product.name}
               </AppText>
-              <AppText variant="subtitle" weight="600" style={{ color: colors.textPrimary }}>
-                {product.dimensionLabel}
-              </AppText>
-              <AppText
-                variant="caption"
-                style={[styles.dimMeta, { color: colors.textMuted }]}
-              >
-                {meters}
-              </AppText>
-              {inches ? (
-                <AppText
-                  variant="caption"
-                  style={[styles.dimMeta, { color: colors.textMuted }]}
-                >
-                  {inches}
+              <View style={[styles.categoryChip, { backgroundColor: colors.accentSoft }]}>
+                <AppText variant="caption" weight="600" style={{ color: colors.accent }}>
+                  {titleCaseCategory(product.category)}
                 </AppText>
-              ) : null}
+              </View>
             </View>
+            <TouchableOpacity
+              onPress={onClose}
+              hitSlop={12}
+              style={[styles.closeBtn, { backgroundColor: colors.surfaceSecondary }]}
+              accessibilityLabel="Close"
+            >
+              <Ionicons name="close" size={18} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
 
+          <View
+            style={[
+              styles.detailsCard,
+              {
+                backgroundColor: colors.surfaceSecondary,
+                borderColor: colors.border,
+              },
+            ]}
+          >
             {product.availableColors.length > 0 ? (
-              <View style={styles.colorsBlock}>
+              <View style={styles.detailBlock}>
                 <AppText
                   variant="caption"
                   weight="600"
-                  style={[styles.dimLabel, { color: colors.textSecondary }]}
+                  style={[styles.sectionLabel, { color: colors.textSecondary }]}
                 >
                   Available colors
                 </AppText>
@@ -161,12 +162,12 @@ export function ProductDetailSheet({
                         style={[
                           styles.colorDot,
                           {
-                            backgroundColor: c.startsWith('#') ? c : colors.accent,
-                            borderColor: colors.border,
+                            backgroundColor: resolveAvailableColorHex(c),
+                            borderColor: colors.outline,
                           },
                         ]}
                       />
-                      <AppText variant="caption" style={{ color: colors.textSecondary }}>
+                      <AppText variant="caption" weight="600" style={{ color: colors.textPrimary }}>
                         {c}
                       </AppText>
                     </View>
@@ -175,12 +176,46 @@ export function ProductDetailSheet({
               </View>
             ) : null}
 
-            {typeof product.quantity === 'number' ? (
-              <AppText variant="caption" style={{ color: colors.textMuted, marginTop: spacing.sm }}>
-                Stock: {product.quantity}
-              </AppText>
+            {product.availableColors.length > 0 ? (
+              <View style={[styles.divider, { backgroundColor: colors.border }]} />
             ) : null}
-          </ScrollView>
+
+            <View style={styles.detailBlock}>
+              <AppText
+                variant="caption"
+                weight="600"
+                style={[styles.sectionLabel, { color: colors.textSecondary }]}
+              >
+                Dimensions
+              </AppText>
+              <AppText variant="body" weight="600" style={{ color: colors.textPrimary }}>
+                {primaryDimension}
+              </AppText>
+              {secondaryDimension ? (
+                <AppText variant="caption" style={{ color: colors.textMuted, marginTop: 1 }}>
+                  {secondaryDimension}
+                </AppText>
+              ) : null}
+            </View>
+
+            {typeof product.quantity === 'number' ? (
+              <>
+                <View style={[styles.divider, { backgroundColor: colors.border }]} />
+                <View style={styles.stockRow}>
+                  <AppText variant="caption" weight="600" style={{ color: colors.textSecondary }}>
+                    Stock
+                  </AppText>
+                  <AppText
+                    variant="body"
+                    weight="600"
+                    style={{ color: outOfStock ? '#DC2626' : colors.textPrimary }}
+                  >
+                    {outOfStock ? 'Out of stock' : `${product.quantity} available`}
+                  </AppText>
+                </View>
+              </>
+            ) : null}
+          </View>
 
           <View style={styles.actions}>
             <TouchableOpacity
@@ -202,7 +237,7 @@ export function ProductDetailSheet({
                 <>
                   <Ionicons
                     name={isSaved ? 'heart' : 'heart-outline'}
-                    size={20}
+                    size={18}
                     color={isSaved ? BRAND.colors.orange : colors.accent}
                   />
                   <AppText
@@ -217,13 +252,28 @@ export function ProductDetailSheet({
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.cta, styles.ctaPrimary, { backgroundColor: colors.accent }]}
-              activeOpacity={0.85}
-              onPress={() => onViewInAR(product)}
+              style={[
+                styles.cta,
+                styles.ctaPrimary,
+                {
+                  backgroundColor: outOfStock ? '#9CA3AF' : colors.accent,
+                },
+              ]}
+              activeOpacity={outOfStock ? 1 : 0.85}
+              disabled={outOfStock}
+              onPress={() => {
+                if (!outOfStock) onViewInAR(product);
+              }}
+              accessibilityState={{ disabled: outOfStock }}
+              accessibilityLabel={outOfStock ? 'Out of stock' : 'View in AR'}
             >
-              <Ionicons name="scan-outline" size={20} color="#FFFFFF" />
+              <Ionicons
+                name={outOfStock ? 'lock-closed' : 'scan-outline'}
+                size={18}
+                color="#FFFFFF"
+              />
               <AppText variant="subtitle" weight="700" style={styles.ctaPrimaryText}>
-                View in AR
+                {outOfStock ? 'Out of stock' : 'View in AR'}
               </AppText>
             </TouchableOpacity>
           </View>
@@ -240,7 +290,6 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
-    maxHeight: '88%',
     borderTopLeftRadius: radii.xl,
     borderTopRightRadius: radii.xl,
     paddingTop: spacing.sm,
@@ -251,92 +300,121 @@ const styles = StyleSheet.create({
     width: 40,
     height: 4,
     borderRadius: 2,
-    marginBottom: spacing.md,
-  },
-  scrollContent: {
-    paddingBottom: spacing.md,
+    marginBottom: spacing.sm,
   },
   imageWrap: {
     width: '100%',
-    aspectRatio: 1.15,
+    aspectRatio: 1,
     borderRadius: radii.lg,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
+    padding: spacing.md,
   },
   image: {
     width: '100%',
     height: '100%',
   },
+  imageDimmed: {
+    opacity: 0.45,
+  },
+  lockOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+  },
+  lockBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(28, 27, 25, 0.82)',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.pill,
+  },
+  lockBadgeText: {
+    color: '#FFFFFF',
+  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: spacing.md,
-    marginBottom: spacing.md,
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
   },
   titleBlock: {
     flex: 1,
-    gap: spacing.sm,
+    gap: 4,
   },
   categoryChip: {
     alignSelf: 'flex-start',
     paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
+    paddingVertical: 3,
     borderRadius: radii.sm,
   },
   closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  dimCard: {
+  detailsCard: {
     borderRadius: radii.md,
-    padding: spacing.md,
-    gap: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 2,
+    marginBottom: spacing.sm,
   },
-  dimLabel: {
+  detailBlock: {
+    paddingVertical: 8,
+  },
+  sectionLabel: {
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: 2,
+    letterSpacing: 0.5,
+    marginBottom: 4,
+    fontSize: 11,
   },
-  dimMeta: {
-    marginTop: 2,
-  },
-  colorsBlock: {
-    marginTop: spacing.md,
-    gap: spacing.sm,
+  divider: {
+    height: StyleSheet.hairlineWidth,
   },
   colorRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: spacing.md,
+    columnGap: spacing.md,
+    rowGap: 6,
   },
   colorItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.xs,
+    gap: 6,
   },
   colorDot: {
     width: 14,
     height: 14,
     borderRadius: 7,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
+  },
+  stockRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
   },
   actions: {
+    flexDirection: 'row',
     gap: spacing.sm,
-    marginTop: spacing.sm,
   },
   cta: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.sm,
+    gap: spacing.xs,
     borderRadius: radii.md,
-    paddingVertical: spacing.md,
-    minHeight: 52,
+    paddingVertical: spacing.sm,
+    minHeight: 48,
   },
   ctaPrimary: {},
   ctaSecondary: {

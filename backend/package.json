@@ -16,6 +16,8 @@
     "seed:furniture:thumbnails": "node scripts/sync-furniture-thumbnails.mjs",
     "seed:furniture:unity-icons": "node scripts/sync-unity-furniture-icons.mjs",
     "seed:furniture:icons": "node scripts/sync-furniture-thumbnails.mjs && node scripts/sync-unity-furniture-icons.mjs",
+    "seed:furniture:normalize-thumbs": "node scripts/normalize-furniture-thumbnails.mjs",
+    "seed:furniture:local-glbs": "node scripts/materialize-local-glbs.mjs",
     "seed:admin": "node scripts/seed-admin.mjs"
   },
   "keywords": [
@@ -40,6 +42,7 @@
     "mongoose": "^8.0.3",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
+    "sharp": "^0.35.4",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

@@ -1,8 +1,8 @@
 using UnityEngine;
 
 /// <summary>
-/// Renders a white rounded-rectangle outline flat on the floor around the furniture
-/// when it is being dragged or manipulated.
+/// Renders a rounded-rectangle outline flat on the floor around the furniture
+/// when it is selected or manipulated. Turns red when placement is unsafe.
 /// </summary>
 public class ARDragOutline : MonoBehaviour
 {
@@ -10,6 +10,10 @@ public class ARDragOutline : MonoBehaviour
     private Material lineMaterial;
     private bool isVisible = false;
     private Vector3[] localPoints;
+    private Color currentColor = Color.white;
+
+    static readonly Color SafeColor = Color.white;
+    static readonly Color DangerColor = new Color(0.92f, 0.18f, 0.2f, 1f);
 
     [Header("Outline Configuration")]
     [SerializeField] private float lineWidth = 0.015f;
@@ -20,12 +24,11 @@ public class ARDragOutline : MonoBehaviour
 
     void Awake()
     {
-        // Create child GameObject for line rendering
+        currentColor = lineColor;
         GameObject child = new GameObject("DragOutline_Renderer");
         child.transform.SetParent(transform, false);
         child.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
 
-        // Add LineRenderer to child
         lineRenderer = child.AddComponent<LineRenderer>();
         lineRenderer.useWorldSpace = true;
         lineRenderer.loop = true;
@@ -33,22 +36,18 @@ public class ARDragOutline : MonoBehaviour
         lineRenderer.receiveShadows = false;
         lineRenderer.allowOcclusionWhenDynamic = false;
         lineRenderer.alignment = LineAlignment.TransformZ;
-        
-        // Find URP-safe shader (consistent with MeasurementVisualUtility)
+
         var shader = Shader.Find("Universal Render Pipeline/Unlit") ??
                      Shader.Find("Unlit/Color") ??
                      Shader.Find("Sprites/Default");
         lineMaterial = new Material(shader);
-        if (lineMaterial.HasProperty("_BaseColor"))
-            lineMaterial.SetColor("_BaseColor", lineColor);
-        lineMaterial.color = lineColor;
-        
+        ApplyColor(currentColor);
+
         lineRenderer.material = lineMaterial;
         lineRenderer.widthMultiplier = 1f;
         lineRenderer.startWidth = lineWidth;
         lineRenderer.endWidth = lineWidth;
-        
-        // Hide initially
+
         lineRenderer.enabled = false;
     }
 
@@ -61,13 +60,13 @@ public class ARDragOutline : MonoBehaviour
 
         int pointsPerCorner = 8;
         float radius = Mathf.Min(cornerRadius, Mathf.Min(width, depth) * 0.4f);
-        
+
         int totalPoints = pointsPerCorner * 4;
         localPoints = new Vector3[totalPoints];
-        
+
         float hw = width * 0.5f;
         float hd = depth * 0.5f;
-        
+
         Vector2[] cornerCenters = new Vector2[]
         {
             new Vector2(hw - radius, hd - radius),
@@ -75,9 +74,9 @@ public class ARDragOutline : MonoBehaviour
             new Vector2(-hw + radius, -hd + radius),
             new Vector2(hw - radius, -hd + radius)
         };
-        
+
         float[] startAngles = new float[] { 0f, 90f, 180f, 270f };
-        
+
         int index = 0;
         for (int i = 0; i < 4; i++)
         {
@@ -109,6 +108,34 @@ public class ARDragOutline : MonoBehaviour
             {
                 UpdateWorldPositions();
             }
+        }
+    }
+
+    /// <summary>White when safe, red when overlapping furniture or colliding with walls.</summary>
+    public void SetPlacementSafe(bool safe)
+    {
+        ApplyColor(safe ? SafeColor : DangerColor);
+    }
+
+    public void SetLineColor(Color color)
+    {
+        ApplyColor(color);
+    }
+
+    void ApplyColor(Color color)
+    {
+        currentColor = color;
+        if (lineMaterial != null)
+        {
+            if (lineMaterial.HasProperty("_BaseColor"))
+                lineMaterial.SetColor("_BaseColor", color);
+            lineMaterial.color = color;
+        }
+
+        if (lineRenderer != null)
+        {
+            lineRenderer.startColor = color;
+            lineRenderer.endColor = color;
         }
     }
 

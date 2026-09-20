@@ -30,6 +30,7 @@ import {
   type FurnitureModelAssetKey,
 } from '@/config/furniture-models';
 import { toFileUri, pickUnityExportGlb } from '@/utils/modelPreviewExport';
+import { applyRoomExportAppearance } from '@/utils/roomExportAppearance';
 
 /** Meters → whole centimeters for product-style labels. */
 function formatCm(meters: number): string {
@@ -180,6 +181,8 @@ export default function ModelPreviewScreen() {
           if (!model) {
             throw new Error(`Failed to load exported layout from ${exportUri}`);
           }
+          // Match Unity planner shell (grid floor / walls) even if the GLB is untextured.
+          applyRoomExportAppearance(model);
         } else {
           model = await furnitureModelLoader.loadBundledFurniture(selectedId, {
             width: catalogDims.width,
@@ -216,7 +219,7 @@ export default function ModelPreviewScreen() {
           setStatus('ready');
         }
 
-        const spinSpeed = isExportMode ? 0.004 : 0.01;
+        const spinSpeed = isExportMode ? 0.0025 : 0.01;
         const animate = () => {
           if (!mountedRef.current) return;
           rafRef.current = requestAnimationFrame(animate);

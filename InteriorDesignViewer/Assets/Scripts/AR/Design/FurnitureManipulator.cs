@@ -47,6 +47,8 @@ public class FurnitureManipulator : MonoBehaviour
 
     bool isTwoFinger;
     float twistStartAngle;
+    Vector3 lastSafePosition;
+    float lastSafeYaw;
 
     void Awake()
     {
@@ -144,6 +146,8 @@ public class FurnitureManipulator : MonoBehaviour
                 }
 
                 DragTo(furniture, touch.screenPosition, touch.delta);
+                RememberSafePose(furniture);
+                placementController.RefreshPlacementSafety(furniture);
                 break;
 
             case TouchPhase.Ended:
@@ -158,6 +162,7 @@ public class FurnitureManipulator : MonoBehaviour
         if (placementController.TryGetDragFloorPositionFor(furniture, screenPosition, out var floorPoint))
         {
             var target = floorPoint + dragGrabOffset;
+            target = placementController.ResolveCollisionFreePivot(furniture, target, lastSafePosition);
             furniture.transform.position = new Vector3(target.x, furniture.transform.position.y, target.z);
             placementController.GroundInstance(furniture);
             return;
@@ -176,6 +181,10 @@ public class FurnitureManipulator : MonoBehaviour
             furniture.transform.Translate(
                 forward * (screenDelta.y * fallbackMoveSpeed) + right * (screenDelta.x * fallbackMoveSpeed),
                 Space.World);
+
+            var resolved = placementController.ResolveCollisionFreePivot(
+                furniture, furniture.transform.position, lastSafePosition);
+            furniture.transform.position = new Vector3(resolved.x, furniture.transform.position.y, resolved.z);
             placementController.GroundInstance(furniture);
         }
     }
@@ -198,6 +207,27 @@ public class FurnitureManipulator : MonoBehaviour
 
         ApplyTwist(furniture, angle);
         placementController.GroundInstance(furniture);
+
+        var resolved = placementController.ResolveCollisionFreePivot(
+            furniture, furniture.transform.position, lastSafePosition);
+        furniture.transform.position = new Vector3(
+            resolved.x, furniture.transform.position.y, resolved.z);
+        placementController.GroundInstance(furniture);
+
+        if (!placementController.IsPlacementClear(furniture))
+        {
+            // Rotation swung into a wall or another piece with nowhere to slide — undo yaw.
+            furniture.transform.rotation = Quaternion.Euler(0f, lastSafeYaw, 0f);
+            furniture.transform.position = new Vector3(
+                lastSafePosition.x, furniture.transform.position.y, lastSafePosition.z);
+            placementController.GroundInstance(furniture);
+        }
+        else
+        {
+            RememberSafePose(furniture);
+        }
+
+        placementController.RefreshPlacementSafety(furniture);
     }
 
     void ApplyTwist(PlacedFurniture furniture, float currentAngle)
@@ -216,8 +246,24 @@ public class FurnitureManipulator : MonoBehaviour
     {
         if (gestureActive) return;
         gestureActive = true;
+        if (furniture != null)
+        {
+            // Seed fallback even if currently overlapping so resolve never snaps to world origin.
+            lastSafePosition = furniture.transform.position;
+            lastSafeYaw = furniture.transform.eulerAngles.y;
+            RememberSafePose(furniture);
+        }
         placementController?.BeginFurnitureManipulation(furniture);
         GestureBegan?.Invoke(furniture);
+    }
+
+    void RememberSafePose(PlacedFurniture furniture)
+    {
+        if (furniture == null || placementController == null) return;
+        if (!placementController.IsPlacementClear(furniture)) return;
+
+        lastSafePosition = furniture.transform.position;
+        lastSafeYaw = furniture.transform.eulerAngles.y;
     }
 
     void EndGesture()

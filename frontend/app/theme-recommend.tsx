@@ -156,13 +156,7 @@ function ThemeRecommendScreen() {
       // Announce to screen readers
       AccessibilityInfo.announceForAccessibility(`Applying theme: ${theme.name}`);
 
-      router.push({
-        pathname: '/ai-design',
-        params: {
-          themeColors: JSON.stringify(theme?.colorPalette ?? []),
-          themeName: theme?.name ?? 'Unknown Theme',
-        },
-      });
+      router.push('/(tabs)');
     } catch (error) {
       console.error('[ThemeRecommend] Error applying theme:', error);
       Alert.alert(

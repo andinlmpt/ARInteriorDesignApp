@@ -87,8 +87,10 @@ public class PlacedFurniture : MonoBehaviour
         LocalBounds = localBounds;
         PlacementSpace = placementSpace;
 
-        var label = GetComponent<FurnitureDimensionLabel>() ?? gameObject.AddComponent<FurnitureDimensionLabel>();
-        label.Setup(this, DimensionLabel);
+        // Dimension chip is shown in React Native overlay — do not attach a world-space label.
+        var existingLabel = GetComponent<FurnitureDimensionLabel>();
+        if (existingLabel != null)
+            Destroy(existingLabel);
     }
 
     public void BindWorldAnchor(ARAnchor anchor)
@@ -132,10 +134,23 @@ public class PlacedFurniture : MonoBehaviour
                 outline = gameObject.AddComponent<ARDragOutline>();
                 if (ARFurnitureGrounding.TryGetLocalFurnitureBounds(gameObject, out var bounds))
                     outline.SetupOutline(bounds);
+                else if (LocalBounds.size.sqrMagnitude > 1e-6f)
+                    outline.SetupOutline(LocalBounds);
             }
         }
 
         outline.SetVisible(selected);
+        if (!selected)
+            outline.SetPlacementSafe(true);
+    }
+
+    /// <summary>Updates the floor outline color for placement safety feedback.</summary>
+    public void ApplyPlacementSafety(bool isSafe)
+    {
+        if (outline == null)
+            outline = GetComponent<ARDragOutline>();
+        if (outline == null) return;
+        outline.SetPlacementSafe(isSafe);
     }
 
     public PlacedFurniturePayload ToPayload()

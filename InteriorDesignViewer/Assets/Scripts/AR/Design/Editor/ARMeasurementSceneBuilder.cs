@@ -153,14 +153,6 @@ public static class ARMeasurementSceneBuilder
         if (managers != null)
         {
             RemoveComponent<UnityMessageBridge>(managers);
-            RemoveComponent<ARFurniturePlacer>(managers);
-            RemoveComponent<ARFurnitureGestureController>(managers);
-            RemoveComponent<ARFurniturePickerUI>(managers);
-            RemoveComponent<ARFurnitureLighting>(managers);
-            RemoveComponent<ARModeSwitcher>(managers);
-            RemoveComponent<WallSelector>(managers);
-            RemoveComponent<WallPainter>(managers);
-            RemoveComponent<ColorPickerUIController>(managers);
             RemoveComponent<FurnitureCatalog>(managers);
             RemoveComponent<FurniturePlacementController>(managers);
             RemoveComponent<FurnitureManipulator>(managers);
@@ -171,19 +163,12 @@ public static class ARMeasurementSceneBuilder
             RemoveComponent<ARDesignFurnitureCatalogUI>(managers);
             RemoveComponent<RemoteFurnitureCatalogLoader>(managers);
             RemoveComponent<RuntimeGltfLoader>(managers);
-            RemoveComponent<MeasurementController>(managers);
-            RemoveComponent<MeasurementHUDController>(managers);
-            RemoveComponent<MeasurementScanController>(managers);
             RemoveComponent<ARRaycastManager>(managers);
             RemoveComponent<ARPlaneManager>(managers);
             RemoveComponent<ARAnchorManager>(managers);
             RemoveComponent<ARPointCloudManager>(managers);
             RemoveComponent<XROrigin>(managers);
         }
-
-        var xrOrigin = FindRoot(scene, "XR Origin");
-        if (xrOrigin != null)
-            RemoveComponent<ARFloorGuide>(xrOrigin);
 
         DestroyRoot(scene, "FurniturePickerUI");
         DestroyRoot(scene, "ColorPickerUI");
@@ -267,6 +252,7 @@ public static class ARMeasurementSceneBuilder
         var edgeVisualizer = Ensure<ARDesignEdgeVisualizer>(managers);
         var exportManager = Ensure<RoomExportManager>(managers);
         Ensure<ARMainMenuBackButton>(managers);
+        Ensure<ARMeasurementRnBridge>(managers);
         edgeVisualizer.enabled = false;
 
         var cameraBackground = rig.camera != null

@@ -159,10 +159,11 @@ public class RoomScanController : MonoBehaviour
         scanStartTime = Time.unscaledTime;
         cachedProgress = 1f;
 
-        // Keep horizontal floor detection for tap-to-place; skip vertical scan UI.
+        // Keep floor tracking for tap-to-place, and vertical planes so furniture
+        // can be pushed away from real walls (especially in furniture-only mode).
         if (planeManager != null)
         {
-            planeManager.requestedDetectionMode = PlaneDetectionMode.Horizontal;
+            planeManager.requestedDetectionMode = PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
             planeManager.enabled = true;
         }
 
@@ -229,11 +230,8 @@ public class RoomScanController : MonoBehaviour
     /// <summary>Begins or restarts the scan phase, discarding any previously confirmed room.</summary>
     public void StartRoomScan()
     {
-        if (furniturePlacementOnly)
-        {
-            BeginFurniturePlacementOnly();
-            return;
-        }
+        // RN may call this after a furniture-only session — force real measurement mode.
+        furniturePlacementOnly = false;
 
         ConfirmedRoom?.Dispose();
         ConfirmedRoom = null;
@@ -295,12 +293,11 @@ public class RoomScanController : MonoBehaviour
                   $"{snapshot.meshChunkCount} mesh chunks, {snapshot.triangleCount} triangles, " +
                   $"polygon={floorPolygon.Count}.");
 
-        // Keep horizontal floor tracking so live-AR tap-to-place hits the real
-        // floor. Visualizers stay hidden via ScanVisualizationController.
-        // Vertical / point-cloud / mesh growth stop so the outline stays frozen.
+        // Keep floor + wall plane tracking so live placement can avoid real walls.
+        // Visualizers stay hidden via ScanVisualizationController.
         if (planeManager != null)
         {
-            planeManager.requestedDetectionMode = PlaneDetectionMode.Horizontal;
+            planeManager.requestedDetectionMode = PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
             planeManager.enabled = true;
         }
 
@@ -314,7 +311,7 @@ public class RoomScanController : MonoBehaviour
     }
 
     /// <summary>
-    /// Toggle live horizontal floor planes after confirm (RealRoom on / Planner off).
+    /// Toggle live floor/wall planes after confirm (RealRoom on / Planner off).
     /// </summary>
     public void SetLiveFloorTracking(bool enabled)
     {
@@ -323,7 +320,7 @@ public class RoomScanController : MonoBehaviour
 
         if (enabled)
         {
-            planeManager.requestedDetectionMode = PlaneDetectionMode.Horizontal;
+            planeManager.requestedDetectionMode = PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
             planeManager.enabled = true;
         }
         else
@@ -401,6 +398,88 @@ public class RoomScanController : MonoBehaviour
         }
 
         return IsInsidePolygonXZ(new Vector3(worldPoint.x, 0f, worldPoint.z), floorPolygon);
+    }
+
+    /// <summary>
+    /// Horizontal distance from a world point to the nearest floor-outline edge.
+    /// Returns +Infinity when no outline is available.
+    /// </summary>
+    public float DistanceToFloorBoundaryXZ(Vector3 worldPoint)
+    {
+        if (floorPolygon.Count < 3)
+        {
+            if (ConfirmedRoom == null || !ConfirmedRoom.hasBounds)
+                return float.PositiveInfinity;
+
+            var b = ConfirmedRoom.bounds;
+            var dx = Mathf.Min(worldPoint.x - b.min.x, b.max.x - worldPoint.x);
+            var dz = Mathf.Min(worldPoint.z - b.min.z, b.max.z - worldPoint.z);
+            return Mathf.Max(0f, Mathf.Min(dx, dz));
+        }
+
+        var point = new Vector3(worldPoint.x, 0f, worldPoint.z);
+        var closest = ClosestPointOnPolygonXZ(point, floorPolygon);
+        closest.y = 0f;
+        return Vector3.Distance(point, closest);
+    }
+
+    /// <summary>
+    /// XZ translation that moves <paramref name="worldPoint"/> inside the room
+    /// with at least <paramref name="minClearance"/> from every edge.
+    /// Returns zero when already clear (or when no outline exists).
+    /// </summary>
+    public Vector3 GetWallClearancePushXZ(Vector3 worldPoint, float minClearance)
+    {
+        minClearance = Mathf.Max(0f, minClearance);
+        var point = new Vector3(worldPoint.x, 0f, worldPoint.z);
+
+        if (floorPolygon.Count < 3)
+        {
+            if (ConfirmedRoom == null || !ConfirmedRoom.hasBounds)
+                return Vector3.zero;
+
+            var b = ConfirmedRoom.bounds;
+            var pad = Mathf.Max(0.05f, minClearance);
+            var target = point;
+            target.x = Mathf.Clamp(point.x, b.min.x + pad, b.max.x - pad);
+            target.z = Mathf.Clamp(point.z, b.min.z + pad, b.max.z - pad);
+            return new Vector3(target.x - point.x, 0f, target.z - point.z);
+        }
+
+        var centroid = PolygonCentroidXZ(floorPolygon);
+        Vector3 targetPoint;
+
+        if (!IsInsidePolygonXZ(point, floorPolygon))
+        {
+            var closest = ClosestPointOnPolygonXZ(point, floorPolygon);
+            var inward = centroid - closest;
+            inward.y = 0f;
+            if (inward.sqrMagnitude < 1e-8f)
+                return Vector3.zero;
+            targetPoint = closest + inward.normalized * Mathf.Max(minClearance, 0.02f);
+        }
+        else
+        {
+            var closest = ClosestPointOnPolygonXZ(point, floorPolygon);
+            var offset = point - closest;
+            offset.y = 0f;
+            var dist = offset.magnitude;
+            if (dist >= minClearance - 1e-4f)
+                return Vector3.zero;
+
+            var inward = offset.sqrMagnitude > 1e-8f
+                ? offset.normalized
+                : (centroid - closest).normalized;
+            inward.y = 0f;
+            if (inward.sqrMagnitude < 1e-8f)
+                return Vector3.zero;
+            targetPoint = closest + inward.normalized * minClearance;
+        }
+
+        if (!IsInsidePolygonXZ(targetPoint, floorPolygon))
+            targetPoint = InsetTowardCentroid(ClosestPointOnPolygonXZ(targetPoint, floorPolygon), floorPolygon, minClearance);
+
+        return new Vector3(targetPoint.x - point.x, 0f, targetPoint.z - point.z);
     }
 
     /// <summary>XZ centroid of the confirmed floor polygon (or room bounds center).</summary>

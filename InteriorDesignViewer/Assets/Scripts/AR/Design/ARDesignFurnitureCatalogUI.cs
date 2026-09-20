@@ -19,13 +19,13 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
     [SerializeField] private bool enableNativeCatalog = true;
 
     [Header("Layout")]
-    [SerializeField] private float pickerDockHeight = 280f;
-    [SerializeField] private float filterIdleSize = 136f;
-    [SerializeField] private float filterSelectedSize = 168f;
-    [SerializeField] private float sideCircleSize = 84f;
-    [SerializeField] private float saveCircleSize = 108f;
+    [SerializeField] private float pickerDockHeight = 480f;
+    [SerializeField] private float filterIdleSize = 280f;
+    [SerializeField] private float filterSelectedSize = 340f;
+    [SerializeField] private float sideCircleSize = 112f;
+    [SerializeField] private float saveCircleSize = 144f;
     [SerializeField] private float bottomNavClearance = 100f;
-    [SerializeField] private float toolButtonSize = 52f;
+    [SerializeField] private float toolButtonSize = 96f;
 
     static readonly Color SidebarBg = new(0.14f, 0.14f, 0.15f, 0.96f);
     static readonly Color CategoryActiveBg = new(1f, 1f, 1f, 1f);
@@ -100,6 +100,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
     bool active;
     bool panelOpen;
     bool capturingPhoto;
+    bool uiBuilt;
 
     RemoteFurnitureCatalogLoader remoteCatalogLoader;
 
@@ -122,6 +123,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         }
 
         ARMainMenuBackButton.EnsureOn(gameObject);
+        NormalizeLayoutSizes();
 
         try
         {
@@ -134,6 +136,20 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
             active = false;
             enabled = false;
         }
+    }
+
+    /// <summary>
+    /// Scene YAML still had renamed leftover fields; force readable tap targets if
+    /// Inspector values look like the old sidebar/panel sizes.
+    /// </summary>
+    void NormalizeLayoutSizes()
+    {
+        if (filterIdleSize < 260f) filterIdleSize = 280f;
+        if (filterSelectedSize < 300f) filterSelectedSize = 340f;
+        if (pickerDockHeight < 400f) pickerDockHeight = Mathf.Max(480f, filterSelectedSize + 140f);
+        if (sideCircleSize < 100f) sideCircleSize = 112f;
+        if (saveCircleSize < 120f) saveCircleSize = 144f;
+        if (toolButtonSize < 80f) toolButtonSize = 96f;
     }
 
     void EnsureExportManager()
@@ -158,7 +174,11 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         if (scanController != null)
             scanController.PhaseChanged += OnPhase;
         if (placementController != null)
+        {
             placementController.SelectionChanged += OnSelectionChanged;
+            placementController.ModelReady += OnModelReady;
+            placementController.SpawnFailed += OnSpawnFailed;
+        }
         if (layoutHistory != null)
             layoutHistory.HistoryChanged += RefreshToolButtons;
         if (layoutMode != null)
@@ -181,7 +201,11 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         if (scanController != null)
             scanController.PhaseChanged -= OnPhase;
         if (placementController != null)
+        {
             placementController.SelectionChanged -= OnSelectionChanged;
+            placementController.ModelReady -= OnModelReady;
+            placementController.SpawnFailed -= OnSpawnFailed;
+        }
         if (layoutHistory != null)
             layoutHistory.HistoryChanged -= RefreshToolButtons;
         if (layoutMode != null)
@@ -194,6 +218,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
 
     void OnDestroy()
     {
+        uiBuilt = false;
         foreach (var kv in glyphSprites)
         {
             var sprite = kv.Value;
@@ -256,6 +281,22 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         RefreshToolButtons();
     }
 
+    void OnModelReady(string modelId)
+    {
+        if (!string.IsNullOrEmpty(modelId) && modelId == selectedItemId)
+            RefreshFurnitureName();
+
+        if (!string.IsNullOrEmpty(modelId))
+            PrefetchNearbyAfterReady(modelId);
+    }
+
+    void OnSpawnFailed(string code, string message)
+    {
+        RefreshFurnitureName();
+        if (!string.IsNullOrEmpty(message))
+            Debug.LogWarning($"[ARDesignFurnitureCatalogUI] Spawn failed ({code}): {message}");
+    }
+
     void OnViewModeChanged(ARDesignLayoutModeController.ViewMode _)
     {
         RefreshViewButton();
@@ -298,6 +339,16 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
 
     void OnSavePhotoPressed()
     {
+        CapturePhoto();
+    }
+
+    /// <summary>
+    /// Captures the AR view (hides native UI), writes a PNG, saves to gallery when
+    /// possible, and notifies RN via <c>photoCaptured</c>. Safe to call from RN
+    /// even when this catalog UI is hidden in embedded mode.
+    /// </summary>
+    public void CapturePhoto()
+    {
         if (capturingPhoto) return;
         StartCoroutine(CapturePhotoCoroutine());
     }
@@ -326,7 +377,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
 
             var dir = Path.Combine(Application.persistentDataPath, "ARPhotos");
             Directory.CreateDirectory(dir);
-            var fileName = $"ar_photo_{System.DateTime.Now:yyyyMMdd_HHmmss}.png";
+            var fileName = $"Maharlika_AR_{System.DateTime.Now:yyyy-MM-dd_HHmmss}.png";
             var path = Path.Combine(dir, fileName);
             var pngBytes = shot.EncodeToPNG();
             File.WriteAllBytes(path, pngBytes);
@@ -361,7 +412,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         new NativeShare()
             .AddFile(absolutePath, "image/png")
             .SetSubject("AR photo")
-            .SetText($"AR Interior Design — {fileName}")
+            .SetText($"Maharlika Furniture — AR capture")
             .SetCallback((result, shareTarget) =>
                 Debug.Log($"[ARDesignFurnitureCatalogUI] Share result={result} target={shareTarget}"))
             .Share();
@@ -678,6 +729,14 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
 
         if (placementController == null) return;
 
+        var glbUrl = catalog != null ? catalog.GetGlbUrl(id) : null;
+        var gltfLoader = FindFirstObjectByType<RuntimeGltfLoader>();
+        var alreadyCached = !string.IsNullOrWhiteSpace(glbUrl) && gltfLoader != null && gltfLoader.IsCached(glbUrl);
+
+        // Immediate feedback so a first-time GLB download doesn't feel like a freeze.
+        if (!alreadyCached && !string.IsNullOrWhiteSpace(glbUrl))
+            SetFurnitureName("Loading…");
+
         var dims = catalog != null
             ? catalog.GetDefaultDimensions(id)
             : new Vector3(0.6f, 0.6f, 0.6f);
@@ -686,12 +745,43 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         {
             modelId = id,
             catalogId = id,
-            glbUrl = catalog != null ? catalog.GetGlbUrl(id) : null,
+            glbUrl = glbUrl,
             width = dims.x,
             height = dims.y,
             depth = dims.z,
             dimensionLabel = catalog != null ? catalog.GetDimensionLabel(id) : null,
         });
+
+        // Do not prefetch other sofas while this one downloads — each file is
+        // ~70–100 MB and parallel downloads make the selected item feel slower.
+    }
+
+    void PrefetchNearbyAfterReady(string selectedId)
+    {
+        if (catalog == null) return;
+        var loader = FindFirstObjectByType<RuntimeGltfLoader>();
+        if (loader == null || !RuntimeGltfLoader.IsSupported) return;
+        if (loader.HasActivePriorityLoad) return;
+
+        var entries = catalog.GetEntriesInCategory(selectedCategory);
+        if (entries == null || entries.Count == 0) return;
+
+        var index = -1;
+        for (var i = 0; i < entries.Count; i++)
+        {
+            if (entries[i] != null && entries[i].id == selectedId)
+            {
+                index = i;
+                break;
+            }
+        }
+
+        // Warm only the next carousel item once the current one is ready.
+        var next = index + 1;
+        if (next < 0 || next >= entries.Count) return;
+        var url = catalog.GetGlbUrl(entries[next].id);
+        if (!string.IsNullOrWhiteSpace(url))
+            loader.Prefetch(url);
     }
 
     void RefreshFurnitureName()
@@ -921,6 +1011,17 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
 
     void BuildUi()
     {
+        if (uiBuilt && canvas != null) return;
+
+        // Tear down leftover HUD from a previous play / hot-reload so the
+        // top-right camera cannot stack as a double icon.
+        for (var i = transform.childCount - 1; i >= 0; i--)
+        {
+            var child = transform.GetChild(i);
+            if (child != null && child.name == "ARDesignFurnitureCatalogUI")
+                Destroy(child.gameObject);
+        }
+
         ARDesignUiUtil.EnsureEventSystem();
 
         var root = new GameObject("ARDesignFurnitureCatalogUI");
@@ -959,22 +1060,22 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         if (filterLayout != null)
         {
             filterLayout.childAlignment = TextAnchor.MiddleCenter;
-            filterLayout.spacing = 22f;
-            filterLayout.padding = new RectOffset(28, 28, 0, 0);
+            filterLayout.spacing = 36f;
+            filterLayout.padding = new RectOffset(20, 20, 0, 0);
         }
 
         // Name pill under the carousel (like IG filter name)
-        var pill = ARDesignUiUtil.CreateRoundedImage(dockGo.transform, NamePillBg, 28);
+        var pill = ARDesignUiUtil.CreateRoundedImage(dockGo.transform, NamePillBg, 32);
         pill.gameObject.name = "FurnitureNamePill";
         namePill = pill.gameObject;
         var pillRt = pill.rectTransform;
         pillRt.anchorMin = new Vector2(0.5f, 0f);
         pillRt.anchorMax = new Vector2(0.5f, 0f);
         pillRt.pivot = new Vector2(0.5f, 0f);
-        pillRt.sizeDelta = new Vector2(360f, 44f);
-        pillRt.anchoredPosition = new Vector2(0f, 8f);
+        pillRt.sizeDelta = new Vector2(480f, 64f);
+        pillRt.anchoredPosition = new Vector2(0f, 12f);
 
-        panelTitle = ARDesignUiUtil.CreateText(pill.transform, "", 16, FontStyle.Bold, TextAnchor.MiddleCenter);
+        panelTitle = ARDesignUiUtil.CreateText(pill.transform, "", 22, FontStyle.Bold, TextAnchor.MiddleCenter);
         panelTitle.color = InkOnDark;
         panelTitle.raycastTarget = false;
         panelTitle.horizontalOverflow = HorizontalWrapMode.Overflow;
@@ -991,6 +1092,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         ApplyBottomSafeLayout();
         UpdatePanelVisibility();
         RefreshToolButtons();
+        uiBuilt = true;
     }
 
     float ResolveBottomClearance()
@@ -1013,7 +1115,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         if (furnitureDockRt != null)
         {
             // Sit the filter carousel above the action circles.
-            var aboveCircles = clearance + saveCircleSize * 0.5f + 78f;
+            var aboveCircles = clearance + saveCircleSize * 0.5f + 110f;
             furnitureDockRt.anchoredPosition = new Vector2(0f, aboveCircles);
         }
     }
@@ -1082,7 +1184,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         bottomCirclesBar.anchorMin = new Vector2(0f, 0f);
         bottomCirclesBar.anchorMax = new Vector2(1f, 0f);
         bottomCirclesBar.pivot = new Vector2(0.5f, 0f);
-        bottomCirclesBar.sizeDelta = new Vector2(0f, 160f);
+        bottomCirclesBar.sizeDelta = new Vector2(0f, 200f);
         bottomCirclesBar.anchoredPosition = Vector2.zero;
 
         CreateCircleButton(
@@ -1092,7 +1194,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
             sideCircleSize,
             ToolBg,
             Ink,
-            new Vector2(-168f, 58f),
+            new Vector2(-210f, 72f),
             OnUndoPressed,
             out undoButton,
             out undoButtonBg,
@@ -1105,7 +1207,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
             saveCircleSize,
             Navy,
             InkOnDark,
-            new Vector2(0f, 62f),
+            new Vector2(0f, 76f),
             OnSavePhotoPressed,
             out saveButton,
             out saveButtonBg,
@@ -1118,7 +1220,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
             sideCircleSize,
             ToolBg,
             Ink,
-            new Vector2(168f, 58f),
+            new Vector2(210f, 72f),
             OnPickerTogglePressed,
             out pickerButton,
             out pickerButtonBg,
@@ -1339,20 +1441,6 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
             FillRect(tex, s, 18, 28, 28, 6, Color.white);
             FillRect(tex, s, 40, 20, 6, 22, Color.white);
             FillTriangle(tex, s, 52, 28, 40, 40, 40, 16, Color.white);
-        });
-    }
-
-    static Sprite DrawIconCamera()
-    {
-        return DrawIcon(64, (tex, s) =>
-        {
-            // Camera body
-            FillRect(tex, s, 12, 18, 40, 28, Color.white);
-            // Lens
-            FillRect(tex, s, 24, 24, 16, 16, new Color(1f, 1f, 1f, 0.35f));
-            FillRect(tex, s, 28, 28, 8, 8, Color.white);
-            // Viewfinder bump
-            FillRect(tex, s, 22, 46, 14, 6, Color.white);
         });
     }
 

@@ -5,7 +5,6 @@ public class UnityMessageBridge : MonoBehaviour
 {
     public static UnityMessageBridge Instance { get; private set; }
 
-    [SerializeField] private ARFurniturePlacer placer;
     [SerializeField] private FurnitureCatalog catalog;
 
     void Awake()
@@ -18,21 +17,18 @@ public class UnityMessageBridge : MonoBehaviour
         SendToApp("unityReady", "true");
     }
 
+    /// <summary>
+    /// Legacy RN entry point. ARDesignScene uses ARSceneBridge.ReceiveMessage instead.
+    /// Kept so SendToApp static API and older builds still resolve.
+    /// </summary>
     public void ReceiveMessage(string json)
     {
         var msg = JsonUtility.FromJson<RNMessage>(json);
         if (msg == null || string.IsNullOrEmpty(msg.method)) return;
 
-        if (msg.method == "selectFurniture")
-        {
-            var prefab = catalog != null ? catalog.GetPrefab(msg.data) : null;
-            if (placer != null && prefab != null)
-                placer.SetPrefab(prefab);
-        }
-        else if (msg.method == "clearFurniture" && placer != null)
-        {
-            placer.ClearPlacedFurniture();
-        }
+        Debug.LogWarning(
+            $"[UnityMessageBridge] Ignoring legacy method '{msg.method}' " +
+            $"(catalog={(catalog != null)}). Use ARSceneBridge on ARDesignScene.");
     }
 
     public static void SendToApp(string eventName, string payload)

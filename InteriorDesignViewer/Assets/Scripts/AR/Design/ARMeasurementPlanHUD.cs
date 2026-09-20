@@ -52,7 +52,7 @@ public class ARMeasurementPlanHUD : MonoBehaviour
         if (layoutMode == null) layoutMode = FindFirstObjectByType<ARDesignLayoutModeController>();
         EnsureExportManager();
 
-        active = enableNativeHud && !ARDesignHostDetect.IsEmbeddedInReactNative();
+        active = enableNativeHud;
         if (!active)
         {
             enabled = false;
@@ -176,6 +176,20 @@ public class ARMeasurementPlanHUD : MonoBehaviour
     void OnBackClicked()
     {
         ARMeasurementSession.Reset();
+
+        if (ARDesignHostDetect.IsEmbeddedInReactNative())
+        {
+            var measurementBridge = UnityEngine.Object.FindFirstObjectByType<ARMeasurementRnBridge>();
+            if (measurementBridge != null)
+            {
+                measurementBridge.RequestClose();
+                return;
+            }
+
+            UnityMessageBridge.SendToApp("requestClose", "ARRoomMeasurement");
+            return;
+        }
+
         if (!string.IsNullOrWhiteSpace(mainMenuSceneName))
             SceneManager.LoadScene(mainMenuSceneName);
     }
@@ -218,6 +232,9 @@ public class ARMeasurementPlanHUD : MonoBehaviour
 
         if (visible)
             ApplySafeAreaLayout();
+
+        if (ARDesignHostDetect.IsEmbeddedInReactNative())
+            UnityMessageBridge.SendToApp(visible ? "measurementPlanReady" : "measurementPlanClosed", "");
     }
 
     float ResolveTopSafeInset()
@@ -266,7 +283,9 @@ public class ARMeasurementPlanHUD : MonoBehaviour
             stretchWidth: true);
         topBarRt = topBar;
 
-        CreateCircleBackButton(topBar, OnBackClicked);
+        // Standalone builds keep a Unity back control; RN embeds use the RN back button.
+        if (!ARDesignHostDetect.IsEmbeddedInReactNative())
+            CreateCircleBackButton(topBar, OnBackClicked);
 
         titleLabel = ARDesignUiUtil.CreateText(topBar, "Untitled room", 28, FontStyle.Bold, TextAnchor.MiddleCenter);
         titleLabel.color = Ink;
@@ -308,7 +327,11 @@ public class ARMeasurementPlanHUD : MonoBehaviour
             out view3dLabel);
         RefreshToggleStyles();
 
-        CreateOverflowMenu(root.transform, topBar);
+        // RN owns Export when embedded (Unity Input / share sheet are awkward in UaaL).
+        if (!ARDesignHostDetect.IsEmbeddedInReactNative())
+            CreateOverflowMenu(root.transform, topBar);
+        else
+            toggleRt.anchoredPosition = new Vector2(-16f, 0f);
 
         // Dimension card (top-left), matching the reference layout.
         var stats = CreateFrostChip(

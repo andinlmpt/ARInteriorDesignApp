@@ -1,5 +1,10 @@
-import { callApi } from './apiClient';
+import { callApi, ApiError } from './apiClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  isDataUrl,
+  reclaimProfilePictureStorage,
+  saveProfilePictureLocally,
+} from '@/utils/profilePictureStorage';
 
 export const AUTH_TOKEN_KEY = 'runtime_backend_api_key';
 export const AUTH_USER_KEY = 'app.auth.user';
@@ -87,7 +92,7 @@ export const AuthService = {
         // Fallback: durable local cache from last successful edit-profile save
         if (!user.profilePicture && user.id) {
           const cached = await AsyncStorage.getItem(profilePictureCacheKey(user.id));
-          if (cached) {
+          if (cached && !isDataUrl(cached)) {
             user = { ...user, profilePicture: cached };
           }
         }
@@ -98,28 +103,61 @@ export const AuthService = {
 
       return response;
     } catch (error) {
-      console.error('[AuthService] Login failed:', error);
+      // Wrong email/password is an expected user outcome — don't dump a stack trace.
+      if (error instanceof ApiError && error.status === 401) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn('[AuthService] Login failed:', message);
       throw error;
     }
   },
 
   /**
-   * Persist user session to storage
+   * Persist user session to storage.
+   * Large base64 photos are written to disk; AsyncStorage only keeps a short URI.
    */
   async persistSession(token: string, user: User): Promise<void> {
     try {
+      let picture = user.profilePicture ?? null;
+      if (picture && user.id && isDataUrl(picture)) {
+        try {
+          picture = await saveProfilePictureLocally(user.id, picture);
+        } catch (err) {
+          console.warn('[AuthService] Could not migrate profile picture to disk:', err);
+          await reclaimProfilePictureStorage(user.id);
+          picture = null;
+        }
+      }
+
+      const slimUser: User = {
+        ...user,
+        profilePicture: picture,
+        loginTime: Date.now(),
+      };
+
       await AsyncStorage.setItem(AUTH_TOKEN_KEY, token);
-      await AsyncStorage.setItem(
-        AUTH_USER_KEY,
-        JSON.stringify({
-          ...user,
-          loginTime: Date.now(),
-        })
-      );
+      try {
+        await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(slimUser));
+      } catch (storageError) {
+        console.warn('[AuthService] AsyncStorage full — reclaiming profile cache:', storageError);
+        await reclaimProfilePictureStorage(user.id);
+        await AsyncStorage.setItem(
+          AUTH_USER_KEY,
+          JSON.stringify({
+            ...slimUser,
+            profilePicture: picture && !isDataUrl(picture) ? picture : null,
+          })
+        );
+      }
       await AsyncStorage.setItem('onboarding_completed', 'true');
 
-      if (user.id && user.profilePicture) {
-        await AsyncStorage.setItem(profilePictureCacheKey(user.id), user.profilePicture);
+      if (user.id && picture && !isDataUrl(picture)) {
+        try {
+          await AsyncStorage.setItem(profilePictureCacheKey(user.id), picture);
+        } catch {
+          // Short paths should fit; ignore if storage is still constrained.
+        }
       }
     } catch (error) {
       console.error('[AuthService] Failed to persist session:', error);
@@ -129,13 +167,29 @@ export const AuthService = {
 
   /**
    * Save profile picture so it survives logout / session clears.
+   * Base64 is stored on disk; AsyncStorage only keeps the file URI.
    */
   async cacheProfilePicture(userId: string, profilePicture: string | null): Promise<void> {
     const key = profilePictureCacheKey(userId);
-    if (profilePicture) {
-      await AsyncStorage.setItem(key, profilePicture);
-    } else {
+    if (!profilePicture) {
       await AsyncStorage.removeItem(key);
+      return;
+    }
+
+    let ref = profilePicture;
+    if (isDataUrl(profilePicture)) {
+      ref = await saveProfilePictureLocally(userId, profilePicture);
+    }
+
+    try {
+      await AsyncStorage.setItem(key, ref);
+    } catch (error) {
+      await reclaimProfilePictureStorage(userId);
+      try {
+        await AsyncStorage.setItem(key, ref);
+      } catch (retryError) {
+        console.warn('[AuthService] cacheProfilePicture failed after reclaim:', retryError);
+      }
     }
   },
 

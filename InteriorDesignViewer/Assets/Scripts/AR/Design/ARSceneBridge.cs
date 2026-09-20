@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 /// <summary>
 /// The single React Native entry point for ARDesignScene.
@@ -29,6 +30,15 @@ public class ARSceneBridge : MonoBehaviour
     [Tooltip("Begin the scan phase as soon as the scene loads, without waiting for RN to call StartRoomScan.")]
     [SerializeField] private bool autoStartScan = true;
 
+    const string FurnitureSceneName = "ARDesignScene";
+    const string MeasurementSceneName = "ARRoomMeasurement";
+
+    /// <summary>
+    /// Set before <see cref="SceneManager.LoadScene"/> so the destination scene
+    /// can finish the RN boot action after Awake/Start (e.g. furniture unlock).
+    /// </summary>
+    public static string PendingBootAction;
+
     // Event names. Keep in sync with UnityToRNEvent in frontend/types/unity-bridge.ts.
     const string EventReady = "unityReady";
     const string EventScanStatus = "scanStatus";
@@ -39,6 +49,7 @@ public class ARSceneBridge : MonoBehaviour
     const string EventLayoutChanged = "layoutChanged";
     const string EventExportComplete = "exportComplete";
     const string EventHistoryChanged = "historyChanged";
+    const string EventPlacementSafety = "placementSafety";
     const string EventError = "error";
 
     void Awake()
@@ -64,6 +75,7 @@ public class ARSceneBridge : MonoBehaviour
             placementController.FurnitureRemoved += OnFurnitureRemoved;
             placementController.SelectionChanged += OnSelectionChanged;
             placementController.SpawnFailed += OnSpawnFailed;
+            placementController.PlacementSafetyChanged += OnPlacementSafetyChanged;
         }
 
         if (layoutHistory != null)
@@ -84,6 +96,7 @@ public class ARSceneBridge : MonoBehaviour
             placementController.FurnitureRemoved -= OnFurnitureRemoved;
             placementController.SelectionChanged -= OnSelectionChanged;
             placementController.SpawnFailed -= OnSpawnFailed;
+            placementController.PlacementSafetyChanged -= OnPlacementSafetyChanged;
         }
 
         if (layoutHistory != null)
@@ -94,7 +107,25 @@ public class ARSceneBridge : MonoBehaviour
     {
         try
         {
-            UnityMessageBridge.SendToApp(EventReady, "ARDesignScene");
+            UnityMessageBridge.SendToApp(EventReady, FurnitureSceneName);
+
+            if (PendingBootAction == "furniture")
+            {
+                PendingBootAction = null;
+                StartFurniturePlacement();
+                return;
+            }
+
+            if (PendingBootAction == "measure")
+            {
+                PendingBootAction = null;
+                OpenRoomMeasurement();
+                return;
+            }
+
+            // RN chooses furniture vs measurement — do not auto-scan when embedded.
+            if (ARDesignHostDetect.IsEmbeddedInReactNative())
+                return;
 
             if (autoStartScan)
                 StartRoomScan();
@@ -134,8 +165,30 @@ public class ARSceneBridge : MonoBehaviour
 
         switch (message.method)
         {
+            case "openRoomMeasurement":
+                OpenRoomMeasurement();
+                break;
+
+            case "openFurnitureDesign":
+                OpenFurnitureDesign();
+                break;
+
+            case "ping":
+                UnityMessageBridge.SendToApp(EventReady, FurnitureSceneName);
+                break;
+
+            case "requestClose":
+            case "closeUnity":
+                UnityMessageBridge.SendToApp("requestClose", FurnitureSceneName);
+                break;
+
             case "startRoomScan":
                 StartRoomScan();
+                break;
+
+            case "startFurniturePlacement":
+            case "beginFurniturePlacementOnly":
+                StartFurniturePlacement();
                 break;
 
             case "getScanStatus":
@@ -168,6 +221,11 @@ public class ARSceneBridge : MonoBehaviour
                 ExportLayout();
                 break;
 
+            case "capturePhoto":
+            case "savePhoto":
+                CapturePhoto();
+                break;
+
             case "undo":
                 Undo();
                 break;
@@ -184,6 +242,35 @@ public class ARSceneBridge : MonoBehaviour
 
     // ── RN-callable API ───────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Loads the dedicated Unity AR Measurement scene (native HUDs).
+    /// Used by RN "AR Measurement" instead of the RN Scanning-room overlay.
+    /// </summary>
+    public void OpenRoomMeasurement()
+    {
+        if (SceneManager.GetActiveScene().name == MeasurementSceneName)
+            return;
+
+        PendingBootAction = null;
+        SceneManager.LoadScene(MeasurementSceneName);
+    }
+
+    /// <summary>
+    /// Ensures ARDesignScene is active and unlocks furniture placement.
+    /// Safe to call when returning from ARRoomMeasurement.
+    /// </summary>
+    public void OpenFurnitureDesign()
+    {
+        if (SceneManager.GetActiveScene().name == FurnitureSceneName)
+        {
+            StartFurniturePlacement();
+            return;
+        }
+
+        PendingBootAction = "furniture";
+        SceneManager.LoadScene(FurnitureSceneName);
+    }
+
     /// <summary>Begins or restarts the room scan phase.</summary>
     public void StartRoomScan()
     {
@@ -196,6 +283,25 @@ public class ARSceneBridge : MonoBehaviour
         placementController?.ClearFurniture();
         layoutHistory?.Clear();
         scanController.StartRoomScan();
+    }
+
+    /// <summary>
+    /// Skips height/corner measurement and unlocks live floor furniture placement
+    /// (used by RN "AR Furniture").
+    /// </summary>
+    public void StartFurniturePlacement()
+    {
+        if (scanController == null)
+        {
+            SendError("notConfigured", "RoomScanController is missing from the scene.");
+            return;
+        }
+
+        FindFirstObjectByType<ARDesignLayoutModeController>()?.ForceLiveArCamera();
+
+        placementController?.ClearFurniture();
+        layoutHistory?.Clear();
+        scanController.BeginFurniturePlacementOnly();
     }
 
     /// <summary>Pushes the current scan coverage to RN and returns it for in-editor use.</summary>
@@ -337,6 +443,23 @@ public class ARSceneBridge : MonoBehaviour
         return result;
     }
 
+    /// <summary>
+    /// Screenshots the live AR view and emits <c>photoCaptured</c> to RN
+    /// (gallery + app path). Uses the catalog UI capture path so behavior matches
+    /// the native Save Photo button.
+    /// </summary>
+    public void CapturePhoto()
+    {
+        var catalogUi = FindFirstObjectByType<ARDesignFurnitureCatalogUI>(FindObjectsInactive.Include);
+        if (catalogUi == null)
+        {
+            SendError("notConfigured", "Photo capture is missing from the scene.");
+            return;
+        }
+
+        catalogUi.CapturePhoto();
+    }
+
     // ── Outbound ──────────────────────────────────────────────────────────────
 
     void OnScanStatusChanged(ScanStatusPayload status)
@@ -377,6 +500,28 @@ public class ARSceneBridge : MonoBehaviour
         };
 
         UnityMessageBridge.SendToApp(EventFurnitureSelected, JsonUtility.ToJson(payload));
+    }
+
+    void OnPlacementSafetyChanged(FurniturePlacementSafety.Result result, PlacedFurniture furniture)
+    {
+        var payload = new PlacementSafetyPayload
+        {
+            instanceId = furniture != null ? furniture.InstanceId : string.Empty,
+            modelId = furniture != null ? furniture.ModelId : string.Empty,
+            isSafe = result.isSafe,
+            hasFurnitureCollision = result.hasFurnitureCollision,
+            hasWallCollision = result.hasWallCollision,
+            isTooCloseToWall = result.isTooCloseToWall,
+            nearestFurnitureDistance = float.IsFinite(result.nearestFurnitureDistance)
+                ? result.nearestFurnitureDistance
+                : -1f,
+            nearestWallDistance = float.IsFinite(result.nearestWallDistance)
+                ? result.nearestWallDistance
+                : -1f,
+            reason = result.reason ?? string.Empty,
+        };
+
+        UnityMessageBridge.SendToApp(EventPlacementSafety, JsonUtility.ToJson(payload));
     }
 
     void OnSpawnFailed(string code, string message)

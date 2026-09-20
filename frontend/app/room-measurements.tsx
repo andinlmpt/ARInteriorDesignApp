@@ -5,6 +5,11 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  Modal,
+  TextInput,
+  Pressable,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -39,6 +44,10 @@ export default function RoomMeasurementsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [metricUnits, setMetricUnits] = useState(true);
+  const [renamingItem, setRenamingItem] = useState<RoomMeasurementRecord | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameSaving, setRenameSaving] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
 
   const loadMeasurements = useCallback(async (refresh = false) => {
     try {
@@ -66,6 +75,54 @@ export default function RoomMeasurementsScreen() {
     }, [loadMeasurements]),
   );
 
+  const startNewMeasurement = useCallback(() => {
+    router.push({ pathname: '/ar-view', params: { mode: 'measure' } });
+  }, [router]);
+
+  const openRename = useCallback((item: RoomMeasurementRecord) => {
+    setRenamingItem(item);
+    setRenameValue(item.name || 'Room scan');
+    setRenameError(null);
+  }, []);
+
+  const closeRename = useCallback(() => {
+    if (renameSaving) return;
+    setRenamingItem(null);
+    setRenameValue('');
+    setRenameError(null);
+  }, [renameSaving]);
+
+  const saveRename = useCallback(async () => {
+    if (!renamingItem) return;
+    const nextName = renameValue.trim();
+    if (!nextName) {
+      setRenameError('Enter a name for this room.');
+      return;
+    }
+    if (nextName === (renamingItem.name || '').trim()) {
+      setRenamingItem(null);
+      setRenameValue('');
+      setRenameError(null);
+      return;
+    }
+
+    setRenameSaving(true);
+    setRenameError(null);
+    try {
+      const updated = await RoomMeasurementService.updateName(renamingItem.id, nextName);
+      setMeasurements((prev) =>
+        prev.map((m) => (m.id === updated.id ? { ...m, name: updated.name } : m)),
+      );
+      setRenamingItem(null);
+      setRenameValue('');
+    } catch (err) {
+      console.warn('[RoomMeasurements] Rename failed:', err);
+      setRenameError('Couldn’t save the name. Check your connection and try again.');
+    } finally {
+      setRenameSaving(false);
+    }
+  }, [renameValue, renamingItem]);
+
   const renderEmpty = () => (
     <View style={styles.emptyState}>
       <View style={[styles.emptyIcon, { backgroundColor: hexToRgba(colors.accent, 0.12) }]}>
@@ -75,19 +132,9 @@ export default function RoomMeasurementsScreen() {
         No room scans yet
       </AppText>
       <AppText variant="body" color="textMuted" style={styles.emptyBody}>
-        Scan a room in Unity ARDesignScene and save the measurement. Saved scans appear here
-        when the backend is running.
+        Scan a room with AR Measurement and save the size. Saved scans appear here when the
+        backend is running.
       </AppText>
-      <TouchableOpacity
-        style={[styles.ctaButton, { backgroundColor: colors.accent }]}
-        onPress={() => router.push('/ar-view')}
-        activeOpacity={0.85}
-      >
-        <Ionicons name="logo-unity" size={18} color="#FFFFFF" />
-        <AppText variant="subtitle" style={styles.ctaText}>
-          Unity AR instructions
-        </AppText>
-      </TouchableOpacity>
     </View>
   );
 
@@ -121,6 +168,15 @@ export default function RoomMeasurementsScreen() {
               {scannedAt}
             </AppText>
           </View>
+          <TouchableOpacity
+            onPress={() => openRename(item)}
+            hitSlop={8}
+            style={[styles.renameBtn, { backgroundColor: hexToRgba(colors.accent, 0.1) }]}
+            accessibilityRole="button"
+            accessibilityLabel={`Rename ${item.name || 'room scan'}`}
+          >
+            <Ionicons name="create-outline" size={18} color={colors.accent} />
+          </TouchableOpacity>
         </View>
 
         <View style={[styles.dimensionPill, { backgroundColor: hexToRgba(colors.accent, 0.08) }]}>
@@ -172,7 +228,15 @@ export default function RoomMeasurementsScreen() {
           <AppText variant="h2" style={[styles.title, { color: colors.textPrimary }]}>
             Room Measurements
           </AppText>
-          <View style={styles.headerSpacer} />
+          <TouchableOpacity
+            onPress={startNewMeasurement}
+            style={[styles.headerAddBtn, { backgroundColor: colors.accent }]}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Start new room measurement"
+          >
+            <Ionicons name="add" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
 
         <Screen
@@ -222,6 +286,94 @@ export default function RoomMeasurementsScreen() {
           )}
         </Screen>
       </SafeAreaView>
+
+      <Modal
+        visible={Boolean(renamingItem)}
+        transparent
+        animationType="fade"
+        onRequestClose={closeRename}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.renameOverlay}
+        >
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={closeRename} />
+          <View
+            style={[
+              styles.renameCard,
+              {
+                backgroundColor: colors.surfacePrimary,
+                ...Platform.select({
+                  ios: shadows.lg,
+                  android: { elevation: 8 },
+                  default: shadows.md,
+                }),
+              },
+            ]}
+          >
+            <AppText variant="h3" style={[styles.renameTitle, { color: colors.textPrimary }]}>
+              Rename room
+            </AppText>
+            <AppText variant="body" color="textMuted" style={styles.renameHint}>
+              Give this scan a clear name, like Living room or Master bedroom.
+            </AppText>
+            <TextInput
+              value={renameValue}
+              onChangeText={(text) => {
+                setRenameValue(text);
+                if (renameError) setRenameError(null);
+              }}
+              placeholder="Room name"
+              placeholderTextColor={colors.textMuted}
+              maxLength={100}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={saveRename}
+              editable={!renameSaving}
+              style={[
+                styles.renameInput,
+                {
+                  color: colors.textPrimary,
+                  borderColor: renameError ? colors.danger : colors.border,
+                  backgroundColor: colors.surfaceSecondary,
+                },
+              ]}
+            />
+            {renameError ? (
+              <AppText variant="caption" style={{ color: colors.danger, marginTop: spacing.xs }}>
+                {renameError}
+              </AppText>
+            ) : null}
+            <View style={styles.renameActions}>
+              <TouchableOpacity
+                style={[styles.renameActionBtn, { backgroundColor: colors.accentSoft }]}
+                onPress={closeRename}
+                disabled={renameSaving}
+              >
+                <AppText variant="subtitle" style={{ color: colors.accent, fontWeight: '600' }}>
+                  Cancel
+                </AppText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.renameActionBtn,
+                  { backgroundColor: colors.accent, opacity: renameSaving ? 0.7 : 1 },
+                ]}
+                onPress={saveRename}
+                disabled={renameSaving}
+              >
+                {renameSaving ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <AppText variant="subtitle" style={{ color: '#FFFFFF', fontWeight: '600' }}>
+                    Save
+                  </AppText>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -252,15 +404,24 @@ const styles = StyleSheet.create({
   headerSpacer: {
     width: 40,
   },
+  headerAddBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   content: {
     paddingBottom: spacing.xxl * 2,
     gap: spacing.md,
   },
   subtitle: {
     marginBottom: spacing.xs,
+    textAlign: 'center',
   },
   countLabel: {
     marginBottom: spacing.xs,
+    textAlign: 'center',
   },
   loadingWrap: {
     paddingVertical: spacing.xxl * 2,
@@ -299,6 +460,13 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
+  renameBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   dimensionPill: {
     borderRadius: radii.md,
     paddingVertical: spacing.sm,
@@ -335,17 +503,46 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
   },
-  ctaButton: {
-    flexDirection: 'row',
+  renameOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
     alignItems: 'center',
-    gap: spacing.sm,
+    justifyContent: 'center',
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    borderRadius: radii.pill,
-    marginTop: spacing.sm,
   },
-  ctaText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
+  renameCard: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: radii.lg,
+    padding: spacing.xl,
+  },
+  renameTitle: {
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: spacing.sm,
+  },
+  renameHint: {
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: spacing.md,
+  },
+  renameInput: {
+    borderWidth: 1,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    fontSize: 16,
+  },
+  renameActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+  },
+  renameActionBtn: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

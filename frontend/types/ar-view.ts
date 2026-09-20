@@ -71,6 +71,8 @@ export interface FurnitureLibraryItem {
   material?: string;
   styles?: string[];
   roomTypes?: string[];
+  /** Inventory count from admin catalog; 0 = out of stock. */
+  quantity?: number;
   model3D?: {
     url: string | number;
     format: 'glb' | 'gltf';

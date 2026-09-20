@@ -337,6 +337,23 @@ public class ARDesignLayoutModeController : MonoBehaviour
         Debug.Log("[ARDesignLayoutMode] Returned to live AR scan mode.");
     }
 
+    /// <summary>
+    /// Always restore the live AR camera feed (used when RN switches back to furniture
+    /// after a measurement / planner session).
+    /// </summary>
+    public void ForceLiveArCamera()
+    {
+        sessionActive = false;
+        orbiting = false;
+        lastPinchDistance = 0f;
+        viewMode = ViewMode.RealRoom;
+        EnforceRealRoomCamera();
+        roomMeshVisualizer?.SetShellVisible(false);
+        scanController?.SetLiveFloorTracking(true);
+        ViewModeChanged?.Invoke(viewMode);
+        Debug.Log("[ARDesignLayoutMode] Forced live AR camera.");
+    }
+
     void HandleOrbitInput()
     {
         if (placementController != null && placementController.SuppressTapInput)

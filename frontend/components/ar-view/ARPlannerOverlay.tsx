@@ -1,9 +1,8 @@
 /**
- * Planner-style chrome inspired by bathroom layout apps:
- * top price pill, right category rail, bottom tool + undo/redo bar.
+ * Planner-style chrome: top back button, furniture sheet, bottom tool + undo/redo bar.
  */
 
-import React, { useMemo } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -18,21 +17,10 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { FurnitureCategory, FurnitureLibraryItem } from '@/types/ar-view';
-import { formatDimensionSubtitle } from '@/utils/furnitureCatalogHelpers';
+import { formatDimensionSubtitle, isOutOfStock, canPlaceMore, getRemainingPlacements } from '@/utils/furnitureCatalogHelpers';
 import { spacing, radii } from '@/components/ui/theme';
 
 export type PlannerTool = 'place' | 'select' | 'measure';
-
-const CATEGORY_ICONS: { id: FurnitureCategory | 'all'; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { id: 'all', icon: 'home-outline' },
-  { id: 'seating', icon: 'bed-outline' },
-  { id: 'tables', icon: 'grid-outline' },
-  { id: 'bedroom', icon: 'moon-outline' },
-  { id: 'lighting', icon: 'bulb-outline' },
-  { id: 'kitchen', icon: 'restaurant-outline' },
-  { id: 'storage', icon: 'file-tray-stacked-outline' },
-  { id: 'decor', icon: 'flower-outline' },
-];
 
 interface ARPlannerOverlayProps {
   catalogItems: FurnitureLibraryItem[];
@@ -45,6 +33,8 @@ interface ARPlannerOverlayProps {
   statusMessage: string;
   selectedCategory: FurnitureCategory | 'all';
   selectedLibraryItem: string | null;
+  /** Catalog modelId of the currently selected placed piece in Unity (if any). */
+  selectedPlacedModelId?: string | null;
   placedModelIds: string[];
   canUndo: boolean;
   canRedo: boolean;
@@ -58,6 +48,8 @@ interface ARPlannerOverlayProps {
   onRedo: () => void;
   onClear: () => void;
   onExport: () => void;
+  onSavePhoto?: () => void;
+  savingPhoto?: boolean;
   onRemoveSelected: () => void;
   onSetTool: (tool: PlannerTool) => void;
   onToggleLibrary: () => void;
@@ -87,61 +79,41 @@ export function ARPlannerOverlay({
   scanProgress,
   scanReady,
   statusMessage,
-  selectedCategory,
   selectedLibraryItem,
-  placedModelIds,
+  selectedPlacedModelId = null,
+  placedModelIds = [],
   canUndo,
   canRedo,
-  activeTool,
   libraryOpen,
-  onSelectCategory,
   onSelectItem,
   onConfirmScan,
-  onRescan,
   onUndo,
   onRedo,
-  onClear,
-  onExport,
   onRemoveSelected,
-  onSetTool,
+  onSavePhoto,
+  savingPhoto = false,
   onToggleLibrary,
   onBack,
   style,
 }: ARPlannerOverlayProps) {
   const insets = useSafeAreaInsets();
 
-  const total = useMemo(() => {
-    return placedModelIds.reduce((sum, modelId) => {
-      const item = catalogItems.find((entry) => entry.id === modelId);
-      return sum + (item ? parseFurniturePrice(item.price) : 0);
-    }, 0);
-  }, [catalogItems, placedModelIds]);
+  // Category rail removed — always show the full catalog in the bottom sheet.
+  const filteredItems = catalogItems;
 
-  const filteredItems =
-    selectedCategory === 'all'
-      ? catalogItems
-      : catalogItems.filter((item) => item.category === selectedCategory);
+  const dimensionFocusId = selectedPlacedModelId || selectedLibraryItem;
+  const dimensionItem = dimensionFocusId
+    ? catalogItems.find((entry) => entry.id === dimensionFocusId) ?? null
+    : null;
+  const dimensionLabel = dimensionItem ? formatDimensionSubtitle(dimensionItem) : null;
 
   return (
     <View style={[styles.root, style]} pointerEvents="box-none">
-      {/* Top bar */}
+      {/* Top bar — back only (price pill removed) */}
       <View style={[styles.topBar, { paddingTop: Math.max(insets.top, 12) }]} pointerEvents="box-none">
         <TouchableOpacity style={styles.menuButton} onPress={onBack} accessibilityLabel="Go back">
           <Ionicons name="menu" size={20} color="#1C1B19" />
         </TouchableOpacity>
-
-        <View style={styles.pricePill}>
-          <Ionicons name="list" size={16} color="#1C1B19" />
-          <Text style={styles.priceText}>{formatPlannerTotal(total)}</Text>
-          <TouchableOpacity
-            style={styles.nextButton}
-            onPress={onExport}
-            disabled={!roomConfirmed}
-            accessibilityLabel="Export layout"
-          >
-            <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
       </View>
 
       {/* Scan banner */}
@@ -165,34 +137,32 @@ export function ARPlannerOverlay({
       )}
 
       {roomConfirmed && (
-        <View style={styles.statusChip} pointerEvents="none">
-          <Text style={styles.statusChipText}>{statusMessage}</Text>
+        <View style={styles.statusChipWrap} pointerEvents="none">
+          <View style={styles.statusChip}>
+            <Text style={styles.statusChipText}>{statusMessage}</Text>
+          </View>
         </View>
       )}
 
-      {/* Right category rail */}
-      {roomConfirmed && (
-        <View style={[styles.sideRail, { top: insets.top + 72 }]} pointerEvents="box-none">
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sideRailContent}>
-            {CATEGORY_ICONS.map((entry) => {
-              const active = selectedCategory === entry.id;
-              return (
-                <TouchableOpacity
-                  key={entry.id}
-                  style={[styles.railButton, active && styles.railButtonActive]}
-                  onPress={() => {
-                    onSelectCategory(entry.id);
-                    if (!libraryOpen) onToggleLibrary();
-                  }}
-                  accessibilityLabel={`${entry.id} category`}
-                >
-                  <Ionicons name={entry.icon} size={20} color="#FFFFFF" />
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+      {/* Dimension chip — RN overlay (replaces Unity world-space billboard) */}
+      {roomConfirmed && dimensionItem && dimensionLabel ? (
+        <View
+          style={[
+            styles.dimensionChipWrap,
+            { bottom: insets.bottom + (libraryOpen ? 210 : 88) },
+          ]}
+          pointerEvents="none"
+        >
+          <View style={styles.dimensionChip}>
+            <Text style={styles.dimensionChipName} numberOfLines={1}>
+              {dimensionItem.name}
+            </Text>
+            <Text style={styles.dimensionChipDims} numberOfLines={1}>
+              {dimensionLabel}
+            </Text>
+          </View>
         </View>
-      )}
+      ) : null}
 
       {/* Item sheet */}
       {roomConfirmed && libraryOpen && (
@@ -212,24 +182,78 @@ export function ARPlannerOverlay({
             </View>
           ) : (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.itemRow}>
-              {filteredItems.map((item) => {
+              {filteredItems.map((item, index) => {
                 const selected = selectedLibraryItem === item.id;
+                const isLast = index === filteredItems.length - 1;
+                const placedCount = placedModelIds.filter((id) => id === item.id).length;
+                const remaining = getRemainingPlacements(item.quantity, placedCount);
+                const outOfStock = isOutOfStock(item.quantity);
+                const limitReached = !canPlaceMore(item.quantity, placedCount);
+                const locked = outOfStock || limitReached;
                 return (
                   <TouchableOpacity
                     key={item.id}
-                    style={[styles.itemCard, selected && styles.itemCardSelected]}
-                    onPress={() => onSelectItem(item.id)}
+                    style={[
+                      styles.itemCard,
+                      selected && !locked && styles.itemCardSelected,
+                      isLast && styles.itemCardLast,
+                      locked && styles.itemCardLocked,
+                    ]}
+                    disabled={locked}
+                    onPress={() => {
+                      if (!locked) onSelectItem(item.id);
+                    }}
+                    accessibilityState={{ disabled: locked }}
+                    accessibilityLabel={
+                      outOfStock
+                        ? `${item.name}, out of stock`
+                        : limitReached
+                          ? `${item.name}, placement limit reached`
+                          : remaining != null
+                            ? `${item.name}, ${remaining} remaining`
+                            : item.name
+                    }
                   >
-                    {item.thumbnail ? (
-                      <Image source={{ uri: item.thumbnail }} style={styles.itemThumbnail} />
-                    ) : (
-                      <View style={[styles.itemSwatch, { backgroundColor: item.color }]} />
-                    )}
-                    <Text style={styles.itemName} numberOfLines={1}>
+                    <View style={styles.itemMedia}>
+                      {item.thumbnail ? (
+                        <Image
+                          source={{ uri: item.thumbnail }}
+                          style={[styles.itemThumbnail, locked && styles.itemMediaDimmed]}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <View
+                          style={[
+                            styles.itemSwatch,
+                            { backgroundColor: item.color },
+                            locked && styles.itemMediaDimmed,
+                          ]}
+                        />
+                      )}
+                      {locked ? (
+                        <View style={styles.itemLockOverlay} pointerEvents="none">
+                          <Ionicons name="lock-closed" size={14} color="#FFFFFF" />
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text style={[styles.itemName, locked && styles.itemTextMuted]} numberOfLines={1}>
                       {item.name}
                     </Text>
-                    <Text style={styles.itemPrice} numberOfLines={1}>
-                      {item.price || formatDimensionSubtitle(item)}
+                    <Text
+                      style={[
+                        styles.itemPrice,
+                        outOfStock && styles.itemOutOfStock,
+                        limitReached && !outOfStock && styles.itemLimitReached,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {outOfStock
+                        ? 'Out of stock'
+                        : limitReached
+                          ? 'Limit reached'
+                          : remaining != null
+                            ? `${remaining} left`
+                            : item.price || formatDimensionSubtitle(item)}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -250,25 +274,14 @@ export function ARPlannerOverlay({
               label="Library"
             />
             <ToolButton
-              icon="move-outline"
-              active={activeTool === 'select'}
-              onPress={() => onSetTool('select')}
-              label="Move"
+              icon="camera-outline"
+              onPress={onSavePhoto ?? (() => {})}
+              disabled={!onSavePhoto || savingPhoto}
+              label="Save photo"
             />
-            <ToolButton
-              icon="resize-outline"
-              active={activeTool === 'measure'}
-              onPress={() => onSetTool('measure')}
-              label="Measure"
-            />
-            <ToolButton icon="trash-outline" onPress={onRemoveSelected} label="Delete" />
-          </View>
-
-          <View style={styles.toolGroup}>
             <ToolButton icon="arrow-undo" onPress={onUndo} disabled={!canUndo} label="Undo" />
             <ToolButton icon="arrow-redo" onPress={onRedo} disabled={!canRedo} label="Redo" />
-            <ToolButton icon="refresh" onPress={onRescan} label="Rescan" />
-            <ToolButton icon="close" onPress={onClear} label="Clear" />
+            <ToolButton icon="trash-outline" onPress={onRemoveSelected} label="Delete" />
           </View>
         </View>
       )}
@@ -312,36 +325,13 @@ const styles = StyleSheet.create({
     right: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
   },
   menuButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
     backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pricePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#FFFFFF',
-    borderRadius: radii.pill,
-    paddingLeft: 14,
-    paddingVertical: 6,
-    paddingRight: 6,
-  },
-  priceText: {
-    color: '#1C1B19',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  nextButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#2563EB',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -392,78 +382,111 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 14,
   },
-  statusChip: {
+  statusChipWrap: {
     position: 'absolute',
     top: 100,
-    left: spacing.md,
-    right: 72,
-    backgroundColor: 'rgba(28,27,25,0.72)',
-    borderRadius: radii.md,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  statusChip: {
+    backgroundColor: 'rgba(20, 24, 32, 0.48)',
+    borderRadius: radii.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+    maxWidth: '78%',
   },
   statusChipText: {
     color: '#FFFFFF',
     fontSize: 13,
+    textAlign: 'center',
   },
-  sideRail: {
+  dimensionChipWrap: {
     position: 'absolute',
-    right: spacing.sm,
-    bottom: 120,
-    width: 52,
-    backgroundColor: '#1C1B19',
-    borderRadius: 16,
-    paddingVertical: 8,
-  },
-  sideRailContent: {
+    left: spacing.md,
+    right: spacing.md,
     alignItems: 'center',
-    gap: 6,
   },
-  railButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+  dimensionChip: {
+    maxWidth: '100%',
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 2,
   },
-  railButtonActive: {
-    backgroundColor: '#374151',
+  dimensionChipName: {
+    color: '#1C1B19',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  dimensionChipDims: {
+    color: '#4B5563',
+    fontSize: 12,
+    fontWeight: '500',
+    textAlign: 'center',
   },
   itemSheet: {
     position: 'absolute',
     left: spacing.sm,
-    right: 68,
+    right: spacing.sm,
     backgroundColor: 'rgba(255,255,255,0.96)',
     borderRadius: radii.lg,
-    paddingVertical: spacing.sm,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+    overflow: 'hidden',
   },
   itemRow: {
-    paddingHorizontal: spacing.sm,
-    gap: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    paddingHorizontal: spacing.md,
   },
   itemCard: {
-    width: 110,
+    width: 118,
+    marginRight: spacing.md,
     borderRadius: radii.md,
     backgroundColor: '#F3F4F6',
     padding: spacing.sm,
+    borderWidth: 2,
+    borderColor: 'transparent',
   },
   itemCardSelected: {
-    borderWidth: 2,
     borderColor: '#2563EB',
   },
+  itemCardLast: {
+    marginRight: 0,
+  },
+  itemCardLocked: {
+    opacity: 0.85,
+  },
+  itemMedia: {
+    position: 'relative',
+    marginBottom: 8,
+  },
   itemSwatch: {
-    height: 44,
+    height: 52,
     borderRadius: 8,
-    marginBottom: 6,
   },
   itemThumbnail: {
-    height: 44,
+    height: 52,
     borderRadius: 8,
-    marginBottom: 6,
     backgroundColor: '#E5E7EB',
   },
+  itemMediaDimmed: {
+    opacity: 0.4,
+  },
+  itemLockOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.35)',
+    borderRadius: 8,
+  },
   catalogState: {
-    minHeight: 88,
+    minHeight: 96,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
@@ -482,7 +505,18 @@ const styles = StyleSheet.create({
   itemPrice: {
     color: '#6B7280',
     fontSize: 11,
-    marginTop: 2,
+    marginTop: 4,
+  },
+  itemTextMuted: {
+    color: '#6B7280',
+  },
+  itemOutOfStock: {
+    color: '#DC2626',
+    fontWeight: '600',
+  },
+  itemLimitReached: {
+    color: '#D97706',
+    fontWeight: '600',
   },
   bottomBar: {
     position: 'absolute',
@@ -490,7 +524,7 @@ const styles = StyleSheet.create({
     right: spacing.sm,
     bottom: 0,
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     gap: spacing.sm,
   },
   toolGroup: {

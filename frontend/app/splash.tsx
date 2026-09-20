@@ -87,7 +87,7 @@ export default function SplashScreen() {
           },
         ]}
       >
-        <AppLogo size={168} circular={false} elevated={false} style={styles.logoContainer} />
+        <AppLogo size={220} circular={false} elevated={false} style={styles.logoContainer} />
         <Animated.View style={[styles.textBlock, { opacity: fadeAnim }]}>
           <Text style={styles.title}>{BRAND.name}</Text>
           <Text style={styles.subtitle}>{BRAND.tagline}</Text>

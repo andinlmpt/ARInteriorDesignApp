@@ -250,7 +250,7 @@ export default function ProfileScreen() {
                 <Ionicons name="help-circle-outline" size={20} color={colors.accent} />
               </View>
               <AppText variant="body" style={[styles.menuText, { color: colors.textPrimary }]}>
-                Help & Support
+                Help & Contact
               </AppText>
               <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
             </TouchableOpacity>

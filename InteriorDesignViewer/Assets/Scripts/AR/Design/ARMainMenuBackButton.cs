@@ -37,6 +37,7 @@ public class ARMainMenuBackButton : MonoBehaviour
 
     void Awake()
     {
+        // RN owns back navigation when Unity is embedded — avoid duplicate chrome.
         if (!enableNativeButton || ARDesignHostDetect.IsEmbeddedInReactNative())
         {
             enabled = false;
@@ -80,8 +81,8 @@ public class ARMainMenuBackButton : MonoBehaviour
         rt.anchorMin = new Vector2(0f, 1f);
         rt.anchorMax = new Vector2(0f, 1f);
         rt.pivot = new Vector2(0f, 1f);
-        rt.anchoredPosition = new Vector2(28f, -48f);
-        rt.sizeDelta = new Vector2(88f, 88f);
+        rt.anchoredPosition = new Vector2(24f, -44f);
+        rt.sizeDelta = new Vector2(120f, 120f);
 
         var iconGo = new GameObject("Icon", typeof(RectTransform), typeof(Image));
         iconGo.transform.SetParent(go.transform, false);
@@ -159,6 +160,19 @@ public class ARMainMenuBackButton : MonoBehaviour
 
     void OnBackClicked()
     {
+        if (ARDesignHostDetect.IsEmbeddedInReactNative())
+        {
+            var measurementBridge = Object.FindFirstObjectByType<ARMeasurementRnBridge>();
+            if (measurementBridge != null)
+            {
+                measurementBridge.RequestClose();
+                return;
+            }
+
+            UnityMessageBridge.SendToApp("requestClose", "ARDesignScene");
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(mainMenuSceneName))
             return;
 

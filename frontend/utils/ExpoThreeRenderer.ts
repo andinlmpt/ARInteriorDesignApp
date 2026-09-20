@@ -100,11 +100,3 @@ function patchExpoGlInfoLogs(gl: ExpoWebGLRenderingContext): void {
   const originalShaderLog = anyGl.getShaderInfoLog.bind(anyGl);
   anyGl.getShaderInfoLog = (shader: WebGLShader) => originalShaderLog(shader) ?? '';
 }
-
-/**
- * Convenience factory function — equivalent to `new ExpoThreeRenderer(params)`.
- * Mirrors the original expo-three `Renderer` factory API.
- */
-export function createRenderer(params: ExpoThreeRendererParams): ExpoThreeRenderer {
-  return new ExpoThreeRenderer(params);
-}

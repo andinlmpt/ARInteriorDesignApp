@@ -109,7 +109,7 @@ public class MainMenuController : MonoBehaviour
         contentRt.anchoredPosition = Vector2.zero;
 
         // Brand logo
-        CreateLogoBadge(content.transform, new Vector2(0f, 470f));
+        CreateLogoBadge(content.transform, new Vector2(0f, 540f));
 
         // App title under logo
         var title = ARDesignUiUtil.CreateText(content.transform, "AR Interior Design", 40, FontStyle.Bold, TextAnchor.MiddleCenter);
@@ -120,7 +120,7 @@ public class MainMenuController : MonoBehaviour
         titleRt.anchorMax = new Vector2(0.5f, 0.5f);
         titleRt.pivot = new Vector2(0.5f, 0.5f);
         titleRt.sizeDelta = new Vector2(860f, 56f);
-        titleRt.anchoredPosition = new Vector2(0f, 210f);
+        titleRt.anchoredPosition = new Vector2(0f, 290f);
 
         var subtitle = ARDesignUiUtil.CreateText(
             content.transform,
@@ -135,7 +135,7 @@ public class MainMenuController : MonoBehaviour
         subRt.anchorMax = new Vector2(0.5f, 0.5f);
         subRt.pivot = new Vector2(0.5f, 0.5f);
         subRt.sizeDelta = new Vector2(780f, 48f);
-        subRt.anchoredPosition = new Vector2(0f, 152f);
+        subRt.anchoredPosition = new Vector2(0f, 235f);
 
         // Action cards
         furnitureButton = CreateActionCard(
@@ -173,7 +173,7 @@ public class MainMenuController : MonoBehaviour
 
     void CreateLogoBadge(Transform parent, Vector2 anchoredPos)
     {
-        const float logoSize = 480f;
+        const float logoSize = 640f;
 
         var logoGo = new GameObject("LogoBadge", typeof(RectTransform), typeof(Image));
         logoGo.transform.SetParent(parent, false);

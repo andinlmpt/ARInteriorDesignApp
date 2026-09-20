@@ -263,10 +263,10 @@ export default function Layout3DScreen() {
             <SlideInView direction="bottom" delay={200}>
               <AnimatedButton
                 style={[styles.loadDesignButton, { backgroundColor: colors.accent }]}
-                onPress={() => router.push('/ai-design')}
+                onPress={() => router.push('/(tabs)/camera')}
                 hapticType="medium"
               >
-                <Text style={styles.loadDesignButtonText}>Go to AI Design</Text>
+                <Text style={styles.loadDesignButtonText}>Start AR Furniture</Text>
               </AnimatedButton>
             </SlideInView>
           </View>

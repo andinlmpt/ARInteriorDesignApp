@@ -77,12 +77,18 @@ public static class ARFurnitureGrounding
     {
         if (furniture == null) return;
 
-        if (SnapPivotToFloorPoint(furniture, floorPoint, contactInset))
-            return;
-
         var targetFootY = floorPoint.y - contactInset;
-        var pos         = furniture.transform.position;
+        var pos = furniture.transform.position;
         furniture.transform.position = new Vector3(floorPoint.x, pos.y, floorPoint.z);
+        Physics.SyncTransforms();
+
+        if (SnapPivotToFloorPoint(furniture, floorPoint, contactInset))
+        {
+            Physics.SyncTransforms();
+            var footY = GetSupportContactY(furniture);
+            if (!float.IsPositiveInfinity(footY) && Mathf.Abs(footY - targetFootY) <= 0.004f)
+                return;
+        }
 
         for (var i = 0; i < iterations; i++)
         {
@@ -91,7 +97,7 @@ public static class ARFurnitureGrounding
             if (float.IsPositiveInfinity(footY)) continue;
 
             var correction = targetFootY - footY;
-            if (Mathf.Abs(correction) < 0.0005f) break;
+            if (Mathf.Abs(correction) < 0.0003f) break;
             if (Mathf.Abs(correction) > MaxFootCorrectionPerStep)
             {
                 Debug.LogWarning($"[ARFurnitureGrounding] Skipping unsafe foot correction ({correction:F2}m).");
@@ -100,6 +106,26 @@ public static class ARFurnitureGrounding
 
             furniture.transform.position += Vector3.up * correction;
         }
+    }
+
+    /// <summary>
+    /// Strong floor snap used at spawn and after drag: mesh-accurate feet on floorPoint XZ.
+    /// </summary>
+    public static void SnapToFloorPoint(GameObject furniture, Vector3 floorPoint, float contactInset = 0.02f)
+    {
+        if (furniture == null) return;
+        PlaceFeetOnFloor(furniture, floorPoint, contactInset, 28);
+        Physics.SyncTransforms();
+
+        var targetFootY = floorPoint.y - contactInset;
+        var footY = GetSupportContactY(furniture);
+        if (float.IsPositiveInfinity(footY)) return;
+
+        var gap = footY - targetFootY;
+        if (gap > 0.0015f)
+            furniture.transform.position += Vector3.down * gap;
+        else if (gap < -0.02f)
+            furniture.transform.position += Vector3.up * (-gap);
     }
 
     public static bool TryAlignToFloorWhenReady(GameObject furniture, float floorY, float contactInset = 0.02f)
@@ -312,7 +338,14 @@ public static class ARFurnitureGrounding
     static bool IsIgnoredForGrounding(GameObject go)
     {
         if (go == null) return true;
-        return go.name.Contains("Cube.003") || go.name.Contains("BlobShadow");
+        var name = go.name;
+        if (name.Contains("BlobShadow", System.StringComparison.OrdinalIgnoreCase)) return true;
+        if (name.Contains("DragOutline", System.StringComparison.OrdinalIgnoreCase)) return true;
+        if (name.Contains("FurnitureDimensionLabel", System.StringComparison.OrdinalIgnoreCase)) return true;
+        if (name.Contains("Cube.003")) return true;
+        if (name.Contains("Shadow", System.StringComparison.OrdinalIgnoreCase)) return true;
+        if (name.Contains("BaseDisc", System.StringComparison.OrdinalIgnoreCase)) return true;
+        return go.GetComponent<LineRenderer>() != null;
     }
 
     static bool IsBlobShadow(Renderer renderer)

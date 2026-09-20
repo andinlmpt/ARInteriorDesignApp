@@ -5,13 +5,14 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AuthService from '@/services/AuthService';
+import { ApiError } from '@/services/apiClient';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, radii } from '@/components/ui/theme';
 import { AnimatedButton, FadeInView, SlideInView } from '@/components/interactive';
 import { getHorizontalPadding, isSmallScreen, getResponsiveFontSize } from '@/utils/responsive';
 import { AppLogo } from '@/components/ui/AppLogo';
 import { BrandHeader } from '@/components/ui/BrandHeader';
-import { AppDialog, type AppDialogAction } from '@/components/ui/AppDialog';
+import { AppDialog } from '@/components/ui/AppDialog';
 
 const { width, height } = Dimensions.get('window');
 
@@ -170,28 +171,28 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [dialog, setDialog] = useState<{
-    title: string;
-    message?: string;
-    actions: AppDialogAction[];
-  } | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [authDialog, setAuthDialog] = useState<{ title: string; message: string } | null>(null);
   const router = useRouter();
   const { colors, statusBarStyle } = useTheme();
-
-  const closeDialog = () => setDialog(null);
-
-  const showDialog = (title: string, message: string, actions?: AppDialogAction[]) => {
-    setDialog({
-      title,
-      message,
-      actions: actions ?? [{ label: 'OK', tone: 'primary', onPress: closeDialog }],
-    });
-  };
 
   // Use sage accent colors matching the interior design palette
   const accentColor = colors.accent;
   const accentSoft = colors.accentSoft;
   const accentLight = colors.accentLight;
+  const dangerColor = colors.danger;
+
+  const closeAuthDialog = useCallback(() => setAuthDialog(null), []);
+
+  const handleEmailChange = useCallback((value: string) => {
+    setEmail(value);
+    setFormError(null);
+  }, []);
+
+  const handlePasswordChange = useCallback((value: string) => {
+    setPassword(value);
+    setFormError(null);
+  }, []);
 
   const handleLogin = useCallback(async () => {
     if (isLoading) return;
@@ -200,50 +201,59 @@ export default function LoginScreen() {
     const trimmedPassword = password.trim();
 
     if (!trimmedEmail || !trimmedPassword) {
-      showDialog('Missing information', 'Please fill in your email and password.');
+      setFormError('Please fill in your email and password.');
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(trimmedEmail)) {
-      showDialog('Invalid email', 'Please enter a valid email address.');
+      setFormError('Please enter a valid email address.');
       return;
     }
 
     if (trimmedPassword.length < 6) {
-      showDialog('Invalid password', 'Password must be at least 6 characters.');
+      setFormError('Password must be at least 6 characters.');
       return;
     }
 
     setIsLoading(true);
+    setFormError(null);
 
     try {
       const response = await AuthService.login(trimmedEmail, trimmedPassword);
 
       if (response && response.user) {
-        const displayName = response.user.name || 'there';
-        setDialog({
-          title: 'Welcome back',
-          message: `Hello ${displayName}, ready to design?`,
-          actions: [
-            {
-              label: 'Continue',
-              tone: 'primary',
-              onPress: () => {
-                closeDialog();
-                router.replace('/(tabs)');
-              },
-            },
-          ],
+        router.replace('/(tabs)');
+      }
+    } catch (error: unknown) {
+      const apiError = error instanceof ApiError ? error : null;
+      const rawMessage =
+        apiError?.details?.message ||
+        apiError?.message ||
+        (error instanceof Error ? error.message : '') ||
+        '';
+
+      const isWrongCredentials =
+        apiError?.status === 401 ||
+        /invalid email or password/i.test(rawMessage);
+
+      if (isWrongCredentials) {
+        setAuthDialog({
+          title: 'Incorrect email or password',
+          message: 'Please check your details and try again.',
+        });
+      } else {
+        console.warn(
+          '[Login] Sign-in failed:',
+          apiError?.message || (error instanceof Error ? error.message : 'Unknown error')
+        );
+        setAuthDialog({
+          title: 'Couldn’t sign in',
+          message:
+            rawMessage ||
+            'Unable to sign in. Please check your connection and try again.',
         });
       }
-    } catch (error: any) {
-      console.error('[Login] Failed to authenticate user', error);
-      const errorMessage =
-        error.details?.message ||
-        error.message ||
-        'Unable to sign in. Please check your connection and try again.';
-      showDialog('Sign-in failed', errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -299,7 +309,7 @@ export default function LoginScreen() {
                   placeholder="demo@email.com"
                   placeholderTextColor="#9CA3AF"
                   value={email}
-                  onChangeText={setEmail}
+                  onChangeText={handleEmailChange}
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoComplete="email"
@@ -320,7 +330,7 @@ export default function LoginScreen() {
                   placeholder="enter your password"
                   placeholderTextColor="#9CA3AF"
                   value={password}
-                  onChangeText={setPassword}
+                  onChangeText={handlePasswordChange}
                   secureTextEntry={!showPassword}
                   autoCapitalize="none"
                   autoComplete="password"
@@ -345,6 +355,19 @@ export default function LoginScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
+
+            {formError ? (
+              <View
+                style={[
+                  styles.errorBanner,
+                  { backgroundColor: `${dangerColor}14`, borderColor: `${dangerColor}55` },
+                ]}
+                accessibilityRole="alert"
+              >
+                <Ionicons name="alert-circle" size={18} color={dangerColor} />
+                <Text style={[styles.errorText, { color: dangerColor }]}>{formError}</Text>
+              </View>
+            ) : null}
 
             {/* Login Button */}
             <SlideInView direction="bottom" delay={300}>
@@ -374,12 +397,13 @@ export default function LoginScreen() {
       </ScrollView>
 
       <AppDialog
-        visible={!!dialog}
-        title={dialog?.title ?? ''}
-        message={dialog?.message}
-        actions={dialog?.actions}
-        onRequestClose={closeDialog}
-        dismissOnBackdrop={dialog?.title !== 'Welcome back'}
+        visible={!!authDialog}
+        variant="danger"
+        icon="alert-circle"
+        title={authDialog?.title ?? ''}
+        message={authDialog?.message}
+        actions={[{ label: 'Try again', onPress: closeAuthDialog, tone: 'danger' }]}
+        onRequestClose={closeAuthDialog}
       />
     </KeyboardAvoidingView>
   );
@@ -433,7 +457,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     textAlign: 'center',
     width: '100%',
-    color: '#E69868',
+    color: '#FFFFFF',
   },
   titleContainer: {
     marginBottom: isSmallScreen ? spacing.lg : spacing.xl,
@@ -478,6 +502,22 @@ const styles = StyleSheet.create({
   forgotPasswordText: {
     fontSize: 13,
     fontWeight: '600',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    marginBottom: spacing.md,
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
   },
   loginButton: {
     width: '100%',

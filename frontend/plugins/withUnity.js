@@ -102,7 +102,45 @@ function patchUnityExportGradle(projectRoot) {
 }
 
 const withUnityAndroidGradle = (config) => {
+  // Only wire Gradle when the Unity Android export is present.
+  // Allows icon-only / non-AR EAS builds with Unity excluded from the upload.
+  config = withDangerousMod(config, [
+    'android',
+    async (config) => {
+      const projectRoot = config.modRequest.projectRoot;
+
+      if (!unityLibraryExists(projectRoot)) {
+        console.warn(
+          '[withUnity] unityLibrary not found — skipping Unity native wiring (non-AR build).'
+        );
+        return config;
+      }
+
+      patchUnityExportGradle(projectRoot);
+      patchAzesmwayUPlayer(projectRoot);
+
+      const manifestPath = path.join(
+        projectRoot,
+        'unity',
+        'builds',
+        'android',
+        'unityLibrary',
+        'src',
+        'main',
+        'AndroidManifest.xml'
+      );
+      stripUnityLauncherIntentFilter(manifestPath);
+
+      return config;
+    },
+  ]);
+
   config = withSettingsGradle(config, (config) => {
+    const projectRoot = config.modRequest.projectRoot;
+    if (!unityLibraryExists(projectRoot)) {
+      return config;
+    }
+
     const unityInclude = "include ':unityLibrary'";
     const unityProjectDir =
       "project(':unityLibrary').projectDir = new File('../unity/builds/android/unityLibrary')";
@@ -118,6 +156,11 @@ const withUnityAndroidGradle = (config) => {
   });
 
   config = withProjectBuildGradle(config, (config) => {
+    const projectRoot = config.modRequest.projectRoot;
+    if (!unityLibraryExists(projectRoot)) {
+      return config;
+    }
+
     const flatDirBlock = `flatDir {\n            dirs "\${project(':unityLibrary').projectDir}/libs"\n        }`;
 
     if (!config.modResults.contents.includes("project(':unityLibrary')")) {
@@ -131,6 +174,11 @@ const withUnityAndroidGradle = (config) => {
   });
 
   config = withGradleProperties(config, (config) => {
+    const projectRoot = config.modRequest.projectRoot;
+    if (!unityLibraryExists(projectRoot)) {
+      return config;
+    }
+
     const props = config.modResults;
     const hasStreamingAssets = props.some(
       (item) => item.type === 'property' && item.key === 'unityStreamingAssets'
@@ -165,36 +213,7 @@ const withUnityAndroidGradle = (config) => {
     return config;
   });
 
-  return withDangerousMod(config, [
-    'android',
-    async (config) => {
-      const projectRoot = config.modRequest.projectRoot;
-
-      if (!unityLibraryExists(projectRoot)) {
-        console.warn(
-          '[withUnity] unityLibrary not found at frontend/unity/builds/android/unityLibrary — export ARFurniture from Unity first.'
-        );
-        return config;
-      }
-
-      patchUnityExportGradle(projectRoot);
-      patchAzesmwayUPlayer(projectRoot);
-
-      const manifestPath = path.join(
-        projectRoot,
-        'unity',
-        'builds',
-        'android',
-        'unityLibrary',
-        'src',
-        'main',
-        'AndroidManifest.xml'
-      );
-      stripUnityLauncherIntentFilter(manifestPath);
-
-      return config;
-    },
-  ]);
+  return config;
 };
 
 /** Unity 6-safe UPlayer: never use constructors()[1]. */

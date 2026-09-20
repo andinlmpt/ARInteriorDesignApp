@@ -1,121 +1,192 @@
-import { Card } from '@/components/ui/Card';
-import { AppText } from '@/components/ui/Text';
-import { colors, radii, shadows, spacing } from '@/components/ui/theme';
-import { useRouter } from 'expo-router';
+/**
+ * Help & Contact — phone, email, and FAQs in one place.
+ */
+
+import React from 'react';
+import {
+  View,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Linking,
+  Pressable,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { Linking, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import { AppText } from '@/components/ui/Text';
+import { useTheme } from '@/contexts/ThemeContext';
+import { spacing, radii } from '@/components/ui/theme';
+import { getHorizontalPadding } from '@/utils/responsive';
+import { BRAND } from '@/constants/branding';
+
+const FAQS: { question: string; answer: string }[] = [
+  {
+    question: 'How do I start designing?',
+    answer: 'Use the + tab — AR Furniture or AR Measurement — to begin.',
+  },
+  {
+    question: 'How do I measure a room?',
+    answer:
+      'Open AR Measurement from the + tab and follow the on-screen guides to scan and confirm your room size.',
+  },
+  {
+    question: 'Can I save my projects?',
+    answer:
+      'Yes. Export a layout from AR Furniture and it will appear under Profile → Projects. Photos you save also show up in the Saved tab.',
+  },
+  {
+    question: 'How do I save an AR photo?',
+    answer:
+      'After placing furniture, tap the camera button on the bottom toolbar. The photo is saved to your gallery and the Saved tab.',
+  },
+];
 
 export default function HelpSupportScreen() {
   const router = useRouter();
+  const { colors, statusBarStyle } = useTheme();
 
-  const handleContactSupport = () => {
-    Linking.openURL('mailto:support@interior.studio?subject=Support Request');
+  const callPhone = () => {
+    void Linking.openURL(`tel:${BRAND.contact.phoneTel}`);
   };
 
-  const handleViewDocs = () => {
-    Linking.openURL('https://docs.interior.studio');
+  const sendEmail = () => {
+    void Linking.openURL(
+      `mailto:${BRAND.contact.email}?subject=${encodeURIComponent(`${BRAND.name} inquiry`)}`
+    );
   };
 
   return (
-    <View style={styles.container}>
-      <StatusBar style="dark" />
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+      <StatusBar style={statusBarStyle} />
       <SafeAreaView style={styles.safeArea} edges={['top']}>
-        {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
-            <AppText variant="body" color="accent" style={styles.backButton}>Back</AppText>
+          <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} hitSlop={12}>
+            <Ionicons name="chevron-back" size={24} color={colors.accent} />
           </TouchableOpacity>
-          <AppText variant="h1" style={styles.title}>Help & Support</AppText>
-          <View style={styles.placeholder} />
+          <AppText variant="h2" style={[styles.title, { color: colors.textPrimary }]}>
+            Help & Contact
+          </AppText>
+          <View style={styles.headerSpacer} />
         </View>
 
-        <ScrollView 
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
-        >
-          <Card tone="elevated" padding="lg" style={styles.card}>
-            <AppText variant="h2" style={styles.cardTitle}>
-              Get Help
-            </AppText>
-            <AppText variant="body" color="textMuted" style={styles.cardDescription}>
-              Need assistance? We're here to help you with any questions or issues you may have.
-            </AppText>
-          </Card>
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <AppText variant="body" style={{ color: colors.textSecondary, lineHeight: 22 }}>
+            Questions about the app or your order? Reach Maharlika Furniture directly, or browse the
+            FAQs below.
+          </AppText>
 
-          <Card tone="elevated" padding="lg" style={styles.card}>
-            <AppText variant="subtitle" weight="700" style={styles.sectionTitle}>
-              Contact Support
-            </AppText>
-            <AppText variant="body" color="textMuted" style={styles.sectionDescription}>
-              Reach out to our support team via email for personalized assistance.
-            </AppText>
-            <TouchableOpacity 
-              style={styles.actionButton}
-              onPress={handleContactSupport}
-              activeOpacity={0.8}
-            >
-              <AppText variant="subtitle" style={styles.actionButtonText} weight="600">
-                📧 Email Support
-              </AppText>
-            </TouchableOpacity>
-          </Card>
+          <AppText
+            variant="subtitle"
+            weight="700"
+            style={[styles.sectionLabel, { color: colors.textPrimary }]}
+          >
+            Contact
+          </AppText>
 
-          <Card tone="elevated" padding="lg" style={styles.card}>
-            <AppText variant="subtitle" weight="700" style={styles.sectionTitle}>
-              Documentation
-            </AppText>
-            <AppText variant="body" color="textMuted" style={styles.sectionDescription}>
-              Browse our comprehensive documentation and guides.
-            </AppText>
-            <TouchableOpacity 
-              style={styles.actionButton}
-              onPress={handleViewDocs}
-              activeOpacity={0.8}
-            >
-              <AppText variant="subtitle" style={styles.actionButtonText} weight="600">
-                📖 View Documentation
+          <Pressable
+            onPress={callPhone}
+            style={({ pressed }) => [
+              styles.contactCard,
+              {
+                backgroundColor: colors.surfacePrimary,
+                borderColor: colors.border,
+                opacity: pressed ? 0.92 : 1,
+              },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`Call ${BRAND.contact.phoneDisplay}`}
+          >
+            <View style={[styles.iconBadge, { backgroundColor: `${BRAND.colors.orange}22` }]}>
+              <Ionicons name="call-outline" size={22} color={BRAND.colors.orange} />
+            </View>
+            <View style={styles.cardCopy}>
+              <AppText variant="caption" weight="600" style={{ color: colors.textMuted }}>
+                Phone
               </AppText>
-            </TouchableOpacity>
-          </Card>
+              <AppText variant="subtitle" weight="700" style={{ color: colors.textPrimary }}>
+                {BRAND.contact.phoneDisplay}
+              </AppText>
+              <AppText variant="caption" style={{ color: colors.accent, marginTop: 2 }}>
+                Tap to call
+              </AppText>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </Pressable>
 
-          <Card tone="elevated" padding="lg" style={styles.card}>
-            <AppText variant="subtitle" weight="700" style={styles.sectionTitle}>
-              Frequently Asked Questions
-            </AppText>
-            <View style={styles.faqSection}>
-              <AppText variant="body" style={styles.faqQuestion}>
-                How do I start designing?
+          <Pressable
+            onPress={sendEmail}
+            style={({ pressed }) => [
+              styles.contactCard,
+              {
+                backgroundColor: colors.surfacePrimary,
+                borderColor: colors.border,
+                opacity: pressed ? 0.92 : 1,
+              },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`Email ${BRAND.contact.email}`}
+          >
+            <View style={[styles.iconBadge, { backgroundColor: `${BRAND.colors.navy}14` }]}>
+              <Ionicons name="mail-outline" size={22} color={BRAND.colors.navy} />
+            </View>
+            <View style={styles.cardCopy}>
+              <AppText variant="caption" weight="600" style={{ color: colors.textMuted }}>
+                Email
               </AppText>
-              <AppText variant="body" color="textMuted" style={styles.faqAnswer}>
-                Use Quick Actions on Home — AR View, AI Design, or room measurement — to begin.
+              <AppText
+                variant="subtitle"
+                weight="700"
+                style={{ color: colors.textPrimary }}
+                numberOfLines={2}
+              >
+                {BRAND.contact.email}
+              </AppText>
+              <AppText variant="caption" style={{ color: colors.accent, marginTop: 2 }}>
+                Tap to send an email
               </AppText>
             </View>
-            <View style={styles.faqSection}>
-              <AppText variant="body" style={styles.faqQuestion}>
-                How do I measure a room?
-              </AppText>
-              <AppText variant="body" color="textMuted" style={styles.faqAnswer}>
-                Use the "By Camera" option to scan your room with your device's camera for accurate measurements.
-              </AppText>
-            </View>
-            <View style={styles.faqSection}>
-              <AppText variant="body" style={styles.faqQuestion}>
-                Can I save my projects?
-              </AppText>
-              <AppText variant="body" color="textMuted" style={styles.faqAnswer}>
-                Yes! Export a 3D layout from Unity AR and it will appear under Profile → Projects.
-              </AppText>
-            </View>
-            <View style={styles.faqSection}>
-              <AppText variant="body" style={styles.faqQuestion}>
-                Are furniture models polygon-based?
-              </AppText>
-              <AppText variant="body" color="textMuted" style={styles.faqAnswer}>
-                Yes, your furniture models are still polygon-based. GLB/GLTF files contain polygon meshes. When loaded, they become THREE.Mesh objects, which are polygon-based. The code processes polygon meshes - the loadGLBModel function loads GLB/GLTF files and processes them as THREE.Mesh objects, and the code traverses meshes and handles geometry (polygon data). If a GLB model doesn't load, the app falls back to procedurally generated furniture using Three.js geometries (BoxGeometry, CylinderGeometry, etc.), which are also polygon-based. Everything is polygon-based. GLB/GLTF is just a file format that stores polygon mesh data. For mobile AR performance, keep polygon counts low (typically under 10,000–20,000 triangles per model for smooth performance).
-              </AppText>
-            </View>
-          </Card>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </Pressable>
+
+          <AppText
+            variant="subtitle"
+            weight="700"
+            style={[styles.sectionLabel, { color: colors.textPrimary, marginTop: spacing.sm }]}
+          >
+            Frequently asked questions
+          </AppText>
+
+          <View
+            style={[
+              styles.faqCard,
+              { backgroundColor: colors.surfacePrimary, borderColor: colors.border },
+            ]}
+          >
+            {FAQS.map((faq, index) => (
+              <View
+                key={faq.question}
+                style={[
+                  styles.faqSection,
+                  index < FAQS.length - 1 && {
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                    borderBottomColor: colors.border,
+                  },
+                ]}
+              >
+                <AppText variant="body" weight="600" style={{ color: colors.textPrimary }}>
+                  {faq.question}
+                </AppText>
+                <AppText
+                  variant="body"
+                  style={{ color: colors.textSecondary, lineHeight: 22, marginTop: spacing.xs }}
+                >
+                  {faq.answer}
+                </AppText>
+              </View>
+            ))}
+          </View>
         </ScrollView>
       </SafeAreaView>
     </View>
@@ -123,79 +194,51 @@ export default function HelpSupportScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.surfaceSecondary,
-  },
-  safeArea: {
-    flex: 1,
-  },
+  container: { flex: 1 },
+  safeArea: { flex: 1 },
   header: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.xl,
-    paddingBottom: spacing.lg,
-    backgroundColor: colors.surfaceSecondary,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  backButton: {
-    minWidth: 60,
-  },
-  title: {
-    color: colors.textPrimary,
-  },
-  placeholder: {
-    width: 60,
-  },
-  scrollContent: {
-    padding: spacing.xl,
-    paddingBottom: spacing.xxl * 2.5,
-    gap: spacing.lg,
-  },
-  card: {
-    marginBottom: spacing.md,
-  },
-  cardTitle: {
-    color: colors.textPrimary,
-    marginBottom: spacing.sm,
-  },
-  cardDescription: {
-    lineHeight: 22,
-  },
-  sectionTitle: {
-    color: colors.textPrimary,
-    marginBottom: spacing.sm,
-  },
-  sectionDescription: {
-    marginBottom: spacing.md,
-    lineHeight: 22,
-  },
-  actionButton: {
-    backgroundColor: colors.accent,
-    borderRadius: radii.md,
+    paddingHorizontal: getHorizontalPadding(spacing.lg),
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-    alignItems: 'center',
-    ...shadows.sm,
   },
-  actionButtonText: {
-    color: colors.surfacePrimary,
+  title: { fontWeight: '700' },
+  headerSpacer: { width: 24 },
+  content: {
+    paddingHorizontal: getHorizontalPadding(spacing.lg),
+    paddingBottom: spacing.xxl * 2,
+    gap: spacing.md,
+  },
+  sectionLabel: {
+    marginTop: spacing.xs,
+  },
+  contactCard: {
+    borderRadius: radii.md,
+    borderWidth: 1,
+    padding: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  iconBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  faqCard: {
+    borderRadius: radii.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
   },
   faqSection: {
-    marginBottom: spacing.lg,
-    paddingBottom: spacing.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  faqQuestion: {
-    color: colors.textPrimary,
-    marginBottom: spacing.xs,
-    fontWeight: '600',
-  },
-  faqAnswer: {
-    lineHeight: 22,
+    paddingVertical: spacing.md,
   },
 });

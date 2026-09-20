@@ -1,9 +1,13 @@
 /**
- * Furniture catalog controller — serves GCS-backed 3D model metadata.
+ * Furniture catalog controller — serves MongoDB furniture metadata (incl. glbUrl).
  */
 
 import Furniture from '../models/Furniture.js';
 import mongoose from 'mongoose';
+import {
+  resolveFurnitureGlbUrl,
+  resolveFurnitureThumbnailUrl,
+} from '../utils/publicAssetUrl.js';
 
 const inferCategory = (id, displayName) => {
   const key = `${id} ${displayName}`.toLowerCase();
@@ -36,12 +40,12 @@ const parseQuantity = (value) => {
   return matches.reduce((sum, n) => sum + Number(n), 0);
 };
 
-const toPublicItem = (doc) => ({
+const toPublicItem = (doc, req) => ({
   id: doc.id,
   displayName: doc.displayName,
   category: doc.category || inferCategory(doc.id, doc.displayName),
-  glbUrl: doc.glbUrl,
-  thumbnailUrl: doc.thumbnailUrl || '',
+  glbUrl: resolveFurnitureGlbUrl(doc, req),
+  thumbnailUrl: resolveFurnitureThumbnailUrl(doc, req),
   width: doc.width,
   height: doc.height,
   depth: doc.depth,
@@ -77,7 +81,7 @@ const furnitureController = {
       res.json({
         success: true,
         count: items.length,
-        furniture: items.map(toPublicItem),
+        furniture: items.map((doc) => toPublicItem(doc, req)),
       });
     } catch (error) {
       next(error);
@@ -105,7 +109,7 @@ const furnitureController = {
 
       res.json({
         success: true,
-        furniture: toPublicItem(item),
+        furniture: toPublicItem(item, req),
       });
     } catch (error) {
       next(error);

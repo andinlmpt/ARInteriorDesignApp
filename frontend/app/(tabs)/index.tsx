@@ -31,10 +31,12 @@ import {
   HOME_PRODUCT_CATEGORY_CHIPS,
   type HomeProduct,
 } from '@/types/home-product';
-import { mapHomeCategoryFilter } from '@/utils/furnitureCatalogHelpers';
+import { mapHomeCategoryFilter, isOutOfStock } from '@/utils/furnitureCatalogHelpers';
+import { AppDialog } from '@/components/ui/AppDialog';
 import { savedItemsService } from '@/services/SavedItemsService';
 import { homeProductToSavedItem } from '@/utils/saveItemHelpers';
 
+const PENDING_WELCOME_KEY = 'pendingWelcomeName';
 const DEFAULT_FILTERS: ProductFilters = { category: 'all', savedOnly: false };
 
 const { width } = Dimensions.get('window');
@@ -98,14 +100,38 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [welcomeName, setWelcomeName] = useState<string | null>(null);
 
   const { products, loading, error, refresh } = useFurnitureCatalog();
+
+  const closeWelcome = useCallback(() => setWelcomeName(null), []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void (async () => {
+        try {
+          const name = await AsyncStorage.getItem(PENDING_WELCOME_KEY);
+          if (!name) return;
+          await AsyncStorage.removeItem(PENDING_WELCOME_KEY);
+          setWelcomeName(name);
+        } catch {
+          // Ignore storage errors — welcome is non-critical.
+        }
+      })();
+    }, []),
+  );
 
   const loadSavedIds = useCallback(async () => {
     try {
       const items = await savedItemsService.getSavedItemsByType('furniture');
       setSavedIds(new Set(items.map((item) => item.id)));
     } catch (err) {
+      // Stale session / logged-out: show empty hearts instead of noisy failures.
+      const message = err instanceof Error ? err.message : String(err);
+      if (/user not found|unauthorized|authentication/i.test(message)) {
+        setSavedIds(new Set());
+        return;
+      }
       console.warn('[Home] Failed to load saved furniture:', err);
     }
   }, []);
@@ -196,6 +222,10 @@ export default function HomeScreen() {
 
   const handleViewInAR = useCallback(
     (product: HomeProduct) => {
+      if (isOutOfStock(product.quantity)) {
+        Alert.alert('Out of stock', 'This item is currently unavailable and cannot be placed in AR.');
+        return;
+      }
       setSelectedProduct(null);
       router.push({
         pathname: '/ar-view',
@@ -225,7 +255,7 @@ export default function HomeScreen() {
           <View style={styles.header}>
             <FadeInView delay={100}>
               <View style={styles.brandingSection}>
-                <AppLogo size={52} circular={false} elevated={false} style={styles.logoContainer} />
+                <AppLogo size={72} circular={false} elevated={false} style={styles.logoContainer} />
                 <View style={styles.brandingText}>
                   <View style={styles.titleRow}>
                     <AppText variant="h2" weight="700" style={[styles.appName, { color: t.textPrimary }]}>
@@ -235,12 +265,6 @@ export default function HomeScreen() {
                       <Button onPress={toggleTheme} activeScale={0.9}>
                         <View style={[styles.headerBtn, { backgroundColor: t.surfacePrimary }]}>
                           <Ionicons name={isDark ? 'sunny' : 'moon'} size={20} color={t.textSecondary} />
-                        </View>
-                      </Button>
-                      <Button activeScale={0.9}>
-                        <View style={[styles.headerBtn, { backgroundColor: t.surfacePrimary }]}>
-                          <Ionicons name="notifications-outline" size={20} color={t.textSecondary} />
-                          <View style={[styles.dot, { backgroundColor: t.accent }]} />
                         </View>
                       </Button>
                     </View>
@@ -446,6 +470,19 @@ export default function HomeScreen() {
         onClose={() => setFilterOpen(false)}
         onApply={setFilters}
       />
+
+      <AppDialog
+        visible={!!welcomeName}
+        icon="checkmark-circle"
+        title="Welcome"
+        message={
+          welcomeName
+            ? `Your account has been created, ${welcomeName}.`
+            : undefined
+        }
+        actions={[{ label: 'Continue', onPress: closeWelcome, tone: 'primary' }]}
+        onRequestClose={closeWelcome}
+      />
     </View>
   );
 }
@@ -516,14 +553,6 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  dot: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
   },
 
   sectionTitleInline: {

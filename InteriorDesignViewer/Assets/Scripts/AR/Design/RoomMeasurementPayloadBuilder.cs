@@ -45,6 +45,7 @@ public static class RoomMeasurementPayloadBuilder
             wallHeight = dims.wallHeight,
             dimensionLabel = dims.dimensionLabel,
             cornerCount = scanController.FloorPolygon?.Count ?? 0,
+            furniturePlacementOnly = scanController.IsFurniturePlacementOnly,
         };
 
         if (dims.hasBounds)

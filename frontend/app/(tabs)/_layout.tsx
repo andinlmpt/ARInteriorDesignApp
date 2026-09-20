@@ -15,8 +15,12 @@ const hexToRgba = (hex: string, alpha: number): string => {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function TabLayout() {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  // Android often reports insets.bottom as 0 with gesture/3-button nav — keep a floor so labels clear the system bar.
+  const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 28 : 0);
+  const tabBarContentHeight = 56;
+  const tabBarHeight = tabBarContentHeight + bottomInset;
 
   return (
     <Tabs
@@ -26,31 +30,30 @@ export default function TabLayout() {
         headerShown: false,
         tabBarStyle: {
           backgroundColor: colors.surfacePrimary,
-          borderTopWidth: 0,
-          height: 64 + (Platform.OS === 'ios' ? insets.bottom : insets.bottom + 10), // Base height + safe area
-          paddingBottom: Platform.OS === 'ios' ? insets.bottom : insets.bottom + 10,
-
+          borderTopColor: colors.border,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          height: tabBarHeight,
+          paddingBottom: bottomInset,
           paddingTop: spacing.sm,
-          elevation: 8,
-          ...(Platform.OS === 'web'
-            ? { boxShadow: isDark ? '0px -2px 8px rgba(0, 0, 0, 0.3)' : '0px -2px 8px rgba(0, 0, 0, 0.05)' }
-            : { shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: isDark ? 0.3 : 0.05, shadowRadius: 8 }
-          ),
-          position: 'absolute',
+          elevation: 0,
+          shadowOpacity: 0,
         },
         tabBarLabelStyle: {
           fontSize: 11,
           fontWeight: '600',
-          marginTop: spacing.xs - 2,
+          marginTop: 2,
           letterSpacing: 0.2,
         },
         tabBarIconStyle: {
-          marginTop: spacing.xs,
+          marginTop: 0,
         },
         tabBarItemStyle: {
-          paddingVertical: spacing.xs,
+          paddingVertical: 0,
         },
         tabBarHideOnKeyboard: true,
+        sceneStyle: {
+          backgroundColor: colors.background,
+        },
       }}
     >
       <Tabs.Screen
@@ -86,14 +89,18 @@ export default function TabLayout() {
       <Tabs.Screen
         name="camera"
         options={{
-          title: 'AR View',
-          tabBarIcon: ({ color, focused, size }) => (
-            <View style={focused ? [styles.activeIconContainer, { backgroundColor: hexToRgba(colors.accent, 0.1) }] : null}>
-              <Ionicons
-                name={focused ? 'cube' : 'cube-outline'}
-                size={focused ? 26 : 24}
-                color={color}
-              />
+          title: 'New',
+          tabBarShowLabel: false,
+          tabBarIcon: ({ focused }) => (
+            <View
+              style={[
+                styles.plusTab,
+                {
+                  backgroundColor: focused ? colors.accent : colors.accentDark,
+                },
+              ]}
+            >
+              <Ionicons name="add" size={28} color="#FFFFFF" />
             </View>
           ),
         }}
@@ -137,5 +144,13 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
     padding: spacing.xs,
     marginTop: -spacing.xs,
+  },
+  plusTab: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: -8,
   },
 });

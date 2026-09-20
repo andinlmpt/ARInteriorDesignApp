@@ -3,7 +3,7 @@
  */
 
 import React from 'react';
-import { View, StyleSheet, TouchableOpacity, ScrollView, Linking } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -100,17 +100,6 @@ export default function AboutUsScreen() {
               Terms & Privacy
             </AppText>
             <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.linkRow, { borderColor: colors.border }]}
-            onPress={() => Linking.openURL('mailto:hello@maharlikafurniture.com')}
-            activeOpacity={0.7}
-          >
-            <AppText variant="body" style={{ color: colors.textPrimary, flex: 1 }}>
-              Contact us
-            </AppText>
-            <Ionicons name="mail-outline" size={18} color={colors.textMuted} />
           </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
