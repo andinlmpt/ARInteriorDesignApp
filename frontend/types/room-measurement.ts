@@ -34,6 +34,23 @@ export interface RoomMeasurementRecord {
   confirmedAt?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** Device-local .glb path from Unity Export 3D (linked for preview). */
+  exportPath?: string;
+  exportFileName?: string;
+  exportByteLength?: number;
+  exportFurnitureCount?: number;
+  exportedAt?: string | null;
+}
+
+/** PATCH body — rename and/or attach a Unity layout export. */
+export interface UpdateRoomMeasurementInput {
+  name?: string;
+  projectId?: string;
+  exportPath?: string;
+  exportFileName?: string;
+  exportByteLength?: number;
+  exportFurnitureCount?: number;
+  exportedAt?: string;
 }
 
 export interface SaveRoomMeasurementInput {

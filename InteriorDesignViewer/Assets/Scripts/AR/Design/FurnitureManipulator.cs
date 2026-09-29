@@ -25,7 +25,7 @@ public class FurnitureManipulator : MonoBehaviour
     [Tooltip("Extra screen-pixel radius around the furniture for starting a drag.")]
     [SerializeField] private float selectionPickRadiusPx = 96f;
     [Tooltip("Fallback translation speed used when the floor raycast misses mid-drag.")]
-    [SerializeField] private float fallbackMoveSpeed = 0.004f;
+    [SerializeField] private float fallbackMoveSpeed = 0.012f;
 
     [Header("Twist")]
     [SerializeField] private float rotationSensitivity = 1f;
@@ -50,6 +50,9 @@ public class FurnitureManipulator : MonoBehaviour
     Vector3 lastSafePosition;
     float lastSafeYaw;
 
+    /// <summary>RN planner sends gestures via bridge; EnhancedTouch stays empty under UaaL.</summary>
+    bool rnGestureStream;
+
     void Awake()
     {
         if (placementController == null) placementController = FindFirstObjectByType<FurniturePlacementController>();
@@ -61,6 +64,10 @@ public class FurnitureManipulator : MonoBehaviour
     void Update()
     {
         if (placementController == null) return;
+
+        // RN owns the touch stream while plannerPointer / furnitureGesture is active.
+        if (rnGestureStream)
+            return;
 
         var selected = placementController.Selected;
         if (selected == null)
@@ -278,6 +285,7 @@ public class FurnitureManipulator : MonoBehaviour
         isTwoFinger = false;
         dragEligible = false;
         gestureActive = false;
+        rnGestureStream = false;
 
         if (placementController != null)
             placementController.SuppressTapInput = false;
@@ -287,6 +295,129 @@ public class FurnitureManipulator : MonoBehaviour
             placementController.EndFurnitureManipulation(furniture);
             GestureEnded?.Invoke(furniture);
         }
+    }
+
+    /// <summary>
+    /// RN-driven drag/twist for planner mode (UaaL does not deliver EnhancedTouch under RN overlays).
+    /// Payload: {"phase":"begin|move|end","x":px,"y":px,"dx":px,"dy":px,"twistDelta":deg}
+    /// Screen coords are top-left origin (React Native); converted to Unity bottom-left.
+    /// </summary>
+    public void ApplyGestureFromRn(string json)
+    {
+        if (placementController == null) return;
+
+        var furniture = placementController.Selected;
+        if (furniture == null)
+        {
+            EndGesture();
+            return;
+        }
+
+        if (furniture != tracked)
+        {
+            EndGesture();
+            tracked = furniture;
+        }
+
+        if (arCamera == null) arCamera = Camera.main;
+
+        FurnitureGestureRnPayload payload = null;
+        if (!string.IsNullOrWhiteSpace(json))
+        {
+            try
+            {
+                payload = JsonUtility.FromJson<FurnitureGestureRnPayload>(json);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[FurnitureManipulator] Bad furnitureGesture payload: {e.Message}");
+                return;
+            }
+        }
+
+        if (payload == null) return;
+
+        var phase = (payload.phase ?? string.Empty).Trim().ToLowerInvariant();
+        var screen = RnToUnityScreen(payload.x, payload.y);
+        var delta = new Vector2(payload.dx, -payload.dy); // flip Y for Unity screen space
+
+        switch (phase)
+        {
+            case "begin":
+                rnGestureStream = true;
+                dragEligible = true;
+                isDragging = false;
+                isTwoFinger = false;
+                dragStartScreen = screen;
+                dragGrabOffset = Vector3.zero;
+                if (placementController.TryGetDragFloorPositionFor(furniture, screen, out var grabPoint))
+                {
+                    dragGrabOffset = furniture.transform.position - grabPoint;
+                    dragGrabOffset.y = 0f;
+                }
+                RememberSafePose(furniture);
+                break;
+
+            case "move":
+                if (!dragEligible) break;
+
+                if (Mathf.Abs(payload.twistDelta) > 0.01f)
+                {
+                    if (!isTwoFinger)
+                    {
+                        isTwoFinger = true;
+                        isDragging = false;
+                        placementController.SuppressTapInput = true;
+                        BeginGesture(furniture);
+                    }
+
+                    furniture.transform.Rotate(0f, payload.twistDelta * rotationSensitivity, 0f, Space.World);
+                    var euler = furniture.transform.eulerAngles;
+                    furniture.transform.rotation = Quaternion.Euler(0f, euler.y, 0f);
+                    placementController.GroundInstance(furniture);
+                    RememberSafePose(furniture);
+                    placementController.RefreshPlacementSafety(furniture);
+                    break;
+                }
+
+                if (!isDragging)
+                {
+                    if (Vector2.Distance(screen, dragStartScreen) < 1.5f)
+                        break;
+
+                    isDragging = true;
+                    placementController.SuppressTapInput = true;
+                    BeginGesture(furniture);
+                }
+
+                DragTo(furniture, screen, delta);
+                RememberSafePose(furniture);
+                placementController.RefreshPlacementSafety(furniture);
+                break;
+
+            case "end":
+            case "cancel":
+                rnGestureStream = false;
+                EndGesture();
+                break;
+        }
+    }
+
+    static Vector2 RnToUnityScreen(float pageX, float pageY)
+    {
+        // RN: origin top-left, Y down. Unity ScreenPointToRay: origin bottom-left, Y up.
+        return new Vector2(pageX, Screen.height - pageY);
+    }
+
+    [Serializable]
+    class FurnitureGestureRnPayload
+    {
+        public string phase;
+        public float x;
+        public float y;
+        public float dx;
+        public float dy;
+        public float twistDelta;
     }
 
     bool IsTouchOnFurniture(Vector2 screenPosition, PlacedFurniture furniture)

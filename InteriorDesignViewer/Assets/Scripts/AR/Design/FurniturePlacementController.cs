@@ -198,6 +198,9 @@ public class FurniturePlacementController : MonoBehaviour
         return count;
     }
 
+    /// <summary>Placed pieces in the active planner / AR workspace (for export).</summary>
+    public int CountPlacedInCurrentSpace() => CountInCurrentSpace();
+
     void ApplySpaceVisibility()
     {
         var space = CurrentPlacementSpace;
@@ -625,7 +628,10 @@ public class FurniturePlacementController : MonoBehaviour
         if (target == null)
             return FurniturePlacementSafety.Result.Safe();
 
-        var result = FurniturePlacementSafety.Evaluate(target, instances, scanController);
+        // Planner hard-clamps footprints inside the walls, so only furniture overlap is unsafe there.
+        var plannerActive = layoutMode != null && layoutMode.IsPlannerOrbitActive;
+        var result = FurniturePlacementSafety.Evaluate(
+            target, instances, plannerActive ? null : scanController);
         target.ApplyPlacementSafety(result.isSafe);
 
         var key =
@@ -724,7 +730,52 @@ public class FurniturePlacementController : MonoBehaviour
     public Vector3 ClampFurnitureInsideRoom(PlacedFurniture furniture, Vector3 desiredPivot)
     {
         // Wall hard-blocking reverted — only a light pivot clamp to the room outline.
-        return ClampToRoom(desiredPivot);
+        var pivot = ClampToRoom(desiredPivot);
+
+        // Generated-layout planner: the room is exact, so keep the whole footprint inside the walls.
+        if (furniture != null && layoutMode != null && layoutMode.IsPlannerOrbitActive
+            && clampToRoomBounds && scanController != null && IsRoomConfirmed())
+            pivot = PushFootprintInsideRoom(furniture, pivot);
+
+        return pivot;
+    }
+
+    const float PlannerWallMargin = 0.02f;
+
+    /// <summary>
+    /// Shifts <paramref name="pivot"/> until every footprint corner lies on the floor outline.
+    /// Works per axis so corners pressed against two walls resolve in one pass.
+    /// </summary>
+    Vector3 PushFootprintInsideRoom(PlacedFurniture furniture, Vector3 pivot)
+    {
+        var locals = GetFootprintLocalCorners(furniture);
+        var current = furniture.transform.position;
+
+        for (var pass = 0; pass < 4; pass++)
+        {
+            float minDx = 0f, maxDx = 0f, minDz = 0f, maxDz = 0f;
+            var delta = pivot - current;
+            delta.y = 0f;
+
+            foreach (var local in locals)
+            {
+                var world = furniture.transform.TransformPoint(local) + delta;
+                if (scanController.IsInsideRoom(world)) continue;
+
+                var inside = scanController.ClampToFloorPolygon(world, PlannerWallMargin);
+                var fix = inside - world;
+                minDx = Mathf.Min(minDx, fix.x);
+                maxDx = Mathf.Max(maxDx, fix.x);
+                minDz = Mathf.Min(minDz, fix.z);
+                maxDz = Mathf.Max(maxDz, fix.z);
+            }
+
+            var shift = new Vector3(minDx + maxDx, 0f, minDz + maxDz);
+            if (shift.sqrMagnitude < 1e-8f) break;
+            pivot += shift;
+        }
+
+        return pivot;
     }
 
     static float EstimateFootprintInset(PlacedFurniture furniture)

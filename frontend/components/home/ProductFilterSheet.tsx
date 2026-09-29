@@ -139,7 +139,7 @@ export function ProductFilterSheet({
           >
             <View style={styles.toggleText}>
               <AppText variant="body" weight="600" style={{ color: colors.textPrimary }}>
-                Saved only
+                Wishlist only
               </AppText>
               <AppText variant="caption" style={{ color: colors.textMuted }}>
                 Show products you’ve saved

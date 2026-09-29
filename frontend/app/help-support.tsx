@@ -34,12 +34,12 @@ const FAQS: { question: string; answer: string }[] = [
   {
     question: 'Can I save my projects?',
     answer:
-      'Yes. Export a layout from AR Furniture and it will appear under Profile → Projects. Photos you save also show up in the Saved tab.',
+      'Yes. Export a layout from AR Furniture and it will appear under Profile → Projects. Photos you save also show up in the Wishlist tab.',
   },
   {
     question: 'How do I save an AR photo?',
     answer:
-      'After placing furniture, tap the camera button on the bottom toolbar. The photo is saved to your gallery and the Saved tab.',
+      'After placing furniture, tap the camera button on the bottom toolbar. The photo is saved to your gallery and the Wishlist tab.',
   },
 ];
 

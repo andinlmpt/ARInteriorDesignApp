@@ -5,7 +5,7 @@
 export interface HomeProduct {
   id: string;
   name: string;
-  /** Raw admin category (seating, tables, beds, lighting, other, …) */
+  /** Raw admin category (chair, sofa, beds) */
   category: string;
   thumbnailUrl?: string;
   /** Prefer human label from admin; always set (falls back to meters). */
@@ -20,22 +20,14 @@ export interface HomeProduct {
   quantity?: number;
 }
 
-export type HomeProductCategoryFilter =
-  | 'all'
-  | 'seating'
-  | 'tables'
-  | 'beds'
-  | 'lighting'
-  | 'other';
+export type HomeProductCategoryFilter = 'all' | 'chair' | 'sofa' | 'beds' | 'other';
 
 export const HOME_PRODUCT_CATEGORY_CHIPS: {
   id: HomeProductCategoryFilter;
   label: string;
 }[] = [
   { id: 'all', label: 'All' },
-  { id: 'seating', label: 'Seating' },
-  { id: 'tables', label: 'Tables' },
+  { id: 'chair', label: 'Chairs' },
+  { id: 'sofa', label: 'Sofas' },
   { id: 'beds', label: 'Beds' },
-  { id: 'lighting', label: 'Lighting' },
-  { id: 'other', label: 'Other' },
 ];

@@ -41,7 +41,7 @@ public class ARMeasurementPlanHUD : MonoBehaviour
     Image view2dImage;
     Image view3dImage;
     bool active;
-    bool showingTopDown = true;
+    bool showingTopDown = false;
     bool roomReady;
 
     public event Action LayoutViewOpened;
@@ -175,10 +175,9 @@ public class ARMeasurementPlanHUD : MonoBehaviour
 
     void OnBackClicked()
     {
-        ARMeasurementSession.Reset();
-
         if (ARDesignHostDetect.IsEmbeddedInReactNative())
         {
+            // RN owns the exit confirm dialog; wipe only after pauseMeasurement.
             var measurementBridge = UnityEngine.Object.FindFirstObjectByType<ARMeasurementRnBridge>();
             if (measurementBridge != null)
             {
@@ -189,6 +188,8 @@ public class ARMeasurementPlanHUD : MonoBehaviour
             UnityMessageBridge.SendToApp("requestClose", "ARRoomMeasurement");
             return;
         }
+
+        ARMeasurementSession.Reset();
 
         if (!string.IsNullOrWhiteSpace(mainMenuSceneName))
             SceneManager.LoadScene(mainMenuSceneName);
@@ -208,6 +209,14 @@ public class ARMeasurementPlanHUD : MonoBehaviour
     void OnExport3dClicked()
     {
         SetOverflowMenuVisible(false);
+
+        // RN owns Export 3D (writes GLB + links Room Measurements / Projects).
+        if (ARDesignHostDetect.IsEmbeddedInReactNative())
+        {
+            UnityMessageBridge.SendToApp("requestRnExport3d", "ARRoomMeasurement");
+            return;
+        }
+
         EnsureExportManager();
         if (exportManager == null)
         {
@@ -221,6 +230,21 @@ public class ARMeasurementPlanHUD : MonoBehaviour
 
     void SetVisible(bool visible)
     {
+        // RN owns the plan chrome + drag orbit (Unity UaaL often steals touches).
+        // Still apply the planner camera/shell via OnRoomNameCommitted → ApplyViewPreset.
+        if (ARDesignHostDetect.IsEmbeddedInReactNative())
+        {
+            if (canvas != null)
+                canvas.gameObject.SetActive(false);
+
+            ARMainMenuBackButton.SetUiVisible(false);
+            if (!visible)
+                SetOverflowMenuVisible(false);
+
+            UnityMessageBridge.SendToApp(visible ? "measurementPlanReady" : "measurementPlanClosed", "");
+            return;
+        }
+
         if (canvas != null)
             canvas.gameObject.SetActive(visible);
 
@@ -232,9 +256,15 @@ public class ARMeasurementPlanHUD : MonoBehaviour
 
         if (visible)
             ApplySafeAreaLayout();
+    }
 
-        if (ARDesignHostDetect.IsEmbeddedInReactNative())
-            UnityMessageBridge.SendToApp(visible ? "measurementPlanReady" : "measurementPlanClosed", "");
+    /// <summary>
+    /// Hide plan UI when RN leaves or reloads the measurement session (no scene unload).
+    /// </summary>
+    public void HideForRnSession()
+    {
+        SetVisible(false);
+        ARMainMenuBackButton.SetUiVisible(false);
     }
 
     float ResolveTopSafeInset()
@@ -551,6 +581,8 @@ public class ARMeasurementPlanHUD : MonoBehaviour
         bool stretchWidth)
     {
         var chip = ARDesignUiUtil.CreateRoundedImage(parent, Frost, 24);
+        // Decorative chrome must not eat orbit touches on the plan view.
+        chip.raycastTarget = false;
         var rt = chip.rectTransform;
         if (stretchWidth)
         {

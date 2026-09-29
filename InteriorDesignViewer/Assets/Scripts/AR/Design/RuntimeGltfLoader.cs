@@ -1,6 +1,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using UnityEngine;
 #if GLTFAST_PRESENT
 using System.Threading.Tasks;
@@ -9,8 +12,10 @@ using GLTFast.Materials;
 #endif
 
 /// <summary>
-/// Loads furniture GLB/glTF assets at runtime with an in-memory template cache
-/// so re-selecting the same piece is instant and first loads hitch less.
+/// Loads furniture GLB/glTF assets at runtime with:
+///   • in-memory template cache (instant re-place)
+///   • disk cache under persistentDataPath (survives reopen / scene reload)
+/// so AR Furniture does not re-download the same sofas every session.
 /// </summary>
 public class RuntimeGltfLoader : MonoBehaviour
 {
@@ -19,24 +24,34 @@ public class RuntimeGltfLoader : MonoBehaviour
     [SerializeField] private float timeoutSeconds = 180f;
 
     [Tooltip("Max cached furniture templates kept in memory.")]
-    [SerializeField] private int maxCachedTemplates = 8;
+    [SerializeField] private int maxCachedTemplates = 6;
+
+    [Tooltip("Max background prefetches allowed in the queue (keeps memory safe).")]
+    [SerializeField] private int maxPrefetchQueue = 2;
 
     [Tooltip("Generate mipmaps during import. Off = much faster first load on mobile.")]
     [SerializeField] private bool generateMipMaps = false;
 
+    [Tooltip("Cache downloaded GLBs on disk so reopen skips the network.")]
+    [SerializeField] private bool useDiskCache = true;
+
     public static bool IsSupported => true;
+
+    // Static so templates survive component/scene teardown while the UaaL process lives.
+    static readonly Dictionary<string, GameObject> templateCache = new(StringComparer.Ordinal);
+    static readonly LinkedList<string> cacheOrder = new();
+    static Transform persistentCacheRoot;
 #else
     public static bool IsSupported => false;
+
+    public static void PurgeUnreadyTemplates() { }
 #endif
 
 #if GLTFAST_PRESENT
-    readonly Dictionary<string, GameObject> templateCache = new(StringComparer.Ordinal);
-    readonly LinkedList<string> cacheOrder = new();
     readonly HashSet<string> inflightUrls = new(StringComparer.Ordinal);
     readonly Queue<string> prefetchQueue = new();
     int priorityLoadCount;
     bool prefetchPumpRunning;
-    Transform cacheRoot;
 #endif
 
     /// <summary>
@@ -58,7 +73,6 @@ public class RuntimeGltfLoader : MonoBehaviour
         var key = NormalizeUrl(url);
         if (TryCloneCached(key, out var clone))
         {
-            // Defer one frame so UI click handlers finish without hitching.
             StartCoroutine(CompleteNextFrame(clone, onComplete));
             return;
         }
@@ -81,6 +95,9 @@ public class RuntimeGltfLoader : MonoBehaviour
         var key = NormalizeUrl(url);
         if (templateCache.ContainsKey(key) || inflightUrls.Contains(key)) return;
         if (prefetchQueue.Contains(key)) return;
+        // Cap queue so a bulk RN call cannot OOM the device.
+        while (prefetchQueue.Count >= Mathf.Max(1, maxPrefetchQueue))
+            prefetchQueue.Dequeue();
         prefetchQueue.Enqueue(key);
         if (!prefetchPumpRunning)
             StartCoroutine(PrefetchPump());
@@ -91,7 +108,9 @@ public class RuntimeGltfLoader : MonoBehaviour
     {
 #if GLTFAST_PRESENT
         if (string.IsNullOrWhiteSpace(url)) return false;
-        return templateCache.ContainsKey(NormalizeUrl(url));
+        var key = NormalizeUrl(url);
+        if (templateCache.ContainsKey(key)) return true;
+        return useDiskCache && File.Exists(DiskPathForKey(key));
 #else
         return false;
 #endif
@@ -115,7 +134,6 @@ public class RuntimeGltfLoader : MonoBehaviour
         prefetchPumpRunning = true;
         while (prefetchQueue.Count > 0)
         {
-            // Wait until the user's selected model finishes so we don't steal bandwidth.
             while (priorityLoadCount > 0)
                 yield return null;
 
@@ -149,27 +167,25 @@ public class RuntimeGltfLoader : MonoBehaviour
 
         try
         {
-            // Another request may have finished while we were queued.
             if (TryCloneCached(key, out var existing))
             {
                 onComplete?.Invoke(existing, null);
                 return;
             }
 
-            // Always build furniture with project FurnitureUnlit during import.
-            // UniversalRPMaterialGenerator uses Shader Graph variants that strip on
-            // Android → magenta InternalErrorShader, and then albedo is unreachable.
             IMaterialGenerator materialGenerator = new FurnitureUnlitMaterialGenerator();
 
             var importSettings = new ImportSettings
             {
                 GenerateMipMaps = generateMipMaps,
-                TexturesReadable = true,
                 AnisotropicFilterLevel = 1,
             };
 
+            // Prefer disk cache so reopen skips the network for large GCS sofas.
+            var loadUri = await ResolveLoadUriAsync(key, url);
+
             var import = new GltfImport(materialGenerator: materialGenerator);
-            var loadTask = import.Load(url, importSettings);
+            var loadTask = import.Load(loadUri, importSettings);
             var timeoutTask = Task.Delay(TimeSpan.FromSeconds(timeoutSeconds));
 
             if (await Task.WhenAny(loadTask, timeoutTask) == timeoutTask)
@@ -197,7 +213,6 @@ public class RuntimeGltfLoader : MonoBehaviour
             }
 
             await Task.Yield();
-            // Wait for textures before caching — early convert-to-Unlit caused chalk-white sofas.
             StartCoroutine(FinalizeMaterialsAndDeliver(key, root, onComplete, storeInCache, isPriority));
             root = null;
             handedOff = true;
@@ -217,6 +232,59 @@ public class RuntimeGltfLoader : MonoBehaviour
         }
     }
 
+    async Task<string> ResolveLoadUriAsync(string key, string url)
+    {
+        if (!useDiskCache)
+            return url;
+
+        var diskPath = DiskPathForKey(key);
+        if (File.Exists(diskPath) && new FileInfo(diskPath).Length > 64)
+            return ToFileUri(diskPath);
+
+        if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            return url;
+
+        try
+        {
+            var dir = Path.GetDirectoryName(diskPath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+
+            using var www = UnityEngine.Networking.UnityWebRequest.Get(url);
+            www.timeout = Mathf.CeilToInt(timeoutSeconds);
+            var op = www.SendWebRequest();
+            while (!op.isDone)
+                await Task.Yield();
+
+#if UNITY_2020_1_OR_NEWER
+            if (www.result != UnityEngine.Networking.UnityWebRequest.Result.Success)
+#else
+            if (www.isNetworkError || www.isHttpError)
+#endif
+            {
+                Debug.LogWarning($"[RuntimeGltfLoader] Disk cache download failed ({www.error}) — loading URL directly.");
+                return url;
+            }
+
+            var bytes = www.downloadHandler?.data;
+            if (bytes == null || bytes.Length < 64)
+                return url;
+
+            var tmp = diskPath + ".tmp";
+            File.WriteAllBytes(tmp, bytes);
+            if (File.Exists(diskPath))
+                File.Delete(diskPath);
+            File.Move(tmp, diskPath);
+            Debug.Log($"[RuntimeGltfLoader] Cached {bytes.Length / (1024 * 1024f):0.0} MB → {diskPath}");
+            return ToFileUri(diskPath);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[RuntimeGltfLoader] Disk cache write failed: {e.Message}");
+            return url;
+        }
+    }
+
     IEnumerator FinalizeMaterialsAndDeliver(
         string key,
         GameObject root,
@@ -226,7 +294,8 @@ public class RuntimeGltfLoader : MonoBehaviour
     {
         try
         {
-            const int maxFrames = 120;
+            // Large sofas often bind albedo a few frames after InstantiateMainSceneAsync.
+            const int maxFrames = 180;
             for (var frame = 0; frame < maxFrames; frame++)
             {
                 if (root == null)
@@ -250,8 +319,17 @@ public class RuntimeGltfLoader : MonoBehaviour
 
             GltfUrpMaterialFixer.Apply(root);
 
+            var ready = GltfUrpMaterialFixer.LooksReady(root);
+            if (!ready)
+            {
+                Debug.LogWarning(
+                    $"[RuntimeGltfLoader] Delivering '{key}' without confirmed albedo — " +
+                    "colors may be missing. Will not cache this template.");
+            }
+
             GameObject deliver;
-            if (storeInCache && GltfUrpMaterialFixer.LooksReady(root))
+            // Only cache textured/tinted templates so gray placeholders are never reused.
+            if (storeInCache && ready)
             {
                 StoreTemplate(key, root);
                 deliver = Instantiate(root);
@@ -261,7 +339,6 @@ public class RuntimeGltfLoader : MonoBehaviour
             }
             else
             {
-                // Don't cache chalk-white / pink templates.
                 deliver = root;
                 root = null;
                 deliver.SetActive(false);
@@ -280,7 +357,7 @@ public class RuntimeGltfLoader : MonoBehaviour
     {
         EnsureCacheRoot();
         template.name = $"Cached_{SanitizeKey(key)}";
-        template.transform.SetParent(cacheRoot, false);
+        template.transform.SetParent(persistentCacheRoot, false);
         template.SetActive(false);
 
         if (templateCache.TryGetValue(key, out var previous) && previous != null)
@@ -311,7 +388,6 @@ public class RuntimeGltfLoader : MonoBehaviour
             return false;
         }
 
-        // Evict chalk-white / pink templates left from older builds.
         if (!GltfUrpMaterialFixer.LooksReady(template))
         {
             templateCache.Remove(key);
@@ -330,13 +406,37 @@ public class RuntimeGltfLoader : MonoBehaviour
         return true;
     }
 
-    void EnsureCacheRoot()
+    static void EnsureCacheRoot()
     {
-        if (cacheRoot != null) return;
+        if (persistentCacheRoot != null) return;
         var go = new GameObject("GltfTemplateCache");
-        go.transform.SetParent(transform, false);
+        DontDestroyOnLoad(go);
         go.SetActive(false);
-        cacheRoot = go.transform;
+        persistentCacheRoot = go.transform;
+    }
+
+    static string DiskPathForKey(string key)
+    {
+        var hash = Sha1Hex(key);
+        return Path.Combine(Application.persistentDataPath, "glb-cache", hash + ".glb");
+    }
+
+    static string ToFileUri(string absolutePath)
+    {
+        var normalized = absolutePath.Replace('\\', '/');
+        if (!normalized.StartsWith("/", StringComparison.Ordinal))
+            normalized = "/" + normalized;
+        return "file://" + normalized;
+    }
+
+    static string Sha1Hex(string input)
+    {
+        using var sha = SHA1.Create();
+        var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(input ?? string.Empty));
+        var sb = new StringBuilder(bytes.Length * 2);
+        for (var i = 0; i < bytes.Length; i++)
+            sb.Append(bytes[i].ToString("x2"));
+        return sb.ToString();
     }
 
     static string NormalizeUrl(string url) => (url ?? string.Empty).Trim();
@@ -357,12 +457,46 @@ public class RuntimeGltfLoader : MonoBehaviour
 
     void OnDestroy()
     {
+        // Keep static template + disk cache alive across scene SoftClose / LoadScene.
+        // Templates live under DontDestroyOnLoad persistentCacheRoot.
+    }
+
+    /// <summary>
+    /// Drop in-memory templates that never got albedo (solid gray placeholders).
+    /// Next place reloads from disk/network with the fixed material path.
+    /// </summary>
+    public static void PurgeUnreadyTemplates()
+    {
+        var doomed = new List<string>();
+        foreach (var kv in templateCache)
+        {
+            if (kv.Value == null || !GltfUrpMaterialFixer.LooksReady(kv.Value))
+                doomed.Add(kv.Key);
+        }
+
+        foreach (var key in doomed)
+        {
+            if (templateCache.TryGetValue(key, out var go) && go != null)
+                Destroy(go);
+            templateCache.Remove(key);
+            cacheOrder.Remove(key);
+        }
+
+        if (doomed.Count > 0)
+            Debug.Log($"[RuntimeGltfLoader] Purged {doomed.Count} unready furniture template(s).");
+    }
+
+    void OnApplicationQuit()
+    {
         foreach (var kv in templateCache)
         {
             if (kv.Value != null) Destroy(kv.Value);
         }
         templateCache.Clear();
         cacheOrder.Clear();
+        if (persistentCacheRoot != null)
+            Destroy(persistentCacheRoot.gameObject);
+        persistentCacheRoot = null;
     }
 #endif
 }

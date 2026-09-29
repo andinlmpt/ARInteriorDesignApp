@@ -17,6 +17,8 @@ export type ProjectStatus = 'draft' | 'in-progress' | 'completed';
 /** How the project was created / last updated. */
 export type ProjectSource = 'manual' | 'unity-export';
 
+export type ProjectArMode = 'furniture' | 'measure';
+
 export type DesignStyle = 
   | 'Modern'
   | 'Contemporary'
@@ -45,6 +47,15 @@ export interface UnityLayoutExportMeta {
   exportedAt: number;
 }
 
+/** A photo captured with the AR Furniture camera button. */
+export interface ProjectPhoto {
+  uri: string;
+  fileName: string;
+  byteLength: number;
+  capturedAt: number;
+  gallerySaved: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -62,6 +73,10 @@ export interface Project {
   };
   tags?: string[];
   source?: ProjectSource;
+  /** AR flow the project was started in (Start new project tab). */
+  arMode?: ProjectArMode;
   /** Absolute file path / metadata when exported from Unity. */
   unityExport?: UnityLayoutExportMeta;
+  /** AR Furniture captures, newest last. */
+  photos?: ProjectPhoto[];
 }

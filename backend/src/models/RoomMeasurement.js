@@ -58,6 +58,29 @@ const roomMeasurementSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    /** Linked Unity 3D layout export (.glb) — device-local path for preview. */
+    exportPath: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    exportFileName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    exportByteLength: {
+      type: Number,
+      default: 0,
+    },
+    exportFurnitureCount: {
+      type: Number,
+      default: 0,
+    },
+    exportedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,

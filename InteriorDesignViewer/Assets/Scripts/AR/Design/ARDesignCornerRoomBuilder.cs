@@ -27,6 +27,9 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     [SerializeField] private ARPlaneManager planeManager;
     [SerializeField] private Camera arCamera;
     [SerializeField] private ARPlacementIndicator placementIndicator;
+    [SerializeField] private ARAnchorManager anchorManager;
+    [Tooltip("Pin the base point and each corner to an AR anchor so they stay where tapped when tracking corrects itself.")]
+    [SerializeField] private bool anchorCorners = true;
 
     [Header("Look")]
     [SerializeField] private Color edgeColor = new(1f, 1f, 1f, 0.98f);
@@ -54,7 +57,23 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     [SerializeField] private bool showLivePreviewMeasurement = true;
     [SerializeField] private bool keepMeasurementsAfterConfirm = false;
 
+    /// <summary>
+    /// Anchor for one tapped point. Anchors are created asynchronously, so the slot can be
+    /// released (undo / retry) before its anchor arrives.
+    /// </summary>
+    sealed class AnchorSlot
+    {
+        public ARAnchor anchor;
+        public bool released;
+    }
+
+    /// <summary>Ignore anchor jitter below this (5 mm) so labels are not rebuilt every frame.</summary>
+    const float AnchorMoveEpsilonSq = 0.005f * 0.005f;
+
     readonly List<Vector3> corners = new();
+    /// <summary>Parallel to <see cref="corners"/>. Index 0 shares <see cref="heightBaseAnchor"/> once seeded.</summary>
+    readonly List<AnchorSlot> cornerAnchors = new();
+    AnchorSlot heightBaseAnchor;
     readonly List<ARRaycastHit> hits = new();
     readonly List<GameObject> markers = new();
     readonly List<GameObject> measurementLabels = new();
@@ -121,6 +140,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         if (planeManager == null) planeManager = FindFirstObjectByType<ARPlaneManager>();
         if (arCamera == null) arCamera = Camera.main;
         if (placementIndicator == null) placementIndicator = FindFirstObjectByType<ARPlacementIndicator>();
+        if (anchorManager == null) anchorManager = FindFirstObjectByType<ARAnchorManager>();
 
         root = new GameObject("CornerRoomOutline").transform;
         root.SetParent(transform, false);
@@ -151,6 +171,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     void OnDestroy()
     {
         Clear();
+        ReleaseHeightBaseAnchor();
         ClearHeightMeasureLabel();
         EndHeightPlacementTracking();
         if (lineMaterial != null) Destroy(lineMaterial);
@@ -166,6 +187,8 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     void Update()
     {
         if (!active) return;
+
+        SyncAnchoredPoints();
 
         if (IsInHeightPhase)
         {
@@ -313,11 +336,17 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         if (corners.Count == 0)
         {
             corners.Add(heightFloorBase);
+            cornerAnchors.Add(heightBaseAnchor);
             return;
         }
 
         // Replace any accidental first corner so width always starts at the Finish point.
         corners[0] = heightFloorBase;
+        if (cornerAnchors.Count > 0)
+        {
+            ReleaseCornerSlot(cornerAnchors[0]);
+            cornerAnchors[0] = heightBaseAnchor;
+        }
     }
 
     public void UndoHeightBase()
@@ -326,6 +355,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
 
         heightBaseSet = false;
         heightFloorBase = default;
+        ReleaseHeightBaseAnchor();
         LiveHeightMeters = 0f;
         HasLiveHeightPreview = false;
         peakLiveHeight = 0f;
@@ -346,6 +376,29 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         if (heightLocked && corners.Count <= 1) return;
 
         corners.RemoveAt(corners.Count - 1);
+        if (cornerAnchors.Count > corners.Count)
+        {
+            ReleaseCornerSlot(cornerAnchors[^1]);
+            cornerAnchors.RemoveAt(cornerAnchors.Count - 1);
+        }
+        RebuildVisuals();
+        CornersChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Start the floor outline over. Keeps the measured height and its seeded base corner.
+    /// </summary>
+    public void ResetCorners()
+    {
+        if (corners.Count == 0) return;
+        var keep = heightLocked ? 1 : 0;
+        if (corners.Count <= keep) return;
+
+        corners.RemoveRange(keep, corners.Count - keep);
+        for (var i = keep; i < cornerAnchors.Count; i++)
+            ReleaseCornerSlot(cornerAnchors[i]);
+        if (cornerAnchors.Count > keep)
+            cornerAnchors.RemoveRange(keep, cornerAnchors.Count - keep);
         RebuildVisuals();
         CornersChanged?.Invoke();
     }
@@ -368,6 +421,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         heightLocked = false;
         outlinePhase = requireHeightBeforeCorners ? RoomOutlinePhase.Height : RoomOutlinePhase.Width;
         heightFloorBase = default;
+        ReleaseHeightBaseAnchor();
         LiveHeightMeters = 0f;
         HasLiveHeightPreview = false;
         peakLiveHeight = 0f;
@@ -394,6 +448,8 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         worldPoint.y = FindFloorY(worldPoint);
         heightFloorBase = worldPoint;
         heightBaseSet = true;
+        ReleaseHeightBaseAnchor();
+        heightBaseAnchor = PinWorldPoint(worldPoint);
         peakLiveHeight = 0f;
         LiveHeightMeters = 0f;
         HasLiveHeightPreview = false;
@@ -455,6 +511,101 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         placementIndicator?.ClearOverlayIcon();
     }
 
+    // ── World anchors ─────────────────────────────────────────────────────────
+
+    AnchorSlot PinWorldPoint(Vector3 worldPoint)
+    {
+        if (!anchorCorners || anchorManager == null || !anchorManager.isActiveAndEnabled)
+            return null;
+
+        var slot = new AnchorSlot();
+        CreateAnchorAsync(slot, worldPoint);
+        return slot;
+    }
+
+    async void CreateAnchorAsync(AnchorSlot slot, Vector3 worldPoint)
+    {
+        try
+        {
+            var result = await anchorManager.TryAddAnchorAsync(new Pose(worldPoint, Quaternion.identity));
+            if (!result.status.IsSuccess() || result.value == null)
+                return;
+
+            if (slot.released || this == null)
+            {
+                Destroy(result.value.gameObject);
+                return;
+            }
+
+            slot.anchor = result.value;
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[ARDesignCornerRoomBuilder] Corner anchor failed: {e.Message}");
+        }
+    }
+
+    static void ReleaseSlot(AnchorSlot slot)
+    {
+        if (slot == null || slot.released) return;
+        slot.released = true;
+        if (slot.anchor != null) Destroy(slot.anchor.gameObject);
+        slot.anchor = null;
+    }
+
+    /// <summary>Release a corner's anchor unless it is the shared height-base anchor.</summary>
+    void ReleaseCornerSlot(AnchorSlot slot)
+    {
+        if (slot != null && slot != heightBaseAnchor)
+            ReleaseSlot(slot);
+    }
+
+    void ReleaseHeightBaseAnchor()
+    {
+        ReleaseSlot(heightBaseAnchor);
+        heightBaseAnchor = null;
+    }
+
+    static bool TryGetTrackedPosition(AnchorSlot slot, out Vector3 position)
+    {
+        position = default;
+        if (slot?.anchor == null || slot.anchor.trackingState != TrackingState.Tracking)
+            return false;
+        position = slot.anchor.transform.position;
+        return true;
+    }
+
+    /// <summary>
+    /// Follow ARCore's corrections so tapped points stay on the real-world spot instead of
+    /// sliding when tracking re-localises (e.g. after turning away and back).
+    /// </summary>
+    void SyncAnchoredPoints()
+    {
+        if (roomLocked) return;
+
+        var moved = false;
+        if (heightBaseSet && TryGetTrackedPosition(heightBaseAnchor, out var basePos)
+            && (basePos - heightFloorBase).sqrMagnitude > AnchorMoveEpsilonSq)
+        {
+            heightFloorBase = basePos;
+            moved = true;
+        }
+
+        for (var i = 0; i < corners.Count && i < cornerAnchors.Count; i++)
+        {
+            if (!TryGetTrackedPosition(cornerAnchors[i], out var p)) continue;
+            if ((p - corners[i]).sqrMagnitude <= AnchorMoveEpsilonSq) continue;
+            corners[i] = p;
+            moved = true;
+        }
+
+        if (!moved) return;
+
+        if (placementIndicator != null && heightBaseSet && IsInHeightPhase)
+            placementIndicator.LockOverlayAt(heightFloorBase + Vector3.up * 0.01f, Quaternion.identity);
+        RebuildVisuals();
+    }
+
     void TryAddCorner(Vector3 worldPoint)
     {
         worldPoint.y = FindFloorY(worldPoint);
@@ -481,6 +632,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
             return;
 
         corners.Add(worldPoint);
+        cornerAnchors.Add(PinWorldPoint(worldPoint));
         RebuildVisuals();
         CornersChanged?.Invoke();
     }
@@ -1023,6 +1175,9 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     public void Clear()
     {
         corners.Clear();
+        foreach (var slot in cornerAnchors)
+            ReleaseCornerSlot(slot);
+        cornerAnchors.Clear();
         ClearMeasurementLabels();
         ClearPreviewMeasureLabel();
         if (previewSegment != null) previewSegment.enabled = false;

@@ -448,10 +448,11 @@ const adminController = {
 
   async getStats(req, res, next) {
     try {
-      const [userCount, furnitureCount, activeFurniture] = await Promise.all([
+      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const [userCount, furnitureCount, newUsersThisWeek] = await Promise.all([
         User.countDocuments(),
         Furniture.countDocuments(),
-        Furniture.countDocuments({ active: true }),
+        User.countDocuments({ createdAt: { $gte: weekAgo } }),
       ]);
 
       res.json({
@@ -459,7 +460,7 @@ const adminController = {
         stats: {
           users: userCount,
           furniture: furnitureCount,
-          activeFurniture,
+          newUsersThisWeek,
           mongoConnected: mongoose.connection.readyState === 1,
         },
       });

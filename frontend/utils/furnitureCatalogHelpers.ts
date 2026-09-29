@@ -45,6 +45,8 @@ const CATEGORY_PALETTE: Record<string, string> = {
 };
 
 const REMOTE_CATEGORY_MAP: Record<string, FurnitureCategory | 'all'> = {
+  chair: 'seating',
+  sofa: 'seating',
   seating: 'seating',
   tables: 'tables',
   beds: 'bedroom',
@@ -60,10 +62,9 @@ const REMOTE_CATEGORY_MAP: Record<string, FurnitureCategory | 'all'> = {
 /** Map admin category into a home chip bucket. */
 export function mapHomeCategoryFilter(category: string): HomeProductCategoryFilter {
   const key = category.trim().toLowerCase();
-  if (key === 'seating') return 'seating';
-  if (key === 'tables') return 'tables';
+  if (key === 'chair') return 'chair';
+  if (key === 'sofa') return 'sofa';
   if (key === 'beds' || key === 'bedroom') return 'beds';
-  if (key === 'lighting') return 'lighting';
   return 'other';
 }
 

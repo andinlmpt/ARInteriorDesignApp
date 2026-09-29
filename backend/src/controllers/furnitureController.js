@@ -8,23 +8,10 @@ import {
   resolveFurnitureGlbUrl,
   resolveFurnitureThumbnailUrl,
 } from '../utils/publicAssetUrl.js';
+import { inferFurnitureCategory } from '../utils/furnitureCategory.js';
 
-const inferCategory = (id, displayName) => {
-  const key = `${id} ${displayName}`.toLowerCase();
-  if (key.includes('sofa') || key.includes('chair') || key.includes('seat') || key.includes('lounge')) {
-    return 'seating';
-  }
-  if (key.includes('table') || key.includes('desk')) {
-    return 'tables';
-  }
-  if (key.includes('bed') || key.includes('mattress')) {
-    return 'beds';
-  }
-  if (key.includes('lamp') || key.includes('light')) {
-    return 'lighting';
-  }
-  return 'other';
-};
+const inferCategory = (doc) =>
+  inferFurnitureCategory(doc.id, doc.displayName, doc.glbUrl) || 'other';
 
 /** Accepts a number or legacy inventory text like "2 sofa pieces + 1 stool". */
 const parseQuantity = (value) => {
@@ -43,7 +30,7 @@ const parseQuantity = (value) => {
 const toPublicItem = (doc, req) => ({
   id: doc.id,
   displayName: doc.displayName,
-  category: doc.category || inferCategory(doc.id, doc.displayName),
+  category: doc.category || inferCategory(doc),
   glbUrl: resolveFurnitureGlbUrl(doc, req),
   thumbnailUrl: resolveFurnitureThumbnailUrl(doc, req),
   width: doc.width,

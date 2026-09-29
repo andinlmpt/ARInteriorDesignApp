@@ -8,6 +8,7 @@ import type {
   RoomMeasurementRecord,
   RoomMeasurementResponse,
   SaveRoomMeasurementInput,
+  UpdateRoomMeasurementInput,
 } from '@/types/room-measurement';
 
 export class RoomMeasurementService {
@@ -33,13 +34,48 @@ export class RoomMeasurementService {
   }
 
   static async updateName(id: string, name: string): Promise<RoomMeasurementRecord> {
+    return this.update(id, { name });
+  }
+
+  static async update(
+    id: string,
+    input: UpdateRoomMeasurementInput,
+  ): Promise<RoomMeasurementRecord> {
     const response = await callApi<RoomMeasurementResponse>(
       `/room-measurements/${encodeURIComponent(id)}`,
       {
         method: 'PATCH',
-        body: { name },
+        body: input,
       },
     );
     return response.measurement;
+  }
+
+  /** Attach a Unity Export 3D .glb (and optional Projects id) to a saved room. */
+  static async linkExport(
+    id: string,
+    input: {
+      projectId?: string;
+      exportPath: string;
+      exportFileName?: string;
+      exportByteLength?: number;
+      exportFurnitureCount?: number;
+    },
+  ): Promise<RoomMeasurementRecord> {
+    return this.update(id, {
+      projectId: input.projectId,
+      exportPath: input.exportPath,
+      exportFileName: input.exportFileName,
+      exportByteLength: input.exportByteLength,
+      exportFurnitureCount: input.exportFurnitureCount,
+      exportedAt: new Date().toISOString(),
+    });
+  }
+
+  static async delete(id: string): Promise<void> {
+    await callApi<{ success: boolean; id: string }>(
+      `/room-measurements/${encodeURIComponent(id)}`,
+      { method: 'DELETE' },
+    );
   }
 }

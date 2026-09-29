@@ -1,7 +1,9 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, KeyboardEvent, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import './Login.css';
+
+const REMEMBERED_EMAIL_KEY = 'admin.rememberedEmail';
 
 function IconMail() {
   return (
@@ -42,9 +44,11 @@ function IconEye({ open }: { open: boolean }) {
 
 export function LoginPage() {
   const { user, loading, login } = useAuth();
-  const [email, setEmail] = useState('admin@gmail.com');
-  const [password, setPassword] = useState('Admin123!');
+  const [email, setEmail] = useState(() => localStorage.getItem(REMEMBERED_EMAIL_KEY) ?? '');
+  const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(() => localStorage.getItem(REMEMBERED_EMAIL_KEY) !== null);
   const [showPassword, setShowPassword] = useState(false);
+  const [capsLockOn, setCapsLockOn] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -52,13 +56,24 @@ export function LoginPage() {
     return <Navigate to="/" replace />;
   }
 
+  function handlePasswordKey(event: KeyboardEvent<HTMLInputElement>) {
+    setCapsLockOn(event.getModifierState('CapsLock'));
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError('');
     setSubmitting(true);
 
+    const trimmedEmail = email.trim();
+
     try {
-      await login(email.trim(), password);
+      await login(trimmedEmail, password);
+      if (remember) {
+        localStorage.setItem(REMEMBERED_EMAIL_KEY, trimmedEmail);
+      } else {
+        localStorage.removeItem(REMEMBERED_EMAIL_KEY);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
@@ -68,21 +83,35 @@ export function LoginPage() {
 
   return (
     <div className="login-page">
-      <form className="login-card card" onSubmit={handleSubmit}>
-        <div className="login-brand">
-          <img src="/maharlika-logo.png" alt="Maharlika Furniture" className="login-logo" />
-          <div>
-            <h1>Maharlika Furniture</h1>
-            <p>Admin console</p>
+      <aside className="login-brand">
+        <span className="login-blob login-blob--navy" aria-hidden="true" />
+        <span className="login-blob login-blob--orange" aria-hidden="true" />
+
+        <div className="login-brand-content">
+          <div className="login-logo-frame">
+            <img src="/maharlika-logo.png" alt="Maharlika Furniture" className="login-logo" />
           </div>
+          <h1>Maharlika Furniture</h1>
+          <p>Your vision, our craft</p>
         </div>
+      </aside>
 
-        {error ? <div className="alert alert-error">{error}</div> : null}
+      <main className="login-main">
+        <form className="login-form" onSubmit={handleSubmit}>
+          <div className="login-heading">
+            <span className="login-heading-accent" aria-hidden="true" />
+            <h2>Welcome back</h2>
+            <p>Sign in to the admin console</p>
+          </div>
 
-        <div className="field">
-          <label htmlFor="email" className="sr-only">Email</label>
-          <div className="input-with-icon">
-            <span className="input-icon">
+          {error ? (
+            <div className="alert alert-error login-error" role="alert">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="float-field">
+            <span className="float-icon">
               <IconMail />
             </span>
             <input
@@ -90,16 +119,16 @@ export function LoginPage() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="Email"
+              placeholder=" "
+              autoComplete="email"
+              autoFocus={!email}
               required
             />
+            <label htmlFor="email">Email address</label>
           </div>
-        </div>
 
-        <div className="field">
-          <label htmlFor="password" className="sr-only">Password</label>
-          <div className="input-with-icon">
-            <span className="input-icon">
+          <div className="float-field">
+            <span className="float-icon">
               <IconLock />
             </span>
             <input
@@ -107,9 +136,15 @@ export function LoginPage() {
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Password"
+              onKeyUp={handlePasswordKey}
+              onKeyDown={handlePasswordKey}
+              onBlur={() => setCapsLockOn(false)}
+              placeholder=" "
+              autoComplete="current-password"
+              autoFocus={!!email}
               required
             />
+            <label htmlFor="password">Password</label>
             <button
               type="button"
               className="password-toggle"
@@ -119,20 +154,27 @@ export function LoginPage() {
               <IconEye open={showPassword} />
             </button>
           </div>
-          <button type="button" className="forgot-password-link">
-            Forgot password?
+
+          {capsLockOn ? <p className="caps-warning">Caps Lock is on</p> : null}
+
+          <div className="login-options">
+            <label className="remember-me">
+              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+              <span className="remember-box" aria-hidden="true" />
+              Remember me
+            </label>
+            <button type="button" className="forgot-password-link">
+              Forgot password?
+            </button>
+          </div>
+
+          <button type="submit" className="login-btn" disabled={submitting}>
+            {submitting ? <span className="login-spinner" aria-label="Signing in" /> : 'Sign in'}
           </button>
-        </div>
 
-        <button type="submit" className="btn btn-dark login-btn" disabled={submitting}>
-          {submitting ? 'Signing in…' : 'Sign in'}
-        </button>
-
-        <div className="login-note">
-          <strong>Admin access only.</strong>
-          <p>If you don&apos;t have credentials, ask your administrator.</p>
-        </div>
-      </form>
+          <p className="login-note">Admin access only. Contact your administrator for credentials.</p>
+        </form>
+      </main>
     </div>
   );
 }

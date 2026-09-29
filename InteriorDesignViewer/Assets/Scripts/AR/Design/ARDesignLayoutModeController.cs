@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.EnhancedTouch;
 using UnityEngine.InputSystem.XR;
+using UnityEngine.UI;
 using UnityEngine.XR.ARFoundation;
 using Touch = UnityEngine.InputSystem.EnhancedTouch.Touch;
 using TouchPhase = UnityEngine.InputSystem.TouchPhase;
@@ -38,7 +40,11 @@ public class ARDesignLayoutModeController : MonoBehaviour
     [SerializeField] private ViewMode defaultViewMode = ViewMode.RealRoom;
 
     [Header("Orbit (planner only)")]
-    [SerializeField] private float orbitSensitivity = 0.18f;
+    [SerializeField] private float orbitSensitivity = 0.22f;
+    [Tooltip("Degrees per RN / pixel unit for plannerOrbit bridge messages.")]
+    [SerializeField] private float rnOrbitSensitivity = 0.12f;
+    [SerializeField] private float rnOrbitPixelScale = 0.065f;
+    [SerializeField] private float rnOrbitSmoothing = 14f;
     [SerializeField] private float pinchZoomSensitivity = 0.01f;
     [SerializeField] private float minDistance = 1.2f;
     [SerializeField] private float maxDistance = 12f;
@@ -58,6 +64,8 @@ public class ARDesignLayoutModeController : MonoBehaviour
     float distance = 4.5f;
     float yaw;
     float pitch = 35f;
+    float targetYaw;
+    float targetPitch = 35f;
 
     bool orbiting;
     Vector2 lastOrbitPos;
@@ -87,6 +95,23 @@ public class ARDesignLayoutModeController : MonoBehaviour
             placementIndicator = FindFirstObjectByType<ARPlacementIndicator>();
         if (roomMeshVisualizer == null)
             roomMeshVisualizer = FindFirstObjectByType<RoomMeshVisualizer>();
+    }
+
+    void Update()
+    {
+        if (!sessionActive || viewMode != ViewMode.Planner || arCamera == null)
+            return;
+
+        // Smooth RN orbit steps (ApplyOrbitFromRn sets targets; we ease the camera here).
+        if (Mathf.Abs(Mathf.DeltaAngle(yaw, targetYaw)) > 0.01f
+            || Mathf.Abs(pitch - targetPitch) > 0.01f)
+        {
+            var t = 1f - Mathf.Exp(-rnOrbitSmoothing * Time.unscaledDeltaTime);
+            yaw = Mathf.LerpAngle(yaw, targetYaw, t);
+            pitch = Mathf.Lerp(pitch, targetPitch, t);
+            ApplyCameraPose();
+            EnforcePlannerCamera();
+        }
     }
 
     void OnEnable()
@@ -120,9 +145,26 @@ public class ARDesignLayoutModeController : MonoBehaviour
     void OnPhase(RoomScanController.ScanPhase phase)
     {
         if (phase == RoomScanController.ScanPhase.Confirmed)
+        {
+            // AR Furniture unlocks via a synthetic confirm — stay on live AR camera.
+            if (scanController != null && scanController.IsFurniturePlacementOnly)
+            {
+                sessionActive = true;
+                viewMode = ViewMode.RealRoom;
+                CaptureCameraDefaults();
+                orbiting = false;
+                ApplyCurrentView();
+                roomMeshVisualizer?.Clear();
+                Debug.Log("[ARDesignLayoutMode] Furniture-only confirm — live AR, no planner shell.");
+                return;
+            }
+
             EnterLayoutMode();
+        }
         else if (sessionActive)
+        {
             ExitLayoutMode();
+        }
     }
 
     void LateUpdate()
@@ -131,7 +173,9 @@ public class ARDesignLayoutModeController : MonoBehaviour
 
         if (viewMode == ViewMode.Planner)
         {
-            HandleOrbitInput();
+            // RN sends plannerPointer — ignore EnhancedTouch / InputSystem orbit (ghost touches on UaaL).
+            if (!ARDesignHostDetect.IsEmbeddedInReactNative())
+                HandleOrbitInput();
             ApplyCameraPose();
             EnforcePlannerCamera();
         }
@@ -179,6 +223,8 @@ public class ARDesignLayoutModeController : MonoBehaviour
         CaptureOrbitFromRoom();
         pitch = topDown ? 89f : 35f;
         yaw = topDown ? 0f : yaw;
+        targetPitch = pitch;
+        targetYaw = yaw;
 
         if (topDown && scanController?.ConfirmedRoom != null && scanController.ConfirmedRoom.hasBounds)
         {
@@ -310,6 +356,8 @@ public class ARDesignLayoutModeController : MonoBehaviour
             yaw = euler.y;
             pitch = Mathf.Clamp(euler.x > 180f ? euler.x - 360f : euler.x, pitchMin, pitchMax);
             if (pitch < pitchMin) pitch = 35f;
+            targetYaw = yaw;
+            targetPitch = pitch;
         }
     }
 
@@ -354,33 +402,108 @@ public class ARDesignLayoutModeController : MonoBehaviour
         Debug.Log("[ARDesignLayoutMode] Forced live AR camera.");
     }
 
+    /// <summary>
+    /// Apply drag / pinch from React Native (UaaL often does not deliver EnhancedTouch).
+    /// Payload: {"dx":float,"dy":float,"pinch":float} — pinch is distance ratio (1 = unchanged).
+    /// </summary>
+    public void ApplyOrbitFromRn(string json)
+    {
+        EnsurePlannerSession();
+        if (!sessionActive || viewMode != ViewMode.Planner || arCamera == null)
+            return;
+
+        float dx = 0f;
+        float dy = 0f;
+        float pinch = 1f;
+        if (!string.IsNullOrWhiteSpace(json))
+        {
+            try
+            {
+                var payload = JsonUtility.FromJson<PlannerOrbitPayload>(json);
+                if (payload != null)
+                {
+                    dx = payload.dx;
+                    dy = payload.dy;
+                    pinch = payload.pinch > 0.01f ? payload.pinch : 1f;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[ARDesignLayoutMode] Bad plannerOrbit payload: {e.Message}");
+            }
+        }
+
+        if (Mathf.Abs(dx) > 0.0001f || Mathf.Abs(dy) > 0.0001f)
+        {
+            const float deadzonePx = 2f;
+            if (Mathf.Abs(dx) < deadzonePx) dx = 0f;
+            if (Mathf.Abs(dy) < deadzonePx) dy = 0f;
+
+            if (Mathf.Abs(dx) > 0.0001f || Mathf.Abs(dy) > 0.0001f)
+            {
+                // Same gain as native one-finger planner orbit (ApplyOneFingerOrbit).
+                yaw += dx * orbitSensitivity;
+                pitch = Mathf.Clamp(pitch - dy * orbitSensitivity, pitchMin, pitchMax);
+                targetYaw = yaw;
+                targetPitch = pitch;
+                ApplyCameraPose();
+                EnforcePlannerCamera();
+            }
+        }
+
+        if (Mathf.Abs(pinch - 1f) > 0.001f)
+        {
+            distance = Mathf.Clamp(distance / pinch, minDistance, maxDistance);
+            ApplyCameraPose();
+            EnforcePlannerCamera();
+        }
+    }
+
+    void EnsurePlannerSession()
+    {
+        if (scanController == null || !scanController.IsConfirmed)
+            return;
+
+        // Never enter planner shell for furniture-only synthetic rooms.
+        if (scanController.IsFurniturePlacementOnly)
+            return;
+
+        var switched = !sessionActive || viewMode != ViewMode.Planner;
+        sessionActive = true;
+        viewMode = ViewMode.Planner;
+
+        if (switched)
+        {
+            CaptureOrbitFromRoom();
+            // Prefer an isometric angle so drag orbit is obvious after measurement.
+            if (pitch < 20f || pitch > 85f)
+                pitch = 35f;
+            ApplyCurrentView();
+            ViewModeChanged?.Invoke(viewMode);
+        }
+        else
+        {
+            EnforcePlannerCamera();
+        }
+    }
+
     void HandleOrbitInput()
     {
-        if (placementController != null && placementController.SuppressTapInput)
+        if (placementController != null &&
+            (placementController.SuppressTapInput || placementController.HasPendingPlacement))
         {
             orbiting = false;
             lastPinchDistance = 0f;
             return;
         }
 
-        if (placementController != null && placementController.HasPendingPlacement)
+        // ── Two-finger pinch (Enhanced Touch) ────────────────────────────────
+        if (Touch.activeTouches.Count >= 2)
         {
             orbiting = false;
-            lastPinchDistance = 0f;
-            return;
-        }
-
-        var touchCount = Touch.activeTouches.Count;
-        if (touchCount >= 1 && IsPointerOverUI(Touch.activeTouches[0].touchId))
-        {
-            orbiting = false;
-            return;
-        }
-
-        if (touchCount >= 2)
-        {
-            orbiting = false;
-            var d = Vector2.Distance(Touch.activeTouches[0].screenPosition, Touch.activeTouches[1].screenPosition);
+            var d = Vector2.Distance(
+                Touch.activeTouches[0].screenPosition,
+                Touch.activeTouches[1].screenPosition);
             if (lastPinchDistance > 1f)
             {
                 var delta = d - lastPinchDistance;
@@ -393,34 +516,49 @@ public class ARDesignLayoutModeController : MonoBehaviour
 
         lastPinchDistance = 0f;
 
-        if (touchCount == 1)
+        // ── One-finger orbit — Enhanced Touch ────────────────────────────────
+        if (Touch.activeTouches.Count == 1)
         {
-            var touch = Touch.activeTouches[0];
-            if (touch.phase == TouchPhase.Began)
-            {
-                orbiting = true;
-                lastOrbitPos = touch.screenPosition;
-            }
-            else if (orbiting && (touch.phase == TouchPhase.Moved || touch.phase == TouchPhase.Stationary))
-            {
-                var delta = touch.screenPosition - lastOrbitPos;
-                yaw += delta.x * orbitSensitivity;
-                pitch = Mathf.Clamp(pitch - delta.y * orbitSensitivity, pitchMin, pitchMax);
-                lastOrbitPos = touch.screenPosition;
-            }
-            else if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
-            {
-                orbiting = false;
-            }
-
+            ApplyOneFingerOrbit(Touch.activeTouches[0].screenPosition, Touch.activeTouches[0].phase);
             return;
         }
+
+        // ── Fallback: Input System Touchscreen (common on UaaL Android) ──────
+        var ts = Touchscreen.current;
+        if (ts != null && ts.primaryTouch.press.isPressed)
+        {
+            var pos = ts.primaryTouch.position.ReadValue();
+            var phase = TouchPhase.Moved;
+            if (ts.primaryTouch.press.wasPressedThisFrame)
+                phase = TouchPhase.Began;
+            else if (ts.primaryTouch.press.wasReleasedThisFrame)
+                phase = TouchPhase.Ended;
+            ApplyOneFingerOrbit(pos, phase);
+            return;
+        }
+
+#if ENABLE_LEGACY_INPUT_MANAGER
+        if (Input.touchCount == 1)
+        {
+            var t = Input.GetTouch(0);
+            var phase = t.phase switch
+            {
+                UnityEngine.TouchPhase.Began => TouchPhase.Began,
+                UnityEngine.TouchPhase.Ended => TouchPhase.Ended,
+                UnityEngine.TouchPhase.Canceled => TouchPhase.Canceled,
+                UnityEngine.TouchPhase.Stationary => TouchPhase.Stationary,
+                _ => TouchPhase.Moved,
+            };
+            ApplyOneFingerOrbit(t.position, phase);
+            return;
+        }
+#endif
 
         orbiting = false;
 
 #if UNITY_EDITOR
         if (Mouse.current != null && Mouse.current.leftButton.isPressed
-            && !(EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()))
+            && !IsScreenPosOverUI(Mouse.current.position.ReadValue()))
         {
             var delta = Mouse.current.delta.ReadValue();
             yaw += delta.x * orbitSensitivity * 0.15f;
@@ -436,16 +574,77 @@ public class ARDesignLayoutModeController : MonoBehaviour
 #endif
     }
 
+    /// <summary>
+    /// UaaL often skips TouchPhase.Began — treat the first Moved as a new orbit start.
+    /// </summary>
+    void ApplyOneFingerOrbit(Vector2 screenPos, TouchPhase phase)
+    {
+        if (phase == TouchPhase.Ended || phase == TouchPhase.Canceled)
+        {
+            orbiting = false;
+            return;
+        }
+
+        if (phase == TouchPhase.Began || !orbiting)
+        {
+            if (IsScreenPosOverUI(screenPos))
+            {
+                orbiting = false;
+                return;
+            }
+
+            orbiting = true;
+            lastOrbitPos = screenPos;
+            // Baseline only on the first sample so we don't jump on Began→Moved.
+            if (phase == TouchPhase.Began)
+                return;
+        }
+
+        if (!orbiting)
+            return;
+
+        var delta = screenPos - lastOrbitPos;
+        if (delta.sqrMagnitude < 0.25f)
+            return;
+
+        yaw += delta.x * orbitSensitivity;
+        pitch = Mathf.Clamp(pitch - delta.y * orbitSensitivity, pitchMin, pitchMax);
+        lastOrbitPos = screenPos;
+    }
+
     void ApplyCameraPose()
     {
+        if (arCamera == null) return;
         var rotation = Quaternion.Euler(pitch, yaw, 0f);
         var position = focus + rotation * (Vector3.back * distance);
         arCamera.transform.SetPositionAndRotation(position, rotation);
     }
 
-    static bool IsPointerOverUI(int touchId)
+    static readonly List<RaycastResult> UiRaycastHits = new();
+
+    static bool IsScreenPosOverUI(Vector2 screenPos)
     {
         if (EventSystem.current == null) return false;
-        return EventSystem.current.IsPointerOverGameObject(touchId);
+
+        var eventData = new PointerEventData(EventSystem.current) { position = screenPos };
+        UiRaycastHits.Clear();
+        EventSystem.current.RaycastAll(eventData, UiRaycastHits);
+        // Only block orbit when the finger is on a real control (button), not frost chips.
+        for (var i = 0; i < UiRaycastHits.Count; i++)
+        {
+            var go = UiRaycastHits[i].gameObject;
+            if (go != null && go.GetComponentInParent<Button>() != null)
+                return true;
+        }
+
+        return false;
+    }
+
+    [Serializable]
+    class PlannerOrbitPayload
+    {
+        public float dx;
+        public float dy;
+        public float pinch = 1f;
     }
 }

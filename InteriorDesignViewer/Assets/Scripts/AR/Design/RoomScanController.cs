@@ -253,6 +253,29 @@ public class RoomScanController : MonoBehaviour
     }
 
     /// <summary>
+    /// Tear down confirmed geometry without starting a new scan/placement session.
+    /// Used when RN leaves AR so the next open/reload owns the boot.
+    /// </summary>
+    public void ResetToIdle()
+    {
+        furniturePlacementOnly = false;
+
+        ConfirmedRoom?.Dispose();
+        ConfirmedRoom = null;
+        floorPolygon.Clear();
+
+        Array.Clear(yawBuckets, 0, yawBuckets.Length);
+        cachedProgress = 0f;
+
+        cornerBuilder?.PrepareForRescan();
+        if (cornerBuilder != null)
+            cornerBuilder.enabled = true;
+
+        SetPhase(ScanPhase.Idle);
+        PushStatus();
+    }
+
+    /// <summary>
     /// Freezes the current geometry as the room layout and unlocks placement.
     /// Prefers a clean corner-to-corner outline when the user has tapped enough corners.
     /// </summary>
@@ -307,6 +330,66 @@ public class RoomScanController : MonoBehaviour
             meshManager.enabled = false;
 
         SetPhase(ScanPhase.Confirmed);
+        return true;
+    }
+
+    /// <summary>
+    /// Rebuilds the confirmed room shell from a measured floor outline (handoff from
+    /// ARRoomMeasurement → ARDesignScene). Unlocks furniture placement with the planner shell.
+    /// </summary>
+    public bool ApplyMeasuredRoom(IReadOnlyList<Vector3> corners, float wallHeight)
+    {
+        if (corners == null || corners.Count < 3)
+        {
+            Debug.LogWarning("[RoomScanController] ApplyMeasuredRoom needs at least 3 floor corners.");
+            return false;
+        }
+
+        furniturePlacementOnly = false;
+
+        if (cornerBuilder != null)
+            cornerBuilder.enabled = false;
+
+        var height = wallHeight >= 0.5f ? wallHeight : 2.5f;
+        var snapshot = RoomGeometryBuilder.CaptureFromFloorCorners(corners, height);
+        if (snapshot == null || snapshot.IsEmpty)
+        {
+            snapshot?.Dispose();
+            Debug.LogWarning("[RoomScanController] ApplyMeasuredRoom produced an empty shell.");
+            return false;
+        }
+
+        CaptureFloorPolygon(corners);
+        ConfirmedRoom?.Dispose();
+        ConfirmedRoom = snapshot;
+
+        if (planeManager != null)
+        {
+            planeManager.requestedDetectionMode = PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
+            planeManager.enabled = true;
+        }
+
+        if (pointCloudManager != null)
+            pointCloudManager.enabled = false;
+        if (meshManager != null)
+            meshManager.enabled = false;
+
+        Debug.Log(
+            $"[RoomScanController] Applied measured room — {corners.Count} corners, " +
+            $"wallHeight={height:F2}m, bounds={snapshot.bounds.size}.");
+
+        if (Phase == ScanPhase.Confirmed)
+        {
+            // Geometry changed while already confirmed — re-notify listeners to rebuild shell.
+            RecomputeStatus();
+            PhaseChanged?.Invoke(ScanPhase.Confirmed);
+            PushStatus();
+        }
+        else
+        {
+            SetPhase(ScanPhase.Confirmed);
+        }
+
         return true;
     }
 

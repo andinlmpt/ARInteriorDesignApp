@@ -16,6 +16,11 @@ import {
 
 applyGltfNativePolyfills();
 
+/** Base64 doubles memory — never use it for multi‑MB GLBs on mobile. */
+const MAX_BASE64_FALLBACK_BYTES = 8 * 1024 * 1024;
+/** Soft cap for parsing remote GLBs in RN JS heap (Unity handles the huge ones). */
+export const MAX_RN_GLB_BYTES = 24 * 1024 * 1024;
+
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -25,12 +30,42 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
+async function getLocalFileSize(uri: string): Promise<number | null> {
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    if (info.exists && typeof info.size === 'number') return info.size;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 async function uriToArrayBuffer(uri: string): Promise<ArrayBuffer> {
+  // Prefer fetch for both remote and file URIs — avoids base64 OOM on Android.
+  try {
+    const response = await fetch(uri);
+    if (response.ok) {
+      return await response.arrayBuffer();
+    }
+  } catch (fetchError) {
+    console.warn('[FurnitureModelLoader] fetch(arrayBuffer) failed:', fetchError);
+  }
+
   if (uri.startsWith('file://') || uri.startsWith('/')) {
     try {
       return await new File(uri).arrayBuffer();
     } catch (fileError) {
-      console.warn('[FurnitureModelLoader] File.arrayBuffer failed, trying legacy base64:', fileError);
+      const size = await getLocalFileSize(uri);
+      if (size != null && size > MAX_BASE64_FALLBACK_BYTES) {
+        throw new Error(
+          `GLB is too large for RN memory (${Math.round(size / (1024 * 1024))} MB). ` +
+            'Use AR Furniture (Unity) for full models, or a smaller preview mesh.'
+        );
+      }
+      console.warn(
+        '[FurnitureModelLoader] File.arrayBuffer failed, trying legacy base64 (small files only):',
+        fileError
+      );
       const base64 = await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
@@ -38,11 +73,7 @@ async function uriToArrayBuffer(uri: string): Promise<ArrayBuffer> {
     }
   }
 
-  const response = await fetch(uri);
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} for ${uri}`);
-  }
-  return response.arrayBuffer();
+  throw new Error(`Could not read model bytes from ${uri}`);
 }
 
 export class FurnitureModelLoader {
@@ -69,10 +100,45 @@ export class FurnitureModelLoader {
         modelUri = asset.localUri ?? asset.uri ?? null;
         console.log('[FurnitureModelLoader] Resolved bundled asset to:', modelUri);
       } else if (modelUrl.startsWith('http://') || modelUrl.startsWith('https://')) {
-        const fileName = `model_${Date.now()}.glb`;
-        const localPath = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory}${fileName}`;
-        const downloadResult = await FileSystem.downloadAsync(modelUrl, localPath);
-        modelUri = downloadResult.uri;
+        // Stream into an ArrayBuffer directly — download+base64 OOMs on 100–250 MB sofas.
+        const response = await fetch(modelUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} for ${modelUrl}`);
+        }
+        const contentLength = Number(response.headers.get('content-length') || 0);
+        if (contentLength > MAX_RN_GLB_BYTES) {
+          throw new Error(
+            `Remote GLB is ${Math.round(contentLength / (1024 * 1024))} MB — too large for RN. ` +
+              'Place this piece in AR Furniture instead.'
+          );
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength > MAX_RN_GLB_BYTES) {
+          throw new Error(
+            `Remote GLB is ${Math.round(arrayBuffer.byteLength / (1024 * 1024))} MB — too large for RN.`
+          );
+        }
+        console.log('[FurnitureModelLoader] Parsed buffer bytes:', arrayBuffer.byteLength);
+        ensureNavigatorUserAgent();
+        return await new Promise((resolve, reject) => {
+          this.loader.parse(
+            arrayBuffer,
+            '',
+            (gltf) => {
+              const model = gltf.scene;
+              enhanceModelMaterials(model, enhanceOptions);
+              if (scale !== 1.0) model.scale.set(scale, scale, scale);
+              model.traverse((child) => {
+                if (child instanceof THREE.Mesh) {
+                  child.castShadow = true;
+                  child.receiveShadow = true;
+                }
+              });
+              resolve(model);
+            },
+            (error) => reject(error)
+          );
+        });
       } else if (modelUrl.startsWith('file://')) {
         modelUri = modelUrl;
       } else if (modelUrl.startsWith('/')) {
@@ -81,6 +147,13 @@ export class FurnitureModelLoader {
 
       if (!modelUri) {
         throw new Error('Failed to resolve model URI');
+      }
+
+      const localSize = await getLocalFileSize(modelUri);
+      if (localSize != null && localSize > MAX_RN_GLB_BYTES) {
+        throw new Error(
+          `GLB is ${Math.round(localSize / (1024 * 1024))} MB — too large for RN memory.`
+        );
       }
 
       const arrayBuffer = await uriToArrayBuffer(modelUri);

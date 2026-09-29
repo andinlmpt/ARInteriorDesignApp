@@ -26,6 +26,7 @@ public class ARDesignScanHUD : MonoBehaviour
     static readonly Color MeasurePurpleDisabled = new(0.55f, 0.56f, 0.58f, 0.85f);
     static readonly Color DotIdle = new(0.78f, 0.79f, 0.82f, 1f);
     static readonly Color DotActive = new(0.12f, 0.12f, 0.14f, 1f);
+    const int RetryCornerCount = 4;
 
     Canvas canvas;
     Text topHintLabel;
@@ -260,7 +261,10 @@ public class ARDesignScanHUD : MonoBehaviour
             if (undoImage != null)
                 undoImage.color = canUndo ? Frost : FrostSoft;
             if (undoLabel != null)
+            {
+                undoLabel.text = IsRetryMode() ? "Retry" : "Undo";
                 undoLabel.color = canUndo ? Ink : InkMuted;
+            }
         }
 
         var useStartFinish = measurementOnlyMode && inHeightPhase;
@@ -358,10 +362,20 @@ public class ARDesignScanHUD : MonoBehaviour
         };
     }
 
+    /// <summary>Corners 1–3 → Undo (remove last). All 4 placed → Retry (start the outline over).</summary>
+    bool IsRetryMode()
+    {
+        return cornerBuilder != null
+               && !cornerBuilder.IsInHeightPhase
+               && cornerBuilder.CornerCount >= RetryCornerCount;
+    }
+
     void OnUndoClicked()
     {
         if (cornerBuilder != null && cornerBuilder.IsInHeightPhase)
             cornerBuilder.UndoHeightBase();
+        else if (IsRetryMode())
+            cornerBuilder.ResetCorners();
         else
             cornerBuilder?.UndoLastCorner();
         RefreshCornerUi();

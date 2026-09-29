@@ -14,6 +14,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import Furniture from '../src/models/Furniture.js';
 import { connectMongoDB, disconnectMongoDB } from '../src/db/mongodb.js';
+import { inferFurnitureCategory } from '../src/utils/furnitureCategory.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const inventoryPath = join(__dirname, '..', 'data', 'furniture-inventory.json');
@@ -35,12 +36,7 @@ const parseQuantity = (value) => {
   return matches.reduce((sum, n) => sum + Number(n), 0);
 };
 
-const inferCategory = (displayName) => {
-  const key = String(displayName || '').toLowerCase();
-  if (key.includes('bed')) return 'beds';
-  if (key.includes('sofa') || key.includes('chair') || key.includes('seat')) return 'seating';
-  return 'other';
-};
+const inferCategory = (displayName) => inferFurnitureCategory(displayName) || 'other';
 
 const trimSlash = (value) => String(value || '').replace(/\/+$/, '');
 

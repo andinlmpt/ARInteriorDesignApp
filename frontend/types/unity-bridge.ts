@@ -3,7 +3,9 @@ export const UNITY_AR_RECEIVE_METHOD = 'ReceiveMessage';
 
 export type UnityToRNEvent =
   | 'unityReady'
+  | 'reloadComplete'
   | 'furniturePlaced'
+  | 'furnitureReady'
   | 'planeDetected'
   | 'error'
   | 'requestClose'
@@ -14,11 +16,14 @@ export type UnityToRNEvent =
   | 'furnitureSelected'
   | 'layoutChanged'
   | 'exportComplete'
+  | 'exportStarted'
   | 'photoCaptured'
   | 'historyChanged'
   | 'placementSafety'
   | 'measurementPlanReady'
-  | 'measurementPlanClosed';
+  | 'measurementPlanClosed'
+  | 'requestRnExport3d'
+  | 'measuredFurnitureReady';
 
 export type RNToUnityMethod =
   | 'selectFurniture'
@@ -28,6 +33,7 @@ export type RNToUnityMethod =
   | 'startFurniturePlacement'
   | 'openRoomMeasurement'
   | 'openFurnitureDesign'
+  | 'openMeasuredFurnitureDesign'
   | 'getScanStatus'
   | 'confirmRoomScan'
   | 'spawnFurniture'
@@ -40,7 +46,17 @@ export type RNToUnityMethod =
   | 'capturePhoto'
   | 'savePhoto'
   | 'commitRoomName'
-  | 'cancelRoomName';
+  | 'cancelRoomName'
+  | 'pauseMeasurement'
+  | 'reloadMeasurement'
+  | 'pauseFurniture'
+  | 'reloadFurniture'
+  | 'resumeFurniture'
+  | 'prefetchFurniture'
+  | 'plannerOrbit'
+  | 'plannerPointer'
+  | 'wakePlanner'
+  | 'furnitureGesture';
 
 export interface UnityOutboundMessage {
   event: UnityToRNEvent | string;

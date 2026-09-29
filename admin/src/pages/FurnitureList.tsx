@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, type FurnitureItem } from '../api/client';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { FurnitureFormModal } from '../components/FurnitureFormModal';
@@ -46,6 +47,16 @@ export function FurnitureListPage() {
   const [deactivateTarget, setDeactivateTarget] = useState<FurnitureItem | null>(null);
   const [deactivating, setDeactivating] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  useEffect(() => {
+    if (searchParams.get('new') !== '1') return;
+    setEditingItem(null);
+    setFormOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('new');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   async function load() {
     setLoading(true);

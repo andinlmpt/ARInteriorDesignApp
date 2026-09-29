@@ -8,6 +8,8 @@ import { join } from 'path';
 import { UPLOAD_ROOT, getPublicBaseUrl } from '../services/uploadService.js';
 
 const LOCALHOST_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i;
+const PRIVATE_LAN_RE =
+  /^https?:\/\/((?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3})(:\d+)?/i;
 
 /**
  * Public origin for this request (no trailing slash), e.g. http://192.168.1.33:3000
@@ -37,15 +39,35 @@ export function getRequestOrigin(req) {
 }
 
 /**
- * Rewrite localhost upload URLs to the request/LAN origin.
+ * Rewrite localhost / stale LAN upload URLs to the request/LAN origin.
  */
 export function rewriteLocalhostUrl(url, req) {
   const raw = String(url || '').trim();
   if (!raw) return '';
-  if (!LOCALHOST_RE.test(raw)) return raw;
 
   const origin = getRequestOrigin(req);
-  return raw.replace(LOCALHOST_RE, origin);
+
+  if (LOCALHOST_RE.test(raw)) {
+    return raw.replace(LOCALHOST_RE, origin);
+  }
+
+  // Thumbnails saved with an old Wi‑Fi IP (e.g. 192.168.1.33) after hotspot switch.
+  if (PRIVATE_LAN_RE.test(raw) && raw.includes('/uploads')) {
+    try {
+      const parsed = new URL(raw);
+      const target = new URL(origin);
+      if (parsed.hostname !== target.hostname) {
+        parsed.protocol = target.protocol;
+        parsed.hostname = target.hostname;
+        parsed.port = target.port;
+        return parsed.toString();
+      }
+    } catch {
+      return raw;
+    }
+  }
+
+  return raw;
 }
 
 /**

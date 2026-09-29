@@ -5,6 +5,8 @@
 
 import {
   Project,
+  ProjectArMode,
+  ProjectPhoto,
   ProjectStatus,
   UnityLayoutExportMeta,
 } from '../types/project';
@@ -69,6 +71,68 @@ class ProjectService {
   }
 
   /**
+   * Create a named project before entering an AR flow (Start new project tab).
+   */
+  async createProject(input: { name: string; arMode: ProjectArMode }): Promise<Project> {
+    await this.initialize();
+
+    const name = input.name.trim();
+    if (name.length === 0) {
+      throw new Error('Project name cannot be empty');
+    }
+    if (name.length > 50) {
+      throw new Error('Project name must be 50 characters or less');
+    }
+
+    const now = Date.now();
+    const project: Project = {
+      id: `project-${now}-${Math.random().toString(36).substring(2, 9)}`,
+      name,
+      description: input.arMode === 'measure' ? 'AR Measurement project' : 'AR Furniture project',
+      roomType: 'Living Room',
+      status: 'in-progress',
+      createdAt: now,
+      updatedAt: now,
+      source: 'manual',
+      arMode: input.arMode,
+    };
+
+    this.projects.push(project);
+    await this.persist();
+    return project;
+  }
+
+  /**
+   * Attach an AR Furniture capture to a project. Creates an AR Furniture project when
+   * `projectId` is missing or unknown (e.g. AR opened outside Start new project).
+   */
+  async addProjectPhoto(projectId: string | undefined, photo: ProjectPhoto): Promise<Project> {
+    await this.initialize();
+
+    let index = projectId ? this.projects.findIndex((p) => p.id === projectId) : -1;
+    if (index === -1) {
+      const stamp = new Date(photo.capturedAt).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+      });
+      await this.createProject({ name: `AR Furniture ${stamp}`, arMode: 'furniture' });
+      index = this.projects.length - 1;
+    }
+
+    const current = this.projects[index];
+    const photos = [...(current.photos ?? []), photo];
+    this.projects[index] = {
+      ...current,
+      photos,
+      thumbnail: photo.uri,
+      description: `${photos.length} AR capture${photos.length === 1 ? '' : 's'}`,
+      updatedAt: Date.now(),
+    };
+    await this.persist();
+    return this.projects[index];
+  }
+
+  /**
    * Update a project
    */
   async updateProject(id: string, updates: Partial<Project>): Promise<Project | null> {
@@ -116,9 +180,24 @@ class ProjectService {
   }
 
   /**
-   * Persist a successful Unity 3D layout export as a project (Profile → Projects).
+   * Delete several projects in one write. Returns how many were removed.
    */
-  async saveUnityLayoutExport(payload: ExportResultPayload): Promise<Project> {
+  async deleteProjects(ids: string[]): Promise<number> {
+    await this.initialize();
+
+    const toRemove = new Set(ids);
+    const before = this.projects.length;
+    this.projects = this.projects.filter(p => !toRemove.has(p.id));
+    const removed = before - this.projects.length;
+    if (removed > 0) await this.persist();
+    return removed;
+  }
+
+  /**
+   * Persist a successful Unity 3D layout export as a project (Profile → Projects).
+   * When `projectId` names an existing project, the export is attached to it (name kept).
+   */
+  async saveUnityLayoutExport(payload: ExportResultPayload, projectId?: string): Promise<Project> {
     await this.initialize();
 
     if (!payload.success || !payload.path) {
@@ -126,6 +205,7 @@ class ProjectService {
     }
 
     const exportedAt = Date.now();
+    const existingIndex = projectId ? this.projects.findIndex((p) => p.id === projectId) : -1;
     const stamp = new Date(exportedAt).toLocaleString(undefined, {
       month: 'short',
       day: 'numeric',
@@ -143,6 +223,22 @@ class ProjectService {
       exportedAt,
     };
 
+    if (existingIndex !== -1) {
+      const updated: Project = {
+        ...this.projects[existingIndex],
+        description: `AR layout export · ${unityExport.furnitureCount} furniture · ${Math.round(unityExport.byteLength / 1024)} KB`,
+        status: 'completed',
+        updatedAt: exportedAt,
+        tags: ['unity', 'export', '3d-layout'],
+        source: 'unity-export',
+        unityExport,
+      };
+      this.projects[existingIndex] = updated;
+      await this.persist();
+      console.log('[ProjectService] Attached Unity layout export to project:', updated.id);
+      return updated;
+    }
+
     const project: Project = {
       id: `unity-export-${exportedAt}-${Math.random().toString(36).substring(2, 9)}`,
       name,
@@ -153,6 +249,7 @@ class ProjectService {
       updatedAt: exportedAt,
       tags: ['unity', 'export', '3d-layout'],
       source: 'unity-export',
+      arMode: 'measure',
       unityExport,
     };
 

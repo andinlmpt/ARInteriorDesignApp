@@ -8,6 +8,7 @@
 import '../src/loadEnv.js';
 import Furniture from '../src/models/Furniture.js';
 import { connectMongoDB, disconnectMongoDB } from '../src/db/mongodb.js';
+import { inferFurnitureCategory } from '../src/utils/furnitureCategory.js';
 
 const base = (
   process.env.FURNITURE_GCS_BASE_URL ||
@@ -28,14 +29,7 @@ const slugify = (value) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
-const inferCategory = (displayName, folder) => {
-  const key = `${folder} ${displayName}`.toLowerCase();
-  if (key.includes('bed')) return 'beds';
-  if (key.includes('chair')) return 'seating';
-  if (key.includes('love seat') || key.includes('seat')) return 'seating';
-  if (key.includes('sofa')) return 'seating';
-  return 'seating';
-};
+const inferCategory = (displayName, folder) => inferFurnitureCategory(folder, displayName) || 'sofa';
 
 /** Exact object paths that returned HTTP 200. */
 const GCS_FILES = [

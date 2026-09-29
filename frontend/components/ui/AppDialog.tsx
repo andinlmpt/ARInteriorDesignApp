@@ -10,6 +10,7 @@ import {
   Pressable,
   TouchableOpacity,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -36,6 +37,8 @@ export interface AppDialogProps {
   icon?: keyof typeof Ionicons.glyphMap;
   /** Visual intent — `danger` uses error red for icon badge (and suits danger actions). */
   variant?: 'default' | 'danger';
+  /** Extra content between the message and actions (e.g. a text field). */
+  children?: React.ReactNode;
 }
 
 export function AppDialog({
@@ -47,6 +50,7 @@ export function AppDialog({
   dismissOnBackdrop = true,
   icon,
   variant = 'default',
+  children,
 }: AppDialogProps) {
   const { colors } = useTheme();
 
@@ -93,7 +97,10 @@ export function AppDialog({
       statusBarTranslucent
       onRequestClose={onRequestClose}
     >
-      <View style={styles.backdrop}>
+      <KeyboardAvoidingView
+        style={styles.backdrop}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
         <Pressable
           style={StyleSheet.absoluteFillObject}
           onPress={handleBackdrop}
@@ -128,6 +135,8 @@ export function AppDialog({
             </AppText>
           ) : null}
 
+          {children ? <View style={styles.content}>{children}</View> : null}
+
           <View
             style={[
               styles.actions,
@@ -151,6 +160,9 @@ export function AppDialog({
                 >
                   <AppText
                     variant="subtitle"
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
                     style={[styles.actionLabel, { color: palette.textColor }]}
                   >
                     {action.label}
@@ -160,7 +172,7 @@ export function AppDialog({
             })}
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -201,6 +213,10 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginBottom: spacing.lg,
   },
+  content: {
+    width: '100%',
+    marginBottom: spacing.md,
+  },
   actions: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -218,7 +234,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: spacing.xl,
+    paddingHorizontal: spacing.md,
     flex: 1,
   },
   actionBtnFlex: {

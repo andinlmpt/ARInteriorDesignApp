@@ -2,7 +2,7 @@
  * Planner-style chrome: top back button, furniture sheet, bottom tool + undo/redo bar.
  */
 
-import React from 'react';
+import React, { useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Image,
+  PanResponder,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
@@ -31,6 +32,8 @@ interface ARPlannerOverlayProps {
   scanProgress: number;
   scanReady: boolean;
   statusMessage: string;
+  /** True while the selected catalog GLB is downloading / parsing in Unity. */
+  furnitureLoading?: boolean;
   selectedCategory: FurnitureCategory | 'all';
   selectedLibraryItem: string | null;
   /** Catalog modelId of the currently selected placed piece in Unity (if any). */
@@ -47,13 +50,31 @@ interface ARPlannerOverlayProps {
   onUndo: () => void;
   onRedo: () => void;
   onClear: () => void;
-  onExport: () => void;
+  /** Omit to hide the top-right Export button (AR Furniture mode). */
+  onExport?: () => void;
   onSavePhoto?: () => void;
   savingPhoto?: boolean;
+  /** Disable export while Unity/RN is building the 3D file. */
+  exportDisabled?: boolean;
   onRemoveSelected: () => void;
   onSetTool: (tool: PlannerTool) => void;
   onToggleLibrary: () => void;
   onBack: () => void;
+  /** When true, empty-space drag/pinch is forwarded to Unity planner (UaaL). */
+  enablePlannerOrbit?: boolean;
+  /** Unified planner pointer — Unity hit-tests furniture vs orbit. */
+  onPlannerPointer?: (payload: {
+    phase: 'begin' | 'move' | 'end' | 'cancel';
+    x: number;
+    y: number;
+    x2?: number;
+    y2?: number;
+    dx?: number;
+    dy?: number;
+    pinch?: number;
+    twistDelta?: number;
+    fingers?: number;
+  }) => void;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -79,6 +100,7 @@ export function ARPlannerOverlay({
   scanProgress,
   scanReady,
   statusMessage,
+  furnitureLoading = false,
   selectedLibraryItem,
   selectedPlacedModelId = null,
   placedModelIds = [],
@@ -89,14 +111,145 @@ export function ARPlannerOverlay({
   onConfirmScan,
   onUndo,
   onRedo,
+  onExport,
   onRemoveSelected,
   onSavePhoto,
+  exportDisabled = false,
   savingPhoto = false,
   onToggleLibrary,
   onBack,
+  enablePlannerOrbit = false,
+  onPlannerPointer,
   style,
 }: ARPlannerOverlayProps) {
   const insets = useSafeAreaInsets();
+  const orbitRef = useRef({
+    mode: 'none' as 'none' | 'active',
+    fingers: 0,
+    lastX: 0,
+    lastY: 0,
+    lastDist: 0,
+    lastTwist: 0,
+  });
+
+  const orbitPan = useMemo(() => {
+    if (!enablePlannerOrbit || !onPlannerPointer) return null;
+
+    type TouchPoint = { pageX: number; pageY: number };
+
+    /** Re-seed baselines so a finger landing / lifting never produces a delta spike. */
+    const seed = (touches: readonly TouchPoint[]) => {
+      const ref = orbitRef.current;
+      ref.fingers = touches.length >= 2 ? 2 : 1;
+      if (touches.length >= 2) {
+        const [a, b] = touches;
+        ref.lastX = (a.pageX + b.pageX) / 2;
+        ref.lastY = (a.pageY + b.pageY) / 2;
+        ref.lastDist = Math.max(1, Math.hypot(b.pageX - a.pageX, b.pageY - a.pageY));
+        ref.lastTwist = Math.atan2(b.pageY - a.pageY, b.pageX - a.pageX);
+      } else if (touches.length === 1) {
+        ref.lastX = touches[0].pageX;
+        ref.lastY = touches[0].pageY;
+      }
+    };
+
+    return PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => false,
+      onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponderCapture: () => false,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: (e) => {
+        const touches = e.nativeEvent.touches;
+        orbitRef.current.mode = 'active';
+        if (touches.length >= 2) {
+          seed(touches);
+          const [a, b] = touches;
+          onPlannerPointer({
+            phase: 'begin',
+            x: a.pageX,
+            y: a.pageY,
+            x2: b.pageX,
+            y2: b.pageY,
+            fingers: 2,
+            pinch: 1,
+            twistDelta: 0,
+          });
+          return;
+        }
+
+        const x = e.nativeEvent.pageX;
+        const y = e.nativeEvent.pageY;
+        seed([{ pageX: x, pageY: y }]);
+        onPlannerPointer({ phase: 'begin', x, y, fingers: 1, dx: 0, dy: 0 });
+      },
+      onPanResponderMove: (e) => {
+        const touches = e.nativeEvent.touches;
+        const count = touches.length >= 2 ? 2 : 1;
+        if (count !== orbitRef.current.fingers) {
+          seed(touches.length > 0 ? touches : [{ pageX: e.nativeEvent.pageX, pageY: e.nativeEvent.pageY }]);
+          return;
+        }
+
+        if (count === 2) {
+          const [a, b] = touches;
+          const cx = (a.pageX + b.pageX) / 2;
+          const cy = (a.pageY + b.pageY) / 2;
+          const dist = Math.max(1, Math.hypot(b.pageX - a.pageX, b.pageY - a.pageY));
+          const twist = Math.atan2(b.pageY - a.pageY, b.pageX - a.pageX);
+          let twistDeg = ((twist - orbitRef.current.lastTwist) * 180) / Math.PI;
+          if (twistDeg > 180) twistDeg -= 360;
+          if (twistDeg < -180) twistDeg += 360;
+          const pinch = dist / Math.max(1, orbitRef.current.lastDist);
+          const moveDx = cx - orbitRef.current.lastX;
+          const moveDy = cy - orbitRef.current.lastY;
+          orbitRef.current.lastX = cx;
+          orbitRef.current.lastY = cy;
+          orbitRef.current.lastDist = dist;
+          orbitRef.current.lastTwist = twist;
+          onPlannerPointer({
+            phase: 'move',
+            x: a.pageX,
+            y: a.pageY,
+            x2: b.pageX,
+            y2: b.pageY,
+            dx: moveDx,
+            dy: moveDy,
+            pinch,
+            twistDelta: twistDeg,
+            fingers: 2,
+          });
+          return;
+        }
+
+        const x = e.nativeEvent.pageX;
+        const y = e.nativeEvent.pageY;
+        const dx = x - orbitRef.current.lastX;
+        const dy = y - orbitRef.current.lastY;
+        orbitRef.current.lastX = x;
+        orbitRef.current.lastY = y;
+        onPlannerPointer({ phase: 'move', x, y, dx, dy, fingers: 1, pinch: 1 });
+      },
+      onPanResponderRelease: () => {
+        onPlannerPointer({
+          phase: 'end',
+          x: orbitRef.current.lastX,
+          y: orbitRef.current.lastY,
+          fingers: 1,
+        });
+        orbitRef.current.mode = 'none';
+      },
+      onPanResponderTerminate: () => {
+        onPlannerPointer({
+          phase: 'cancel',
+          x: orbitRef.current.lastX,
+          y: orbitRef.current.lastY,
+          fingers: 1,
+        });
+        orbitRef.current.mode = 'none';
+      },
+    });
+  }, [enablePlannerOrbit, onPlannerPointer]);
 
   // Category rail removed — always show the full catalog in the bottom sheet.
   const filteredItems = catalogItems;
@@ -107,13 +260,33 @@ export function ARPlannerOverlay({
     : null;
   const dimensionLabel = dimensionItem ? formatDimensionSubtitle(dimensionItem) : null;
 
+  const chromeBottomInset = insets.bottom + (roomConfirmed ? (libraryOpen ? 210 : 88) : 48);
+
   return (
     <View style={[styles.root, style]} pointerEvents="box-none">
-      {/* Top bar — back only (price pill removed) */}
+      {orbitPan ? (
+        <View
+          style={[styles.orbitPad, { bottom: chromeBottomInset }]}
+          {...orbitPan.panHandlers}
+        />
+      ) : null}
+
+      {/* Top bar — menu (back) + export */}
       <View style={[styles.topBar, { paddingTop: Math.max(insets.top, 12) }]} pointerEvents="box-none">
         <TouchableOpacity style={styles.menuButton} onPress={onBack} accessibilityLabel="Go back">
           <Ionicons name="menu" size={20} color="#1C1B19" />
         </TouchableOpacity>
+        {roomConfirmed && onExport ? (
+          <TouchableOpacity
+            style={[styles.exportTopButton, exportDisabled && styles.exportTopButtonDisabled]}
+            onPress={onExport}
+            disabled={exportDisabled}
+            accessibilityLabel="Export 3D layout"
+          >
+            <Ionicons name="share-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.exportTopButtonText}>Export</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* Scan banner */}
@@ -138,7 +311,10 @@ export function ARPlannerOverlay({
 
       {roomConfirmed && (
         <View style={styles.statusChipWrap} pointerEvents="none">
-          <View style={styles.statusChip}>
+          <View style={[styles.statusChip, furnitureLoading && styles.statusChipLoading]}>
+            {furnitureLoading ? (
+              <ActivityIndicator size="small" color="#FFFFFF" style={styles.statusChipSpinner} />
+            ) : null}
             <Text style={styles.statusChipText}>{statusMessage}</Text>
           </View>
         </View>
@@ -166,7 +342,10 @@ export function ARPlannerOverlay({
 
       {/* Item sheet */}
       {roomConfirmed && libraryOpen && (
-        <View style={[styles.itemSheet, { bottom: insets.bottom + 88 }]} pointerEvents="box-none">
+        <View
+          style={[styles.itemSheet, { bottom: insets.bottom + 88, zIndex: 3 }]}
+          pointerEvents="box-none"
+        >
           {catalogLoading ? (
             <View style={styles.catalogState}>
               <ActivityIndicator size="small" color="#2563EB" />
@@ -189,7 +368,8 @@ export function ARPlannerOverlay({
                 const remaining = getRemainingPlacements(item.quantity, placedCount);
                 const outOfStock = isOutOfStock(item.quantity);
                 const limitReached = !canPlaceMore(item.quantity, placedCount);
-                const locked = outOfStock || limitReached;
+                const stockLocked = outOfStock || limitReached;
+                const locked = stockLocked || furnitureLoading;
                 return (
                   <TouchableOpacity
                     key={item.id}
@@ -207,11 +387,13 @@ export function ARPlannerOverlay({
                     accessibilityLabel={
                       outOfStock
                         ? `${item.name}, out of stock`
-                        : limitReached
-                          ? `${item.name}, placement limit reached`
-                          : remaining != null
-                            ? `${item.name}, ${remaining} remaining`
-                            : item.name
+                        : furnitureLoading
+                          ? `${item.name}, loading`
+                          : limitReached
+                            ? `${item.name}, placement limit reached`
+                            : remaining != null
+                              ? `${item.name}, ${remaining} remaining`
+                              : item.name
                     }
                   >
                     <View style={styles.itemMedia}>
@@ -230,9 +412,13 @@ export function ARPlannerOverlay({
                           ]}
                         />
                       )}
-                      {locked ? (
+                      {stockLocked ? (
                         <View style={styles.itemLockOverlay} pointerEvents="none">
                           <Ionicons name="lock-closed" size={14} color="#FFFFFF" />
+                        </View>
+                      ) : furnitureLoading && selected ? (
+                        <View style={styles.itemLockOverlay} pointerEvents="none">
+                          <ActivityIndicator size="small" color="#FFFFFF" />
                         </View>
                       ) : null}
                     </View>
@@ -265,7 +451,9 @@ export function ARPlannerOverlay({
 
       {/* Bottom tools */}
       {roomConfirmed && (
-        <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+        <View
+          style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 12), zIndex: 4 }]}
+        >
           <View style={styles.toolGroup}>
             <ToolButton
               icon="cube-outline"
@@ -318,6 +506,10 @@ const styles = StyleSheet.create({
   root: {
     ...StyleSheet.absoluteFillObject,
   },
+  orbitPad: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 0,
+  },
   topBar: {
     position: 'absolute',
     top: 0,
@@ -325,7 +517,26 @@ const styles = StyleSheet.create({
     right: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'space-between',
+    zIndex: 2,
+  },
+  exportTopButton: {
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: 22,
+    backgroundColor: '#0C295F',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  exportTopButtonDisabled: {
+    opacity: 0.65,
+  },
+  exportTopButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
   menuButton: {
     width: 44,
@@ -391,16 +602,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   statusChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: 'rgba(20, 24, 32, 0.48)',
     borderRadius: radii.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     maxWidth: '78%',
   },
+  statusChipLoading: {
+    backgroundColor: 'rgba(37, 99, 235, 0.88)',
+  },
+  statusChipSpinner: {
+    marginRight: 8,
+  },
   statusChipText: {
     color: '#FFFFFF',
     fontSize: 13,
     textAlign: 'center',
+    flexShrink: 1,
   },
   dimensionChipWrap: {
     position: 'absolute',

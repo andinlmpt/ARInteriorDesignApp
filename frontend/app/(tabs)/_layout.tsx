@@ -108,7 +108,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="saved"
         options={{
-          title: 'Saved',
+          title: 'Wishlist',
           tabBarIcon: ({ color, focused, size }) => (
             <View style={focused ? [styles.activeIconContainer, { backgroundColor: hexToRgba(colors.accent, 0.1) }] : null}>
               <Ionicons

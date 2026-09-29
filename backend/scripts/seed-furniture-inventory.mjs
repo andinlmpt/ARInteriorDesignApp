@@ -87,7 +87,7 @@ async function main() {
       { availableColors: { $exists: false } },
       { availableColors: { $size: 0 } },
     ],
-    category: { $in: ['seating', 'beds'] },
+    category: { $in: ['chair', 'sofa', 'beds'] },
   });
 
   for (const item of remaining) {
@@ -99,7 +99,7 @@ async function main() {
   }
 
   console.log(`Updated ${updated} furniture items with inventory quantity/colors.`);
-  console.log(`Applied default catalog colors to ${colorDefaults} remaining seating/beds items.`);
+  console.log(`Applied default catalog colors to ${colorDefaults} remaining chair/sofa/beds items.`);
   if (missing.length) {
     console.log(`No DB match for ${missing.length} inventory names (not in your catalog DB yet):`);
     for (const name of missing) {

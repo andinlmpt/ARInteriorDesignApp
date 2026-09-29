@@ -13,6 +13,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  PanResponder,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GLView, type ExpoWebGLRenderingContext } from 'expo-gl';
@@ -23,6 +24,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, radii } from '@/components/ui/theme';
 import { ExpoThreeRenderer } from '@/utils/ExpoThreeRenderer';
 import { furnitureModelLoader } from '@/services/FurnitureModelLoader';
+import { projectService } from '@/services/ProjectService';
 import { getFurnitureById } from '@/data/furnitureLibrary';
 import {
   getBundledFurnitureIds,
@@ -30,18 +32,29 @@ import {
   type FurnitureModelAssetKey,
 } from '@/config/furniture-models';
 import { toFileUri, pickUnityExportGlb } from '@/utils/modelPreviewExport';
-import { applyRoomExportAppearance } from '@/utils/roomExportAppearance';
+import { applyRoomExportAppearance, updateRoomWallCutaway } from '@/utils/roomExportAppearance';
 
 /** Meters → whole centimeters for product-style labels. */
 function formatCm(meters: number): string {
   return `${Math.round(meters * 100)} cm`;
 }
 
+type OrbitState = {
+  target: THREE.Vector3;
+  radius: number;
+  /** Horizontal angle around Y (radians). */
+  theta: number;
+  /** Polar angle from +Y (radians); 0 = top-down. */
+  phi: number;
+  /** Stop gentle auto-spin once the user takes control. */
+  userControl: boolean;
+};
+
 function frameCameraToObject(
   camera: THREE.PerspectiveCamera,
   object: THREE.Object3D,
   offset = 1.85
-): void {
+): OrbitState {
   const box = new THREE.Box3().setFromObject(object);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
@@ -49,20 +62,41 @@ function frameCameraToObject(
   const fov = camera.fov * (Math.PI / 180);
   const distance = (maxDim / (2 * Math.tan(fov / 2))) * offset;
 
-  camera.position.set(
-    center.x + distance * 0.55,
-    center.y + distance * 0.35,
-    center.z + distance * 0.75
-  );
+  const orbit: OrbitState = {
+    target: center.clone(),
+    radius: distance,
+    theta: Math.atan2(0.55, 0.75),
+    phi: Math.PI / 2 - 0.42,
+    userControl: false,
+  };
+  applyOrbitToCamera(camera, orbit);
   camera.near = Math.max(0.01, distance / 100);
   camera.far = Math.max(100, distance * 20);
-  camera.lookAt(center.x, center.y, center.z);
   camera.updateProjectionMatrix();
+  return orbit;
+}
+
+function applyOrbitToCamera(camera: THREE.PerspectiveCamera, orbit: OrbitState): void {
+  const phi = Math.max(0.18, Math.min(Math.PI * 0.48, orbit.phi));
+  const sinPhi = Math.sin(phi);
+  camera.position.set(
+    orbit.target.x + orbit.radius * sinPhi * Math.sin(orbit.theta),
+    orbit.target.y + orbit.radius * Math.cos(phi),
+    orbit.target.z + orbit.radius * sinPhi * Math.cos(orbit.theta)
+  );
+  camera.lookAt(orbit.target);
 }
 
 function firstParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] || '';
   return value || '';
+}
+
+function touchDistance(touches: readonly { pageX: number; pageY: number }[]): number {
+  if (touches.length < 2) return 0;
+  const dx = touches[0].pageX - touches[1].pageX;
+  const dy = touches[0].pageY - touches[1].pageY;
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
 export default function ModelPreviewScreen() {
@@ -78,8 +112,24 @@ export default function ModelPreviewScreen() {
 
   const exportUri = toFileUri(firstParam(params.exportUri));
   const isExportMode = firstParam(params.mode) === 'export' && Boolean(exportUri);
-  const exportTitle = firstParam(params.exportTitle) || 'Exported layout';
+  const exportProjectId = firstParam(params.projectId);
+  const [projectName, setProjectName] = useState<string | null>(null);
+  const exportTitle = projectName || firstParam(params.exportTitle) || 'Exported layout';
   const exportFurnitureCount = Number(firstParam(params.furnitureCount) || 0);
+
+  React.useEffect(() => {
+    if (!isExportMode || !exportProjectId) return;
+    let cancelled = false;
+    projectService
+      .getProjectById(exportProjectId)
+      .then((project) => {
+        if (!cancelled && project?.name) setProjectName(project.name);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [isExportMode, exportProjectId]);
 
   const bundledIds = useMemo(() => getBundledFurnitureIds(), []);
   const [selectedId, setSelectedId] = useState<FurnitureModelAssetKey>(
@@ -111,8 +161,24 @@ export default function ModelPreviewScreen() {
 
   const rafRef = useRef<number | null>(null);
   const modelRef = useRef<THREE.Object3D | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const orbitRef = useRef<OrbitState | null>(null);
+  const gestureRef = useRef<{
+    mode: 'none' | 'orbit' | 'pinch';
+    lastX: number;
+    lastY: number;
+    startPinch: number;
+    startRadius: number;
+  }>({
+    mode: 'none',
+    lastX: 0,
+    lastY: 0,
+    startPinch: 0,
+    startRadius: 1,
+  });
   const mountedRef = useRef(true);
   const sceneKey = isExportMode ? `export:${exportUri}` : selectedId;
+  const baseRadiusRef = useRef(1);
 
   React.useEffect(() => {
     mountedRef.current = true;
@@ -129,6 +195,82 @@ export default function ModelPreviewScreen() {
     setStatus('loading');
     setErrorMessage(null);
   }, [sceneKey]);
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderGrant: (evt) => {
+          const orbit = orbitRef.current;
+          if (!orbit) return;
+          orbit.userControl = true;
+          const touches = evt.nativeEvent.touches;
+          const g = gestureRef.current;
+          if (touches.length >= 2) {
+            g.mode = 'pinch';
+            g.startPinch = touchDistance(touches);
+            g.startRadius = orbit.radius;
+            return;
+          }
+          g.mode = 'orbit';
+          g.lastX = evt.nativeEvent.pageX;
+          g.lastY = evt.nativeEvent.pageY;
+        },
+        onPanResponderMove: (evt) => {
+          const orbit = orbitRef.current;
+          const camera = cameraRef.current;
+          if (!orbit || !camera) return;
+
+          const touches = evt.nativeEvent.touches;
+          const g = gestureRef.current;
+
+          if (touches.length >= 2) {
+            const dist = touchDistance(touches);
+            // Second finger usually lands after the grant — start the pinch from here.
+            if (g.mode !== 'pinch' || g.startPinch <= 0) {
+              g.mode = 'pinch';
+              g.startPinch = dist;
+              g.startRadius = orbit.radius;
+              return;
+            }
+            if (g.startPinch > 0) {
+              const next = g.startRadius * (g.startPinch / Math.max(dist, 1));
+              const minR = baseRadiusRef.current * 0.45;
+              const maxR = baseRadiusRef.current * 3.2;
+              orbit.radius = Math.min(maxR, Math.max(minR, next));
+              applyOrbitToCamera(camera, orbit);
+            }
+            g.mode = 'pinch';
+            return;
+          }
+
+          if (g.mode === 'pinch') {
+            g.mode = 'orbit';
+            g.lastX = evt.nativeEvent.pageX;
+            g.lastY = evt.nativeEvent.pageY;
+            return;
+          }
+
+          const dx = evt.nativeEvent.pageX - g.lastX;
+          const dy = evt.nativeEvent.pageY - g.lastY;
+          g.lastX = evt.nativeEvent.pageX;
+          g.lastY = evt.nativeEvent.pageY;
+
+          orbit.theta -= dx * 0.008;
+          orbit.phi = Math.max(0.18, Math.min(Math.PI * 0.48, orbit.phi + dy * 0.006));
+          applyOrbitToCamera(camera, orbit);
+        },
+        onPanResponderRelease: () => {
+          gestureRef.current.mode = 'none';
+        },
+        onPanResponderTerminate: () => {
+          gestureRef.current.mode = 'none';
+        },
+      }),
+    []
+  );
 
   const onContextCreate = useCallback(
     async (gl: ExpoWebGLRenderingContext) => {
@@ -147,6 +289,7 @@ export default function ModelPreviewScreen() {
         scene.background = new THREE.Color(0xd8d4cc);
 
         const camera = new THREE.PerspectiveCamera(40, width / Math.max(height, 1), 0.05, 100);
+        cameraRef.current = camera;
 
         scene.add(new THREE.AmbientLight(0xffffff, 1.0));
         scene.add(new THREE.HemisphereLight(0xffffff, 0xb0a090, 0.85));
@@ -174,15 +317,17 @@ export default function ModelPreviewScreen() {
         }
 
         let model: THREE.Object3D | null = null;
+        let walls: THREE.Mesh[] = [];
         if (isExportMode) {
+          // Keep furniture textures; room shells are re-skinned by the appearance pass below.
           model = await furnitureModelLoader.loadGLBModel(exportUri, 1.0, {
             preferTextures: true,
           });
           if (!model) {
             throw new Error(`Failed to load exported layout from ${exportUri}`);
           }
-          // Match Unity planner shell (grid floor / walls) even if the GLB is untextured.
-          applyRoomExportAppearance(model);
+          // Match Unity planner shell (grid floor / walls, no ceiling) even if the GLB is untextured.
+          walls = applyRoomExportAppearance(model);
         } else {
           model = await furnitureModelLoader.loadBundledFurniture(selectedId, {
             width: catalogDims.width,
@@ -198,17 +343,19 @@ export default function ModelPreviewScreen() {
         model.traverse((child) => {
           if (child instanceof THREE.Mesh) {
             meshCount += 1;
-            child.visible = true;
           }
         });
         console.log('[ModelPreview] Mesh count:', meshCount, sceneKey);
 
         const box = new THREE.Box3().setFromObject(model);
         const size = box.getSize(new THREE.Vector3());
+        const roomCenter = box.getCenter(new THREE.Vector3());
 
         modelRef.current = model;
         scene.add(model);
-        frameCameraToObject(camera, model, isExportMode ? 2.35 : 1.85);
+        const orbit = frameCameraToObject(camera, model, isExportMode ? 2.35 : 1.85);
+        orbitRef.current = orbit;
+        baseRadiusRef.current = orbit.radius;
 
         if (mountedRef.current) {
           setMeasuredDims({
@@ -223,8 +370,15 @@ export default function ModelPreviewScreen() {
         const animate = () => {
           if (!mountedRef.current) return;
           rafRef.current = requestAnimationFrame(animate);
-          if (modelRef.current) {
-            modelRef.current.rotation.y += spinSpeed;
+          const liveOrbit = orbitRef.current;
+          if (liveOrbit && cameraRef.current) {
+            if (!liveOrbit.userControl) {
+              liveOrbit.theta += spinSpeed;
+            }
+            applyOrbitToCamera(cameraRef.current, liveOrbit);
+          }
+          if (walls.length > 0) {
+            updateRoomWallCutaway(walls, roomCenter, camera.position);
           }
           renderer.render(scene, camera);
           gl.endFrameEXP();
@@ -328,8 +482,14 @@ export default function ModelPreviewScreen() {
           </ScrollView>
         ) : null}
 
-        <View style={styles.canvasWrap}>
+        <View style={styles.canvasWrap} {...panResponder.panHandlers}>
           <GLView key={sceneKey} style={styles.gl} onContextCreate={onContextCreate} />
+
+          {status === 'ready' && (
+            <View pointerEvents="none" style={styles.hintBadge}>
+              <Text style={styles.hintText}>Drag to rotate · Pinch to zoom</Text>
+            </View>
+          )}
 
           {status === 'loading' && (
             <View style={styles.overlay}>
@@ -484,6 +644,23 @@ const styles = StyleSheet.create({
   },
   gl: {
     flex: 1,
+  },
+  hintBadge: {
+    position: 'absolute',
+    left: spacing.md,
+    right: spacing.md,
+    bottom: spacing.md,
+    alignItems: 'center',
+  },
+  hintText: {
+    overflow: 'hidden',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: 999,
+    backgroundColor: 'rgba(20, 28, 40, 0.55)',
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,

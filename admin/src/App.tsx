@@ -10,7 +10,6 @@ import { ActivityLogsPage } from './pages/ActivityLogsPage';
 import { FaqsPage } from './pages/FaqsPage';
 import { LegalPage } from './pages/LegalPage';
 import { StoreInfoPage } from './pages/StoreInfoPage';
-import { ProfilePage } from './pages/ProfilePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -52,7 +51,7 @@ export default function App() {
         <Route path="legal" element={<LegalPage />} />
         <Route path="settings" element={<StoreInfoPage />} />
         <Route path="store" element={<Navigate to="/settings" replace />} />
-        <Route path="profile" element={<ProfilePage />} />
+        <Route path="profile" element={<Navigate to="/" replace />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

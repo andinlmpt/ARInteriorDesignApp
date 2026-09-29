@@ -3,11 +3,15 @@ import { api, type FurnitureItem } from '../api/client';
 import { resolveAssetUrl } from '../utils/assetUrl';
 import { Modal } from './Modal';
 
-const CATEGORIES = ['seating', 'tables', 'beds', 'lighting', 'other'];
+const CATEGORIES = [
+  { value: 'chair', label: 'Chair' },
+  { value: 'sofa', label: 'Sofa' },
+  { value: 'beds', label: 'Beds' },
+];
 
 const emptyForm: Partial<FurnitureItem> = {
   displayName: '',
-  category: 'seating',
+  category: 'chair',
   glbUrl: '',
   thumbnailUrl: '',
   width: 2,
@@ -83,7 +87,7 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
   function buildPayload(): Partial<FurnitureItem> {
     return {
       displayName: form.displayName?.trim() || '',
-      category: form.category || 'other',
+      category: form.category || CATEGORIES[0].value,
       glbUrl: form.glbUrl || '',
       thumbnailUrl: form.thumbnailUrl || '',
       width: Number(form.width) || 0,
@@ -149,12 +153,17 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
           <label htmlFor="modal-category">Category</label>
           <select
             id="modal-category"
-            value={form.category || 'other'}
+            value={form.category || CATEGORIES[0].value}
             onChange={(e) => updateField('category', e.target.value)}
           >
+            {form.category && !CATEGORIES.some((cat) => cat.value === form.category) ? (
+              <option value={form.category} disabled>
+                {form.category} (choose a new category)
+              </option>
+            ) : null}
             {CATEGORIES.map((cat) => (
-              <option key={cat} value={cat}>
-                {cat}
+              <option key={cat.value} value={cat.value}>
+                {cat.label}
               </option>
             ))}
           </select>

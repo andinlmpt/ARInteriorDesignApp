@@ -146,7 +146,7 @@ export const api = {
   },
 
   getStats() {
-    return request<{ success: boolean; stats: { users: number; furniture: number; activeFurniture: number } }>(
+    return request<{ success: boolean; stats: { users: number; furniture: number; newUsersThisWeek: number } }>(
       '/admin/stats'
     );
   },

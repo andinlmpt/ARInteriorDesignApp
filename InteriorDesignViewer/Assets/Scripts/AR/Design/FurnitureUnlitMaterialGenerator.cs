@@ -22,6 +22,7 @@ public sealed class FurnitureUnlitMaterialGenerator : MaterialGenerator
     static readonly int BaseMapId = Shader.PropertyToID("_BaseMap");
     static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
     static readonly int MainTexId = Shader.PropertyToID("_MainTex");
+    static readonly int BaseMapStId = Shader.PropertyToID("_BaseMap_ST");
 
     Shader furnitureShader;
     Material defaultMaterial;
@@ -35,13 +36,14 @@ public sealed class FurnitureUnlitMaterialGenerator : MaterialGenerator
         if (shader == null)
             return null;
 
+        // White — never gray. Gray was being treated as "ready" and cached as a blank sofa.
         defaultMaterial = new Material(shader)
         {
             name = DefaultMaterialName,
-            color = Color.gray,
+            color = Color.white,
         };
         if (defaultMaterial.HasProperty(BaseColorId))
-            defaultMaterial.SetColor(BaseColorId, Color.gray);
+            defaultMaterial.SetColor(BaseColorId, Color.white);
         return defaultMaterial;
     }
 
@@ -85,13 +87,42 @@ public sealed class FurnitureUnlitMaterialGenerator : MaterialGenerator
             material.SetColor(BaseColorId, baseColor);
         material.color = baseColor;
 
+        var bound = false;
         if (baseColorTexture != null)
         {
-            TrySetTexture(baseColorTexture, material, gltf, BaseMapId);
-            if (material.HasProperty(MainTexId) && material.GetTexture(BaseMapId) != null)
-                material.SetTexture(MainTexId, material.GetTexture(BaseMapId));
-            if (material.GetTexture(BaseMapId) != null)
-                material.mainTexture = material.GetTexture(BaseMapId);
+            bound = TrySetTexture(baseColorTexture, material, gltf, BaseMapId);
+            if (!bound)
+                bound = TryBindTextureManual(baseColorTexture, material, gltf);
+        }
+
+        // Last resort: first available glTF texture (some exports omit material texture refs).
+        if (!bound && gltf != null && gltf.TextureCount > 0)
+        {
+            for (var i = 0; i < gltf.TextureCount; i++)
+            {
+                var tex = gltf.GetTexture(i);
+                if (tex == null || tex.width <= 1) continue;
+                ApplyAlbedo(material, tex, gltf.IsTextureYFlipped(i));
+                bound = true;
+                break;
+            }
+        }
+
+        if (bound)
+        {
+            // With a map, keep tint close to white so fabric colors aren't crushed.
+            if (baseColor.r > 0.85f && baseColor.g > 0.85f && baseColor.b > 0.85f)
+            {
+                if (material.HasProperty(BaseColorId))
+                    material.SetColor(BaseColorId, Color.white);
+                material.color = Color.white;
+            }
+        }
+        else
+        {
+            Debug.LogWarning(
+                $"[FurnitureUnlitMaterialGenerator] No albedo for '{material.name}' " +
+                $"(textures={gltf?.TextureCount ?? 0}).");
         }
 
         material.SetOverrideTag(RenderTypeTag, OpaqueRenderType);
@@ -101,6 +132,38 @@ public sealed class FurnitureUnlitMaterialGenerator : MaterialGenerator
             material.SetFloat("_Cull", 0f);
 
         return material;
+    }
+
+    bool TryBindTextureManual(TextureInfoBase textureInfo, Material material, IGltfReadable gltf)
+    {
+        if (textureInfo == null || gltf == null || textureInfo.index < 0)
+            return false;
+
+        var texture = gltf.GetTexture(textureInfo.index);
+        if (texture == null)
+            texture = gltf.GetImage(textureInfo.index);
+        if (texture == null || texture.width <= 1)
+            return false;
+
+        ApplyAlbedo(material, texture, gltf.IsTextureYFlipped(textureInfo.index));
+        return true;
+    }
+
+    static void ApplyAlbedo(Material material, UnityEngine.Texture texture, bool flipY)
+    {
+        if (material.HasProperty(BaseMapId))
+            material.SetTexture(BaseMapId, texture);
+        if (material.HasProperty(MainTexId))
+            material.SetTexture(MainTexId, texture);
+        material.mainTexture = texture;
+
+        // glTF often stores textures flipped vs Unity — fix without a custom UV channel prop.
+        if (material.HasProperty(BaseMapStId))
+        {
+            material.SetVector(
+                BaseMapStId,
+                flipY ? new Vector4(1f, -1f, 0f, 1f) : new Vector4(1f, 1f, 0f, 0f));
+        }
     }
 
     Shader ResolveShader()

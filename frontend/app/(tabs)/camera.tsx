@@ -2,30 +2,90 @@
  * Center tab — choose AR Furniture or AR Measurement (plus entry point).
  */
 
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   Pressable,
+  TextInput,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, radii } from '@/components/ui/theme';
+import { AppDialog } from '@/components/ui/AppDialog';
 import { getHorizontalPadding } from '@/utils/responsive';
+import { projectService } from '@/services/ProjectService';
+import type { ProjectArMode } from '@/types/project';
 
-type ArMode = 'furniture' | 'measure';
+const MAX_PROJECT_NAME = 50;
 
 export default function CameraScreen() {
   const router = useRouter();
   const { colors, statusBarStyle } = useTheme();
 
-  const openAr = (mode: ArMode) => {
-    router.push({ pathname: '/ar-view', params: { mode } });
+  const [nameDraft, setNameDraft] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [nameModalVisible, setNameModalVisible] = useState(false);
+  const [pendingMode, setPendingMode] = useState<ProjectArMode | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  // Returning from AR (or re-entering the tab) must not reopen the name dialog.
+  useFocusEffect(
+    useCallback(() => {
+      setNameModalVisible(false);
+      setPendingMode(null);
+      setStarting(false);
+    }, [])
+  );
+
+  const startProject = useCallback(
+    async (name: string, mode: ProjectArMode) => {
+      if (starting) return;
+      setStarting(true);
+      try {
+        const project = await projectService.createProject({ name, arMode: mode });
+        router.push({ pathname: '/ar-view', params: { mode, projectId: project.id } });
+      } catch (err) {
+        setStarting(false);
+        setPendingMode(mode);
+        setNameDraft(name);
+        setNameError(err instanceof Error ? err.message : 'Could not create the project.');
+        setNameModalVisible(true);
+      }
+    },
+    [router, starting]
+  );
+
+  const openAr = (mode: ProjectArMode) => {
+    setPendingMode(mode);
+    setNameDraft('');
+    setNameError(null);
+    setNameModalVisible(true);
+  };
+
+  const confirmName = () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed) {
+      setNameError('Please enter a project name.');
+      return;
+    }
+    if (!pendingMode) return;
+    const mode = pendingMode;
+    setNameModalVisible(false);
+    setNameError(null);
+    setPendingMode(null);
+    void startProject(trimmed, mode);
+  };
+
+  const cancelName = () => {
+    setNameModalVisible(false);
+    setPendingMode(null);
+    setNameError(null);
   };
 
   return (
@@ -96,6 +156,45 @@ export default function CameraScreen() {
           <Text style={[styles.savedLinkText, { color: colors.accent }]}>View saved measurements</Text>
         </TouchableOpacity>
       </SafeAreaView>
+
+      <AppDialog
+        visible={nameModalVisible}
+        title="Name your project"
+        message="You'll find it under this name in Projects."
+        icon="folder-open-outline"
+        onRequestClose={cancelName}
+        dismissOnBackdrop={false}
+        actions={[
+          { label: 'Cancel', tone: 'ghost', onPress: cancelName },
+          { label: 'Continue', tone: 'primary', onPress: confirmName },
+        ]}
+      >
+        <TextInput
+          value={nameDraft}
+          onChangeText={(text) => {
+            setNameDraft(text);
+            if (nameError) setNameError(null);
+          }}
+          placeholder="e.g. Living room makeover"
+          placeholderTextColor={colors.textMuted}
+          maxLength={MAX_PROJECT_NAME}
+          autoFocus
+          returnKeyType="done"
+          onSubmitEditing={confirmName}
+          style={[
+            styles.nameInput,
+            {
+              color: colors.textPrimary,
+              backgroundColor: colors.surfaceSecondary,
+              borderColor: nameError ? colors.danger : colors.border,
+            },
+          ]}
+          accessibilityLabel="Project name"
+        />
+        {nameError ? (
+          <Text style={[styles.nameErrorText, { color: colors.danger }]}>{nameError}</Text>
+        ) : null}
+      </AppDialog>
     </View>
   );
 }
@@ -118,6 +217,18 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.2,
     textAlign: 'center',
+  },
+  nameInput: {
+    width: '100%',
+    minHeight: 48,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    fontSize: 16,
+  },
+  nameErrorText: {
+    marginTop: spacing.xs,
+    fontSize: 13,
   },
   list: {
     gap: spacing.md,

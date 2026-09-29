@@ -57,7 +57,7 @@ function typeLabel(type: SavedItem['type']): string {
     case 'project':
       return 'Project';
     default:
-      return 'Saved';
+      return 'Wishlist';
   }
 }
 
@@ -105,7 +105,7 @@ export default function SavedScreen() {
       setSavedItems(items);
     } catch (error) {
       console.error('[SavedScreen] Failed to load saved items:', error);
-      showDialog('Couldn’t load saved items', 'Check that you’re signed in and the backend is running.');
+      showDialog('Couldn’t load your wishlist', 'Check that you’re signed in and the backend is running.');
     } finally {
       setIsLoading(false);
     }
@@ -131,7 +131,7 @@ export default function SavedScreen() {
 
     showDialog(
       'Delete items',
-      `Remove ${selectedItems.size} item${selectedItems.size === 1 ? '' : 's'} from saved?`,
+      `Remove ${selectedItems.size} item${selectedItems.size === 1 ? '' : 's'} from your wishlist?`,
       [
         { label: 'Cancel', tone: 'ghost', onPress: closeDialog },
         {
@@ -179,14 +179,14 @@ export default function SavedScreen() {
     } else if (item.type === 'theme') {
       router.push(`/explore?id=${item.id}`);
     } else {
-      showDialog(item.name, item.description || item.price || 'Saved item');
+      showDialog(item.name, item.description || item.price || 'Wishlist item');
     }
   };
 
   const handleUnsaveItem = (itemId: string) => {
     showDialog(
       'Remove item',
-      'Remove this from your saved items?',
+      'Remove this from your wishlist?',
       [
         { label: 'Cancel', tone: 'ghost', onPress: closeDialog },
         {
@@ -220,7 +220,7 @@ export default function SavedScreen() {
             <View style={styles.headerRow}>
               <View style={styles.headerCopy}>
                 <AppText variant="h2" weight="700" style={[styles.title, { color: colors.textPrimary }]}>
-                  Saved
+                  Wishlist
                 </AppText>
                 <AppText variant="caption" style={{ color: colors.textSecondary }}>
                   Products and designs you’ve kept
@@ -286,7 +286,7 @@ export default function SavedScreen() {
             <View style={styles.stateBlock}>
               <ActivityIndicator size="large" color={colors.accent} />
               <AppText variant="body" style={{ color: colors.textSecondary, marginTop: spacing.md }}>
-                Loading saved items…
+                Loading your wishlist…
               </AppText>
             </View>
           ) : savedItems.length === 0 ? (
@@ -295,7 +295,7 @@ export default function SavedScreen() {
                 <Ionicons name="heart-outline" size={36} color={BRAND.colors.orange} />
               </View>
               <AppText variant="subtitle" weight="600" style={{ color: colors.textPrimary }}>
-                Nothing saved yet
+                Your wishlist is empty
               </AppText>
               <AppText
                 variant="body"
@@ -391,7 +391,7 @@ export default function SavedScreen() {
                             },
                           ]}
                           accessibilityRole="button"
-                          accessibilityLabel="Remove from saved"
+                          accessibilityLabel="Remove from wishlist"
                         >
                           <Ionicons name="heart" size={18} color={BRAND.colors.orange} />
                         </Pressable>

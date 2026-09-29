@@ -9,6 +9,7 @@ import { readdir, writeFile } from 'fs/promises';
 import { join, relative } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { inferFurnitureCategory } from '../src/utils/furnitureCategory.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..', '..');
@@ -29,22 +30,8 @@ const toDisplayName = (fileName) =>
     .trim()
     .replace(/\b\w/g, (c) => c.toUpperCase());
 
-const inferCategory = (id, displayName) => {
-  const key = `${id} ${displayName}`.toLowerCase();
-  if (key.includes('sofa') || key.includes('chair') || key.includes('seat') || key.includes('lounge')) {
-    return 'seating';
-  }
-  if (key.includes('table') || key.includes('desk')) {
-    return 'tables';
-  }
-  if (key.includes('bed') || key.includes('mattress')) {
-    return 'beds';
-  }
-  if (key.includes('lamp') || key.includes('light')) {
-    return 'lighting';
-  }
-  return 'other';
-};
+const inferCategory = (id, displayName, relPath) =>
+  inferFurnitureCategory(relPath, id, displayName) || 'other';
 
 async function walk(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -73,7 +60,7 @@ const furniture = files
     return {
       id,
       displayName,
-      category: inferCategory(id, displayName),
+      category: inferCategory(id, displayName, rel),
       glbFileName: `${id}.glb`,
       thumbnailFileName: `${id}.webp`,
       width: 2.0,

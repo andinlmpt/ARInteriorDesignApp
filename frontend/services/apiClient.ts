@@ -101,7 +101,8 @@ export function getApiOrigin(): string {
 
 /**
  * Make upload/thumbnail URLs reachable from a physical device.
- * Rewrites localhost/127.0.0.1 and relative /uploads paths to the API host.
+ * Rewrites localhost/127.0.0.1, relative /uploads paths, and stale LAN hosts
+ * (e.g. old Wi‑Fi IP after switching to phone hotspot) to the current API host.
  */
 export function resolveMediaUrl(url?: string | null): string | undefined {
   if (!url) return undefined;
@@ -120,19 +121,27 @@ export function resolveMediaUrl(url?: string | null): string | undefined {
 
   try {
     const parsed = new URL(value);
+    const api = new URL(origin.includes('://') ? origin : `http://${origin}`);
+    const expoHost = getDevMachineHostFromExpo();
+    const targetHost = expoHost || api.hostname;
+
     const localHost =
       parsed.hostname === 'localhost' ||
       parsed.hostname === '127.0.0.1' ||
       parsed.hostname === '0.0.0.0' ||
       parsed.hostname === '10.0.2.2';
 
-    if (localHost) {
-      const api = new URL(origin.includes('://') ? origin : `http://${origin}`);
-      // Prefer Expo/LAN host over emulator loopback when available.
-      const expoHost = getDevMachineHostFromExpo();
+    const isUploadPath = parsed.pathname.startsWith('/uploads');
+    const privateLan =
+      /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(parsed.hostname);
+    // Old home Wi‑Fi IP still embedded in Mongo thumbnail URLs after hotspot switch.
+    const staleLanHost =
+      isUploadPath && privateLan && parsed.hostname !== targetHost;
+
+    if (localHost || staleLanHost) {
       parsed.protocol = api.protocol;
-      parsed.hostname = expoHost || api.hostname;
-      parsed.port = api.port;
+      parsed.hostname = targetHost;
+      parsed.port = api.port || '3000';
       return parsed.toString();
     }
   } catch {

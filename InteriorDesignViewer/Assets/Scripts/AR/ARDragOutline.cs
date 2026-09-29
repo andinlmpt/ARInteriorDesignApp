@@ -16,7 +16,7 @@ public class ARDragOutline : MonoBehaviour
     static readonly Color DangerColor = new Color(0.92f, 0.18f, 0.2f, 1f);
 
     [Header("Outline Configuration")]
-    [SerializeField] private float lineWidth = 0.015f;
+    [SerializeField] private float lineWidth = 0.028f;
     [SerializeField] private float cornerRadius = 0.08f;
     [SerializeField] private float floorYOffset = 0.003f;
     [SerializeField] private Color lineColor = Color.white;

@@ -245,7 +245,7 @@ export function ProductDetailSheet({
                     weight="700"
                     style={{ color: isSaved ? BRAND.colors.orange : colors.accent }}
                   >
-                    {isSaved ? 'Saved' : 'Save'}
+                    {isSaved ? 'Wishlisted' : 'Wishlist'}
                   </AppText>
                 </>
               )}

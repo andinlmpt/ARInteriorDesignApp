@@ -495,6 +495,46 @@ textarea {
   object-fit: cover;
 }
 
+.profile-modal-photo {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.profile-modal-photo > div:last-child {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.profile-modal-photo strong {
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.profile-modal-upload {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--orange);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.profile-modal-upload:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.profile-modal-upload:disabled {
+  color: var(--muted);
+  cursor: progress;
+}
+
 .field textarea {
   border: 1px solid var(--border);
   border-radius: 12px;

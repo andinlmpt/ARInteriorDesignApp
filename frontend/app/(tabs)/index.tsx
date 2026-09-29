@@ -188,7 +188,7 @@ export default function HomeScreen() {
       const chip = HOME_PRODUCT_CATEGORY_CHIPS.find((c) => c.id === filters.category);
       if (chip) parts.push(chip.label);
     }
-    if (filters.savedOnly) parts.push('Saved');
+    if (filters.savedOnly) parts.push('Wishlist');
     return parts.join(' · ');
   }, [filters]);
 

@@ -14,6 +14,7 @@ import com.facebook.react.bridge.LifecycleEventListener;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContext;
 import com.facebook.react.bridge.ReadableArray;
+import com.facebook.react.bridge.UiThreadUtil;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.common.MapBuilder;
 import com.facebook.react.module.annotations.ReactModule;
@@ -28,11 +29,14 @@ import java.util.Map;
 public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec<ReactNativeUnityView> implements LifecycleEventListener, View.OnAttachStateChangeListener {
   ReactApplicationContext context;
   static ReactNativeUnityView view;
+  static int lastUnityViewId = -1;
+  static ReactApplicationContext reactApplicationContext;
   public static final String NAME = "RNUnityView";
 
   public ReactNativeUnityViewManager(ReactApplicationContext context) {
     super();
     this.context = context;
+    reactApplicationContext = context;
     context.addLifecycleEventListener(this);
   }
 
@@ -47,6 +51,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   public ReactNativeUnityView createViewInstance(@NonNull ThemedReactContext context) {
     view = new ReactNativeUnityView(this.context);
     view.addOnAttachStateChangeListener(this);
+    lastUnityViewId = view.getId();
 
     if (getPlayer() != null) {
         try {
@@ -165,10 +170,28 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   }
 
   public static void sendMessageToMobileApp(String message) {
-    WritableMap data = Arguments.createMap();
-    data.putString("message", message);
-    ReactContext reactContext = (ReactContext) view.getContext();
-    reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(view.getId(), "onUnityMessage", data);
+    final ReactNativeUnityView target = view;
+    final int viewId = target != null ? target.getId() : lastUnityViewId;
+    if (viewId < 0) {
+      return;
+    }
+    Runnable deliver = () -> {
+      try {
+        ReactContext reactContext = reactApplicationContext != null
+            ? reactApplicationContext
+            : (target != null ? (ReactContext) target.getContext() : null);
+        if (reactContext == null) {
+          return;
+        }
+        WritableMap data = Arguments.createMap();
+        data.putString("message", message);
+        reactContext
+            .getJSModule(RCTEventEmitter.class)
+            .receiveEvent(viewId, "onUnityMessage", data);
+      } catch (Exception ignored) {
+      }
+    };
+    UiThreadUtil.runOnUiThread(deliver);
   }
 
   @Override
@@ -217,17 +240,15 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   }
 
   private void restoreUnityUserState() {
-    // restore the unity player state
-    if (isUnityPaused()) {
-      Handler handler = new Handler();
-      handler.postDelayed(new Runnable() {
-        @Override
-        public void run() {
-          if (getPlayer() != null) {
-            getPlayer().pause();
-          }
-        }
-      }, 300);
+    // Reattach / host resume should run the player (old logic re-paused after 300ms and
+    // left planner input dead until the user switched apps).
+    if (!isUnityReady() || getPlayer() == null) {
+      return;
+    }
+    try {
+      getPlayer().resume();
+      getPlayer().windowFocusChanged(true);
+    } catch (Exception ignored) {
     }
   }
 

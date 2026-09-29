@@ -6,6 +6,7 @@ import android.content.Context;
 
 import android.annotation.SuppressLint;
 import android.content.res.Configuration;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
 import java.lang.reflect.InvocationTargetException;
@@ -58,12 +59,22 @@ public class ReactNativeUnityView extends FrameLayout {
 
   @Override
   protected void onDetachedFromWindow() {
-    // Always park the player when the RN view detaches so remount can reattach it.
-    // (Previously keepPlayerMounted skipped this and left Unity on a dying parent.)
+    // Park the player when the RN view detaches so remount can reattach it.
+    // Skip if Unity is already on the activity (onDropViewInstance may have run first).
     try {
+      if (view != null) {
+        FrameLayout frame = view.requestFrame();
+        ViewGroup parent = (ViewGroup) frame.getParent();
+        if (parent != null && parent != this) {
+          super.onDetachedFromWindow();
+          return;
+        }
+      }
       addUnityViewToBackground();
-    } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException e) {
+    } catch (InvocationTargetException | NoSuchMethodException | IllegalAccessException ignored) {
       // Player may already be torn down with the process — ignore.
+    } catch (IllegalStateException ignored) {
+      // Frame still has a parent during React surface clear — avoid fatal crash.
     }
 
     super.onDetachedFromWindow();

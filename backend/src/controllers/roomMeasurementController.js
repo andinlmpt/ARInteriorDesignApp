@@ -23,6 +23,11 @@ const toPublicMeasurement = (doc) => ({
   confirmedAt: doc.confirmedAt,
   createdAt: doc.createdAt,
   updatedAt: doc.updatedAt,
+  exportPath: doc.exportPath || '',
+  exportFileName: doc.exportFileName || '',
+  exportByteLength: doc.exportByteLength ?? 0,
+  exportFurnitureCount: doc.exportFurnitureCount ?? 0,
+  exportedAt: doc.exportedAt || null,
 });
 
 const requireMongo = (res) => {
@@ -179,15 +184,32 @@ const roomMeasurementController = {
     try {
       if (!requireMongo(res)) return;
 
-      const { name } = req.body ?? {};
-      if (typeof name !== 'string' || !name.trim()) {
+      const {
+        name,
+        projectId,
+        exportPath,
+        exportFileName,
+        exportByteLength,
+        exportFurnitureCount,
+        exportedAt,
+      } = req.body ?? {};
+
+      const hasName = typeof name === 'string' && name.trim().length > 0;
+      const hasExportLink =
+        typeof exportPath === 'string' ||
+        typeof projectId === 'string' ||
+        typeof exportFileName === 'string' ||
+        typeof exportByteLength === 'number' ||
+        typeof exportFurnitureCount === 'number' ||
+        exportedAt != null;
+
+      if (!hasName && !hasExportLink) {
         return res.status(400).json({
           success: false,
-          error: 'A non-empty name is required.',
+          error: 'Provide a name and/or export link fields to update.',
         });
       }
 
-      const trimmed = name.trim().slice(0, 100);
       const item = await RoomMeasurement.findById(req.params.id);
       if (!item) {
         return res.status(404).json({
@@ -204,7 +226,31 @@ const roomMeasurementController = {
         });
       }
 
-      item.name = trimmed;
+      if (hasName) {
+        item.name = name.trim().slice(0, 100);
+      }
+      if (typeof projectId === 'string') {
+        item.projectId = projectId.trim();
+      }
+      if (typeof exportPath === 'string') {
+        item.exportPath = exportPath.trim();
+      }
+      if (typeof exportFileName === 'string') {
+        item.exportFileName = exportFileName.trim().slice(0, 200);
+      }
+      if (typeof exportByteLength === 'number' && Number.isFinite(exportByteLength)) {
+        item.exportByteLength = Math.max(0, exportByteLength);
+      }
+      if (typeof exportFurnitureCount === 'number' && Number.isFinite(exportFurnitureCount)) {
+        item.exportFurnitureCount = Math.max(0, Math.floor(exportFurnitureCount));
+      }
+      if (exportedAt != null) {
+        const parsed = new Date(exportedAt);
+        item.exportedAt = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+      } else if (typeof exportPath === 'string' && exportPath.trim()) {
+        item.exportedAt = new Date();
+      }
+
       if (userId && (!item.userId || item.userId === 'dev-user')) {
         item.userId = String(userId);
       }
@@ -213,6 +259,37 @@ const roomMeasurementController = {
       res.json({
         success: true,
         measurement: toPublicMeasurement(item),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async deleteMeasurement(req, res, next) {
+    try {
+      if (!requireMongo(res)) return;
+
+      const item = await RoomMeasurement.findById(req.params.id);
+      if (!item) {
+        return res.status(404).json({
+          success: false,
+          error: 'Room measurement not found.',
+        });
+      }
+
+      const userId = req.user?.userId || req.user?.id;
+      if (userId && item.userId && item.userId !== userId && item.userId !== 'dev-user') {
+        return res.status(403).json({
+          success: false,
+          error: 'Not authorized to delete this measurement.',
+        });
+      }
+
+      await item.deleteOne();
+
+      res.json({
+        success: true,
+        id: req.params.id,
       });
     } catch (error) {
       next(error);

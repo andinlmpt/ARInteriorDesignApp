@@ -124,24 +124,35 @@ public class PlacedFurniture : MonoBehaviour
     {
         IsSelected = selected;
 
-        if (outline == null)
+        if (!selected)
         {
-            if (!selected) return;
-
-            outline = GetComponent<ARDragOutline>();
-            if (outline == null)
+            if (outline != null)
             {
-                outline = gameObject.AddComponent<ARDragOutline>();
-                if (ARFurnitureGrounding.TryGetLocalFurnitureBounds(gameObject, out var bounds))
-                    outline.SetupOutline(bounds);
-                else if (LocalBounds.size.sqrMagnitude > 1e-6f)
-                    outline.SetupOutline(LocalBounds);
+                outline.SetVisible(false);
+                outline.SetPlacementSafe(true);
             }
+            return;
         }
 
-        outline.SetVisible(selected);
-        if (!selected)
-            outline.SetPlacementSafe(true);
+        if (outline == null)
+        {
+            outline = GetComponent<ARDragOutline>();
+            if (outline == null)
+                outline = gameObject.AddComponent<ARDragOutline>();
+        }
+
+        ConfigureOutlineGeometry();
+        outline.SetVisible(true);
+        outline.SetPlacementSafe(true);
+    }
+
+    void ConfigureOutlineGeometry()
+    {
+        if (outline == null) return;
+        if (ARFurnitureGrounding.TryGetLocalFurnitureBounds(gameObject, out var bounds))
+            outline.SetupOutline(bounds);
+        else if (LocalBounds.size.sqrMagnitude > 1e-6f)
+            outline.SetupOutline(LocalBounds);
     }
 
     /// <summary>Updates the floor outline color for placement safety feedback.</summary>

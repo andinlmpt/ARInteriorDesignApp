@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { ProfileModal } from './ProfileModal';
 
 function getInitials(name?: string, email?: string) {
   const source = (name || email || 'A').trim();
@@ -32,6 +32,7 @@ function IconBell() {
 export function ProfileMenu() {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const photo = user?.avatar || user?.profilePicture || '';
@@ -90,9 +91,16 @@ export function ProfileMenu() {
                 <p>{user?.email}</p>
               </div>
             </div>
-            <Link to="/profile" className="profile-dropdown-item" onClick={() => setOpen(false)}>
+            <button
+              type="button"
+              className="profile-dropdown-item"
+              onClick={() => {
+                setOpen(false);
+                setProfileOpen(true);
+              }}
+            >
               Profile &amp; settings
-            </Link>
+            </button>
             <button
               type="button"
               className="profile-dropdown-item danger"
@@ -106,6 +114,8 @@ export function ProfileMenu() {
           </div>
         ) : null}
       </div>
+
+      <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
     </div>
   );
 }

@@ -18,7 +18,8 @@
     "seed:furniture:icons": "node scripts/sync-furniture-thumbnails.mjs && node scripts/sync-unity-furniture-icons.mjs",
     "seed:furniture:normalize-thumbs": "node scripts/normalize-furniture-thumbnails.mjs",
     "seed:furniture:local-glbs": "node scripts/materialize-local-glbs.mjs",
-    "seed:admin": "node scripts/seed-admin.mjs"
+    "seed:admin": "node scripts/seed-admin.mjs",
+    "recategorize:furniture": "node scripts/recategorize-furniture.mjs"
   },
   "keywords": [
     "api",

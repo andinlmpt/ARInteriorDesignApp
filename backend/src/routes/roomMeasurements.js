@@ -20,4 +20,7 @@ router.get('/:id', optionalAuth, roomMeasurementController.getMeasurementById);
 /** PATCH /api/v1/room-measurements/:id — rename / update fields */
 router.patch('/:id', authenticate, roomMeasurementController.updateMeasurement);
 
+/** DELETE /api/v1/room-measurements/:id */
+router.delete('/:id', authenticate, roomMeasurementController.deleteMeasurement);
+
 export default router;

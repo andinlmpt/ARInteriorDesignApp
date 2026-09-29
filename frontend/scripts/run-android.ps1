@@ -148,7 +148,7 @@ compileSdkVersion getExtOrIntegerDefault("compileSdkVersion")
 $azesmwayJavaSrc = Join-Path $FrontendRoot "node_modules\@azesmway\react-native-unity\android\src\main\java\com\azesmwayreactnativeunity"
 $azesmwayPatches = Join-Path $FrontendRoot "patches\azesmway-react-native-unity"
 if ((Test-Path $azesmwayJavaSrc) -and (Test-Path $azesmwayPatches)) {
-    foreach ($name in @('UPlayer.java', 'ReactNativeUnityViewManager.java', 'ReactNativeUnityView.java')) {
+    foreach ($name in @('UPlayer.java', 'ReactNativeUnity.java', 'ReactNativeUnityViewManager.java', 'ReactNativeUnityView.java')) {
         $from = Join-Path $azesmwayPatches $name
         $to = Join-Path $azesmwayJavaSrc $name
         if (Test-Path $from) {

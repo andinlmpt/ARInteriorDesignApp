@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -39,11 +40,14 @@ public class ARSceneBridge : MonoBehaviour
     /// </summary>
     public static string PendingBootAction;
 
+    Coroutine exportRoutine;
+
     // Event names. Keep in sync with UnityToRNEvent in frontend/types/unity-bridge.ts.
     const string EventReady = "unityReady";
     const string EventScanStatus = "scanStatus";
     const string EventScanConfirmed = "roomScanConfirmed";
     const string EventFurniturePlaced = "furniturePlaced";
+    const string EventFurnitureReady = "furnitureReady";
     const string EventFurnitureRemoved = "furnitureRemoved";
     const string EventFurnitureSelected = "furnitureSelected";
     const string EventLayoutChanged = "layoutChanged";
@@ -72,6 +76,7 @@ public class ARSceneBridge : MonoBehaviour
         if (placementController != null)
         {
             placementController.FurniturePlaced += OnFurniturePlaced;
+            placementController.ModelReady += OnModelReady;
             placementController.FurnitureRemoved += OnFurnitureRemoved;
             placementController.SelectionChanged += OnSelectionChanged;
             placementController.SpawnFailed += OnSpawnFailed;
@@ -93,6 +98,7 @@ public class ARSceneBridge : MonoBehaviour
         if (placementController != null)
         {
             placementController.FurniturePlaced -= OnFurniturePlaced;
+            placementController.ModelReady -= OnModelReady;
             placementController.FurnitureRemoved -= OnFurnitureRemoved;
             placementController.SelectionChanged -= OnSelectionChanged;
             placementController.SpawnFailed -= OnSpawnFailed;
@@ -113,6 +119,13 @@ public class ARSceneBridge : MonoBehaviour
             {
                 PendingBootAction = null;
                 StartFurniturePlacement();
+                return;
+            }
+
+            if (PendingBootAction == "measuredFurniture")
+            {
+                PendingBootAction = null;
+                StartMeasuredFurniturePlacement();
                 return;
             }
 
@@ -173,13 +186,51 @@ public class ARSceneBridge : MonoBehaviour
                 OpenFurnitureDesign();
                 break;
 
+            case "openMeasuredFurnitureDesign":
+                // Prefer RN dimensions when re-opening on an already-loaded design scene.
+                if (!string.IsNullOrWhiteSpace(message.data))
+                    MeasuredRoomHandoff.CaptureFromRnPayload(message.data);
+                OpenMeasuredFurnitureDesign();
+                break;
+
             case "ping":
-                UnityMessageBridge.SendToApp(EventReady, FurnitureSceneName);
+                UnityMessageBridge.SendToApp(EventReady, SceneManager.GetActiveScene().name);
                 break;
 
             case "requestClose":
             case "closeUnity":
+                // Ask RN to confirm exit — wipe only after pauseFurniture.
                 UnityMessageBridge.SendToApp("requestClose", FurnitureSceneName);
+                break;
+
+            case "pauseFurniture":
+                SoftCloseFurniture(notifyRn: false);
+                break;
+
+            case "pauseMeasurement":
+                // Wrong-scene no-op: measurement pause is owned by ARMeasurementRnBridge.
+                Debug.Log("[ARSceneBridge] Ignoring pauseMeasurement on furniture scene.");
+                break;
+
+            case "reloadFurniture":
+                ScheduleReloadFurniture();
+                break;
+
+            case "resumeFurniture":
+                // Warm reopen — clear placed pieces only; keep GLB template cache.
+                WarmResumeFurniture();
+                break;
+
+            case "prefetchFurniture":
+                PrefetchFurnitureUrls(message.data);
+                break;
+
+            case "plannerOrbit":
+                FindFirstObjectByType<ARDesignLayoutModeController>()?.ApplyOrbitFromRn(message.data);
+                break;
+
+            case "furnitureGesture":
+                FindFirstObjectByType<FurnitureManipulator>()?.ApplyGestureFromRn(message.data);
                 break;
 
             case "startRoomScan":
@@ -218,7 +269,10 @@ public class ARSceneBridge : MonoBehaviour
                 break;
 
             case "exportLayout":
-                ExportLayout();
+                // Defer off UnitySendMessage — sync export + SendToApp can deadlock UaaL.
+                if (exportRoutine != null)
+                    StopCoroutine(exportRoutine);
+                exportRoutine = StartCoroutine(ExportLayoutRoutine());
                 break;
 
             case "capturePhoto":
@@ -251,6 +305,8 @@ public class ARSceneBridge : MonoBehaviour
         if (SceneManager.GetActiveScene().name == MeasurementSceneName)
             return;
 
+        // Idle teardown before scene swap — do not restart furniture placement.
+        SoftCloseFurniture(notifyRn: false);
         PendingBootAction = null;
         SceneManager.LoadScene(MeasurementSceneName);
     }
@@ -269,6 +325,73 @@ public class ARSceneBridge : MonoBehaviour
 
         PendingBootAction = "furniture";
         SceneManager.LoadScene(FurnitureSceneName);
+    }
+
+    /// <summary>
+    /// Opens ARDesignScene with the measured room shell from <see cref="MeasuredRoomHandoff"/>
+    /// so the user can place real GLB furniture on the generated layout.
+    /// </summary>
+    public void OpenMeasuredFurnitureDesign()
+    {
+        if (SceneManager.GetActiveScene().name == FurnitureSceneName)
+        {
+            StartMeasuredFurniturePlacement();
+            return;
+        }
+
+        PendingBootAction = "measuredFurniture";
+        SceneManager.LoadScene(FurnitureSceneName);
+    }
+
+    /// <summary>
+    /// Applies a handed-off measured floor outline, rebuilds the planner shell, and
+    /// unlocks furniture placement (does not use the synthetic open-floor furniture mode).
+    /// </summary>
+    public void StartMeasuredFurniturePlacement()
+    {
+        if (scanController == null)
+        {
+            SendError("notConfigured", "RoomScanController is missing from the scene.");
+            return;
+        }
+
+        RuntimeGltfLoader.PurgeUnreadyTemplates();
+        placementController?.ClearFurniture();
+        layoutHistory?.Clear();
+
+        if (!MeasuredRoomHandoff.TryConsume(out var corners, out var wallHeight))
+        {
+            // Fallback: re-parse RN payload after scene load.
+            if (!string.IsNullOrWhiteSpace(MeasuredRoomHandoff.PendingRnJson))
+                MeasuredRoomHandoff.CaptureFromRnPayload(MeasuredRoomHandoff.PendingRnJson);
+
+            if (!MeasuredRoomHandoff.TryConsume(out corners, out wallHeight))
+            {
+                SendError(
+                    "noMeasuredRoom",
+                    "No measured room was handed off. Measure a room first, then place furniture.");
+                return;
+            }
+        }
+
+        MeasuredRoomHandoff.PendingRnJson = string.Empty;
+
+        if (!scanController.ApplyMeasuredRoom(corners, wallHeight))
+        {
+            SendError("applyMeasuredRoomFailed", "Could not rebuild the measured room shell.");
+            return;
+        }
+
+        // Ensure planner shell is visible even if phase listeners raced Start().
+        // Force isometric Planner (not live RealRoom) so place-immediately + RN orbit work.
+        roomMeshVisualizer?.RebuildFromSnapshot(scanController.ConfirmedRoom);
+        var layoutMode = FindFirstObjectByType<ARDesignLayoutModeController>();
+        layoutMode?.EnterLayoutMode();
+        layoutMode?.ApplyMeasurementViewPreset(topDown: false);
+
+        ARMainMenuBackButton.SetUiVisible(false);
+        UnityMessageBridge.SendToApp("reloadComplete", FurnitureSceneName);
+        Debug.Log("[ARSceneBridge] Measured furniture placement unlocked on handed-off room.");
     }
 
     /// <summary>Begins or restarts the room scan phase.</summary>
@@ -297,11 +420,149 @@ public class ARSceneBridge : MonoBehaviour
             return;
         }
 
+        // Wipe any leftover measurement / planner shell before unlocking placement.
+        roomMeshVisualizer?.Clear();
         FindFirstObjectByType<ARDesignLayoutModeController>()?.ForceLiveArCamera();
+        RuntimeGltfLoader.PurgeUnreadyTemplates();
 
         placementController?.ClearFurniture();
         layoutHistory?.Clear();
         scanController.BeginFurniturePlacementOnly();
+
+        // BeginFurniturePlacementOnly raises Confirmed — keep live AR, no shell.
+        roomMeshVisualizer?.Clear();
+        FindFirstObjectByType<ARDesignLayoutModeController>()?.ForceLiveArCamera();
+    }
+
+    /// <summary>
+    /// Warm reopen: wipe placed furniture and re-arm live placement without
+    /// destroying RuntimeGltfLoader templates (those survive for instant re-place).
+    /// </summary>
+    void WarmResumeFurniture()
+    {
+        if (exportRoutine != null)
+        {
+            StopCoroutine(exportRoutine);
+            exportRoutine = null;
+        }
+
+        // Drop solid-gray templates so the next place reloads with textures.
+        RuntimeGltfLoader.PurgeUnreadyTemplates();
+
+        placementController?.ClearFurniture();
+        layoutHistory?.Clear();
+        roomMeshVisualizer?.Clear();
+        FindFirstObjectByType<ARDesignLayoutModeController>()?.ForceLiveArCamera();
+
+        if (scanController == null)
+        {
+            SendError("notConfigured", "RoomScanController is missing from the scene.");
+            return;
+        }
+
+        if (!scanController.IsFurniturePlacementOnly || !scanController.IsConfirmed)
+            scanController.BeginFurniturePlacementOnly();
+        else
+            FindFirstObjectByType<ARDesignLayoutModeController>()?.ForceLiveArCamera();
+
+        roomMeshVisualizer?.Clear();
+        ARMainMenuBackButton.SetUiVisible(true);
+        UnityMessageBridge.SendToApp("reloadComplete", FurnitureSceneName);
+    }
+
+    [Serializable]
+    class PrefetchFurniturePayload
+    {
+        public string[] urls;
+    }
+
+    void PrefetchFurnitureUrls(string json)
+    {
+        var loader = FindFirstObjectByType<RuntimeGltfLoader>();
+        if (loader == null || !RuntimeGltfLoader.IsSupported) return;
+
+        if (string.IsNullOrWhiteSpace(json)) return;
+
+        try
+        {
+            var payload = JsonUtility.FromJson<PrefetchFurniturePayload>(json);
+            if (payload?.urls == null) return;
+            // Only warm the first URL — full catalog prefetch crashes low-RAM devices.
+            for (var i = 0; i < payload.urls.Length && i < 1; i++)
+            {
+                var url = payload.urls[i];
+                if (!string.IsNullOrWhiteSpace(url))
+                    loader.Prefetch(url.Trim());
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[ARSceneBridge] Bad prefetchFurniture payload: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// RN is leaving AR Furniture — idle teardown only (no BeginFurniturePlacementOnly).
+    /// Placement unlock happens on open/reload / PendingBootAction.
+    /// </summary>
+    void SoftCloseFurniture(bool notifyRn)
+    {
+        if (exportRoutine != null)
+        {
+            StopCoroutine(exportRoutine);
+            exportRoutine = null;
+        }
+
+        if (furnitureReloadRoutine != null)
+        {
+            StopCoroutine(furnitureReloadRoutine);
+            furnitureReloadRoutine = null;
+        }
+
+        placementController?.ClearFurniture();
+        layoutHistory?.Clear();
+        roomMeshVisualizer?.Clear();
+
+        var edgeVisualizer = FindFirstObjectByType<ARDesignEdgeVisualizer>(FindObjectsInactive.Include);
+        if (edgeVisualizer != null)
+            edgeVisualizer.enabled = false;
+
+        FindFirstObjectByType<ARDesignLayoutModeController>()?.ForceLiveArCamera();
+        scanController?.ResetToIdle();
+
+        ARMainMenuBackButton.SetUiVisible(false);
+
+        if (notifyRn)
+            UnityMessageBridge.SendToApp("requestClose", FurnitureSceneName);
+    }
+
+    Coroutine furnitureReloadRoutine;
+
+    void ScheduleReloadFurniture()
+    {
+        if (furnitureReloadRoutine != null)
+            StopCoroutine(furnitureReloadRoutine);
+        furnitureReloadRoutine = StartCoroutine(ReloadFurnitureRoutine());
+    }
+
+    System.Collections.IEnumerator ReloadFurnitureRoutine()
+    {
+        yield return null;
+
+        if (SceneManager.GetActiveScene().name != FurnitureSceneName)
+        {
+            PendingBootAction = "furniture";
+            SceneManager.LoadScene(FurnitureSceneName);
+            furnitureReloadRoutine = null;
+            yield break;
+        }
+
+        SoftCloseFurniture(notifyRn: false);
+        StartFurniturePlacement();
+        ARMainMenuBackButton.SetUiVisible(true);
+        // Distinct from cold unityReady so RN does not double-boot open/reload.
+        UnityMessageBridge.SendToApp("reloadComplete", FurnitureSceneName);
+        furnitureReloadRoutine = null;
     }
 
     /// <summary>Pushes the current scan coverage to RN and returns it for in-editor use.</summary>
@@ -443,6 +704,48 @@ public class ARSceneBridge : MonoBehaviour
         return result;
     }
 
+    System.Collections.IEnumerator ExportLayoutRoutine()
+    {
+        UnityMessageBridge.SendToApp("exportStarted", FurnitureSceneName);
+        yield return null;
+
+        ExportResultPayload result;
+        try
+        {
+            if (exportService == null)
+            {
+                result = new ExportResultPayload
+                {
+                    success = false,
+                    error = "LayoutExportService is missing from the scene.",
+                };
+            }
+            else
+            {
+                result = exportService.ExportLayout() ?? new ExportResultPayload
+                {
+                    success = false,
+                    error = "Export returned no result.",
+                };
+            }
+        }
+        catch (System.Exception e)
+        {
+            result = new ExportResultPayload
+            {
+                success = false,
+                error = e.Message,
+            };
+        }
+
+        result.path = result.path ?? string.Empty;
+        result.fileName = result.fileName ?? string.Empty;
+        result.error = result.error ?? string.Empty;
+        yield return null;
+        UnityMessageBridge.SendToApp(EventExportComplete, JsonUtility.ToJson(result));
+        exportRoutine = null;
+    }
+
     /// <summary>
     /// Screenshots the live AR view and emits <c>photoCaptured</c> to RN
     /// (gallery + app path). Uses the catalog UI capture path so behavior matches
@@ -471,7 +774,17 @@ public class ARSceneBridge : MonoBehaviour
     {
         if (phase != RoomScanController.ScanPhase.Confirmed) return;
 
-        roomMeshVisualizer?.RebuildFromSnapshot(scanController.ConfirmedRoom);
+        // Furniture-only uses a synthetic open floor for placement bounds — never
+        // rebuild the planner room shell (that is what made the last measurement "stick").
+        if (scanController != null && scanController.IsFurniturePlacementOnly)
+        {
+            roomMeshVisualizer?.Clear();
+            FindFirstObjectByType<ARDesignLayoutModeController>()?.ForceLiveArCamera();
+        }
+        else
+        {
+            roomMeshVisualizer?.RebuildFromSnapshot(scanController.ConfirmedRoom);
+        }
 
         var payload = RoomMeasurementPayloadBuilder.Build(scanController);
 
@@ -482,6 +795,15 @@ public class ARSceneBridge : MonoBehaviour
     {
         UnityMessageBridge.SendToApp(EventFurniturePlaced, JsonUtility.ToJson(furniture.ToPayload()));
         SendLayout();
+    }
+
+    /// <summary>
+    /// GLB/prefab finished loading and is armed (or already placed in planner).
+    /// RN uses this to clear the "Loading furniture…" status before floor tap.
+    /// </summary>
+    void OnModelReady(string modelId)
+    {
+        UnityMessageBridge.SendToApp(EventFurnitureReady, modelId ?? string.Empty);
     }
 
     void OnFurnitureRemoved(string instanceId)

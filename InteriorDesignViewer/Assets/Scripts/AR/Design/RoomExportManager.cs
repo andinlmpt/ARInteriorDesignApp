@@ -79,6 +79,10 @@ public class RoomExportManager : MonoBehaviour
     [SerializeField] private bool embedTextures = true;
     [SerializeField] private int maxTextureSize = 1024;
 
+    [Header("Furniture LOD (React Native preview)")]
+    [Tooltip("Per-piece triangle budget when embedded in RN. The RN preview rejects GLBs over ~24 MB.")]
+    [SerializeField] private int maxFurnitureTrianglesForRn = 120000;
+
     readonly List<PlacedItem> placedItems = new();
 
     /// <summary>Live registry — updated whenever furniture is placed / moved / deleted.</summary>
@@ -140,10 +144,34 @@ public class RoomExportManager : MonoBehaviour
 
     void RebuildRegistryFromController()
     {
+        if (placementController == null)
+            placementController = FindFirstObjectByType<FurniturePlacementController>();
+
         placedItems.Clear();
         if (placementController == null) return;
         foreach (var furniture in placementController.Instances)
             UpsertItem(furniture);
+    }
+
+    /// <summary>
+    /// Measured-room bootstrap adds FurniturePlacementController at runtime — re-wire hooks.
+    /// </summary>
+    public void EnsurePlacementHooks()
+    {
+        if (placementController == null)
+            placementController = FindFirstObjectByType<FurniturePlacementController>();
+        if (scanController == null)
+            scanController = FindFirstObjectByType<RoomScanController>();
+        if (meshManager == null)
+            meshManager = FindFirstObjectByType<ARMeshManager>();
+
+        if (placementController == null) return;
+
+        placementController.FurniturePlaced -= OnFurniturePlaced;
+        placementController.FurniturePlaced += OnFurniturePlaced;
+        placementController.FurnitureRemoved -= OnFurnitureRemoved;
+        placementController.FurnitureRemoved += OnFurnitureRemoved;
+        RebuildRegistryFromController();
     }
 
     void UpsertItem(PlacedFurniture furniture)
@@ -179,7 +207,8 @@ public class RoomExportManager : MonoBehaviour
     /// Collects static room meshes for export: confirmed corner/plane shell first,
     /// then any live ARMeshManager chunks (usually empty on ARCore today).
     /// </summary>
-    public List<(string name, Mesh mesh, Matrix4x4 localToWorld, Color color)> GatherRoomMeshes()
+    public List<(string name, Mesh mesh, Matrix4x4 localToWorld, Color color)> GatherRoomMeshes(
+        bool includeLiveMeshes = true)
     {
         var list = new List<(string, Mesh, Matrix4x4, Color)>();
 
@@ -196,7 +225,12 @@ public class RoomExportManager : MonoBehaviour
             }
         }
 
-        if (includeLiveArMeshes && meshManager != null)
+        // Live AR mesh chunks are huge and often hang GlbExporter inside UaaL.
+        var allowLive = includeLiveMeshes
+                        && includeLiveArMeshes
+                        && meshManager != null
+                        && !ARDesignHostDetect.IsEmbeddedInReactNative();
+        if (allowLive)
             AppendArMeshManagerChunks(meshManager, list);
 
         return list;
@@ -223,13 +257,54 @@ public class RoomExportManager : MonoBehaviour
         }
     }
 
-    // ── Public UI hook ────────────────────────────────────────────────────────
+    /// <summary>Same as <see cref="ExportLayout"/> but returns the RN/bridge payload shape.</summary>
+    public ExportResultPayload ExportLayoutPayload(bool roomShellOnly = false)
+    {
+        ExportResultPayload payload = null;
+        void Capture(ExportProgress p)
+        {
+            payload = new ExportResultPayload
+            {
+                success = p.success,
+                path = p.path ?? string.Empty,
+                fileName = p.fileName ?? string.Empty,
+                byteLength = p.success && !string.IsNullOrEmpty(p.path) && File.Exists(p.path)
+                    ? new FileInfo(p.path).Length
+                    : 0,
+                furnitureCount = p.furnitureCount,
+                roomMeshCount = p.roomMeshCount,
+                error = p.error ?? string.Empty,
+            };
+        }
+
+        ExportFinished += Capture;
+        try
+        {
+            ExportLayout(roomShellOnly);
+        }
+        finally
+        {
+            ExportFinished -= Capture;
+        }
+
+        return payload ?? new ExportResultPayload
+        {
+            success = false,
+            error = "Export did not complete.",
+        };
+    }
 
     /// <summary>
     /// Wire this to your Export toolbar button.
     /// Runs on the main thread (Mesh/Texture APIs are not thread-safe).
     /// </summary>
-    public void ExportLayout()
+    public void ExportLayout() => ExportLayout(roomShellOnly: false);
+
+    /// <param name="roomShellOnly">
+    /// When true (AR Measurement → RN), export only the confirmed room shell — no live
+    /// AR mesh chunks and no furniture. Keeps UaaL exports fast and reliable.
+    /// </param>
+    public void ExportLayout(bool roomShellOnly)
     {
         if (IsExporting)
         {
@@ -241,8 +316,25 @@ public class RoomExportManager : MonoBehaviour
         ExportStarted?.Invoke();
 
         var progress = new ExportProgress { running = true, message = "Exporting layout…" };
+        var previousMaxTexture = maxTextureSize;
+        var previousEmbed = embedTextures;
         try
         {
+            if (scanController == null)
+                scanController = FindFirstObjectByType<RoomScanController>();
+            if (meshManager == null)
+                meshManager = FindFirstObjectByType<ARMeshManager>();
+            if (placementController == null)
+                placementController = FindFirstObjectByType<FurniturePlacementController>();
+
+            if (roomShellOnly || ARDesignHostDetect.IsEmbeddedInReactNative())
+            {
+                // Lean settings for phone + UaaL — large textures / AR meshes hang export.
+                // Small furniture textures keep the RN preview matching the planner.
+                maxTextureSize = Mathf.Min(maxTextureSize, 256);
+                embedTextures = !roomShellOnly;
+            }
+
             RebuildRegistryFromController();
 
             var fileName = $"{fileNamePrefix}-{DateTime.Now:yyyyMMdd-HHmmss}.glb";
@@ -259,6 +351,7 @@ public class RoomExportManager : MonoBehaviour
             // UnityGLTF can hang/block the player for room shells inside UaaL — use the
             // proven GlbExporter path when embedded so RN always gets exportComplete.
             var useUnityGltf = preferUnityGltfWhenAvailable
+                               && !roomShellOnly
                                && !ARDesignHostDetect.IsEmbeddedInReactNative();
             if (useUnityGltf)
             {
@@ -266,15 +359,15 @@ public class RoomExportManager : MonoBehaviour
                 if (!wrote)
                 {
                     Debug.LogWarning($"[RoomExportManager] UnityGLTF export failed ({error}) — falling back to GlbExporter.");
-                    wrote = TryExportWithGlbExporter(path, out roomCount, out furnitureCount, out error);
+                    wrote = TryExportWithGlbExporter(path, roomShellOnly, out roomCount, out furnitureCount, out error);
                 }
             }
             else
             {
-                wrote = TryExportWithGlbExporter(path, out roomCount, out furnitureCount, out error);
+                wrote = TryExportWithGlbExporter(path, roomShellOnly, out roomCount, out furnitureCount, out error);
             }
 #else
-            wrote = TryExportWithGlbExporter(path, out roomCount, out furnitureCount, out error);
+            wrote = TryExportWithGlbExporter(path, roomShellOnly, out roomCount, out furnitureCount, out error);
 #endif
 
             progress.running = false;
@@ -310,46 +403,11 @@ public class RoomExportManager : MonoBehaviour
         }
         finally
         {
+            maxTextureSize = previousMaxTexture;
+            embedTextures = previousEmbed;
             IsExporting = false;
             ExportFinished?.Invoke(progress);
         }
-    }
-
-    /// <summary>Same as <see cref="ExportLayout"/> but returns the RN/bridge payload shape.</summary>
-    public ExportResultPayload ExportLayoutPayload()
-    {
-        ExportResultPayload payload = null;
-        void Capture(ExportProgress p)
-        {
-            payload = new ExportResultPayload
-            {
-                success = p.success,
-                path = p.path ?? string.Empty,
-                fileName = p.fileName ?? string.Empty,
-                byteLength = p.success && !string.IsNullOrEmpty(p.path) && File.Exists(p.path)
-                    ? new FileInfo(p.path).Length
-                    : 0,
-                furnitureCount = p.furnitureCount,
-                roomMeshCount = p.roomMeshCount,
-                error = p.error ?? string.Empty,
-            };
-        }
-
-        ExportFinished += Capture;
-        try
-        {
-            ExportLayout();
-        }
-        finally
-        {
-            ExportFinished -= Capture;
-        }
-
-        return payload ?? new ExportResultPayload
-        {
-            success = false,
-            error = "Export did not complete.",
-        };
     }
 
     // ── Exporters ─────────────────────────────────────────────────────────────
@@ -487,7 +545,12 @@ public class RoomExportManager : MonoBehaviour
     }
 #endif
 
-    bool TryExportWithGlbExporter(string absolutePath, out int roomCount, out int furnitureCount, out string error)
+    bool TryExportWithGlbExporter(
+        string absolutePath,
+        bool roomShellOnly,
+        out int roomCount,
+        out int furnitureCount,
+        out string error)
     {
         roomCount = 0;
         furnitureCount = 0;
@@ -506,7 +569,7 @@ public class RoomExportManager : MonoBehaviour
 
             var entries = new List<GlbExporter.Entry>();
 
-            foreach (var (name, mesh, localToWorld, color) in GatherRoomMeshes())
+            foreach (var (name, mesh, localToWorld, color) in GatherRoomMeshes(includeLiveMeshes: !roomShellOnly))
             {
                 if (mesh == null) continue;
 
@@ -535,12 +598,18 @@ public class RoomExportManager : MonoBehaviour
                 roomCount++;
             }
 
-            foreach (var item in placedItems)
+            if (!roomShellOnly)
             {
-                if (item?.instance == null) continue;
-                if (!item.instance.activeInHierarchy) continue;
-                furnitureCount++;
-                AppendFurnitureMeshes(entries, item);
+                var triangleBudget = ARDesignHostDetect.IsEmbeddedInReactNative()
+                    ? maxFurnitureTrianglesForRn
+                    : 0;
+                foreach (var item in placedItems)
+                {
+                    if (item?.instance == null) continue;
+                    if (!item.instance.activeInHierarchy) continue;
+                    furnitureCount++;
+                    AppendFurnitureMeshes(entries, item, triangleBudget, tempMeshes);
+                }
             }
 
             if (entries.Count == 0)
@@ -549,7 +618,6 @@ public class RoomExportManager : MonoBehaviour
                 return false;
             }
 
-            var room = scanController != null ? scanController.ConfirmedRoom : null;
             var options = new GlbExporter.Options
             {
                 originOffset = ComputeOriginOffset(),
@@ -699,10 +767,16 @@ public class RoomExportManager : MonoBehaviour
         return tex;
     }
 
-    static void AppendFurnitureMeshes(List<GlbExporter.Entry> entries, PlacedItem item)
+    /// <param name="triangleBudget">Max triangles for the whole piece; 0 = export full detail.</param>
+    static void AppendFurnitureMeshes(
+        List<GlbExporter.Entry> entries,
+        PlacedItem item,
+        int triangleBudget,
+        List<Mesh> tempMeshes)
     {
-        var renderers = item.instance.GetComponentsInChildren<MeshRenderer>();
-        foreach (var renderer in renderers)
+        var renderers = new List<(MeshRenderer renderer, Mesh mesh)>();
+        long totalTriangles = 0;
+        foreach (var renderer in item.instance.GetComponentsInChildren<MeshRenderer>())
         {
             if (renderer == null || !renderer.enabled) continue;
             if (!renderer.TryGetComponent<MeshFilter>(out var filter)) continue;
@@ -710,10 +784,34 @@ public class RoomExportManager : MonoBehaviour
             if (renderer.gameObject.name.Contains("Outline")) continue;
             if (renderer.gameObject.name.Contains("BlobShadow")) continue;
 
+            renderers.Add((renderer, filter.sharedMesh));
+            totalTriangles += ExportMeshSimplifier.CountTriangles(filter.sharedMesh);
+        }
+
+        var ratio = triangleBudget > 0 && totalTriangles > triangleBudget
+            ? (float)triangleBudget / totalTriangles
+            : 1f;
+        if (ratio < 1f)
+            Debug.Log($"[RoomExportManager] Simplifying {item.prefabId}: {totalTriangles} → ~{triangleBudget} tris");
+
+        foreach (var (renderer, sourceMesh) in renderers)
+        {
+            var mesh = sourceMesh;
+            if (ratio < 1f)
+            {
+                var target = Mathf.CeilToInt(ExportMeshSimplifier.CountTriangles(sourceMesh) * ratio);
+                var simplified = ExportMeshSimplifier.Simplify(sourceMesh, target);
+                if (simplified != null)
+                {
+                    tempMeshes.Add(simplified);
+                    mesh = simplified;
+                }
+            }
+
             entries.Add(new GlbExporter.Entry
             {
                 name = $"{item.instanceId}_{item.prefabId}_{renderer.gameObject.name}",
-                mesh = filter.sharedMesh,
+                mesh = mesh,
                 localToWorld = renderer.transform.localToWorldMatrix,
                 materials = renderer.sharedMaterials,
                 doubleSided = false,
