@@ -34,8 +34,9 @@ function projectCategory(project: Project): ProjectArMode {
 }
 
 const CATEGORIES: { key: ProjectArMode; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { key: 'furniture', label: 'AR Furniture', icon: 'cube-outline' },
-  { key: 'measure', label: 'AR Measurement', icon: 'resize-outline' },
+  { key: 'furniture', label: 'Furniture', icon: 'cube-outline' },
+  { key: 'measure', label: 'Measure', icon: 'resize-outline' },
+  { key: 'design', label: 'Design', icon: 'color-wand-outline' },
 ];
 
 type DialogState = {
@@ -178,6 +179,14 @@ export default function ProjectsScreen() {
   };
 
   const openProject = (project: Project) => {
+    if (projectCategory(project) === 'design') {
+      router.push({
+        pathname: '/design-preferences',
+        params: { projectId: project.id, flow: 'design' },
+      });
+      return;
+    }
+
     if (projectCategory(project) === 'furniture') {
       const latest = project.photos?.[project.photos.length - 1];
       if (latest) {
@@ -230,11 +239,14 @@ export default function ProjectsScreen() {
   const renderItem = ({ item }: { item: Project }) => {
     const isUnity = item.source === 'unity-export';
     const isFurniture = projectCategory(item) === 'furniture';
+    const isDesign = projectCategory(item) === 'design';
     const photoCount = item.photos?.length ?? 0;
     const thumbnail = isFurniture ? item.photos?.[photoCount - 1]?.uri ?? item.thumbnail : undefined;
     const isDeleting = deleting.has(item.id);
     const isSelected = selected.has(item.id);
-    const subtitle = isFurniture
+    const subtitle = isDesign
+      ? `AI layout · ${formatDate(item.updatedAt)}`
+      : isFurniture
       ? `${photoCount > 0 ? `${photoCount} capture${photoCount === 1 ? '' : 's'}` : 'No captures yet'} · ${formatDate(item.updatedAt)}`
       : isUnity
         ? `3D layout · ${item.unityExport?.furnitureCount ?? 0} pieces · ${formatDate(item.updatedAt)}`
@@ -280,7 +292,15 @@ export default function ProjectsScreen() {
             ]}
           >
             <Ionicons
-              name={isUnity ? 'cube-outline' : isFurniture ? 'camera-outline' : 'folder-outline'}
+              name={
+                isDesign
+                  ? 'color-wand-outline'
+                  : isUnity
+                    ? 'cube-outline'
+                    : isFurniture
+                      ? 'camera-outline'
+                      : 'folder-outline'
+              }
               size={22}
               color={isUnity ? BRAND.colors.orange : colors.accent}
             />
@@ -397,17 +417,29 @@ export default function ProjectsScreen() {
             ListEmptyComponent={
               <View style={styles.empty}>
                 <Ionicons
-                  name={category === 'furniture' ? 'camera-outline' : 'cube-outline'}
+                  name={
+                    category === 'furniture'
+                      ? 'camera-outline'
+                      : category === 'design'
+                        ? 'color-wand-outline'
+                        : 'cube-outline'
+                  }
                   size={48}
                   color={colors.textMuted}
                 />
                 <AppText variant="h3" style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-                  {category === 'furniture' ? 'No AR Furniture projects yet' : 'No AR Measurement projects yet'}
+                  {category === 'furniture'
+                    ? 'No AR Furniture projects yet'
+                    : category === 'design'
+                      ? 'No design projects yet'
+                      : 'No AR Measurement projects yet'}
                 </AppText>
                 <AppText variant="body" color="textMuted" style={styles.emptyText}>
                   {category === 'furniture'
                     ? 'Tap the camera button in AR Furniture and your captures will appear here.'
-                    : 'Export a 3D layout from AR Measurement and it will appear here.'}
+                    : category === 'design'
+                      ? 'Start Design a room from the Camera tab to generate layouts.'
+                      : 'Export a 3D layout from AR Measurement and it will appear here.'}
                 </AppText>
               </View>
             }

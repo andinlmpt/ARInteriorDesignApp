@@ -10,11 +10,12 @@ import { AppText } from '@/components/ui/Text';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, radii } from '@/components/ui/theme';
 import { BRAND } from '@/constants/branding';
-import type { HomeProduct } from '@/types/home-product';
+import { formatHomeProductCategoryLabel, type HomeProduct } from '@/types/home-product';
+import { formatPhp } from '@/utils/designFlowFormat';
 import { isOutOfStock } from '@/utils/furnitureCatalogHelpers';
 
 const HEART_OFFSET = 10;
-const BODY_MIN_HEIGHT = 64;
+const BODY_MIN_HEIGHT = 88;
 
 interface ProductCardProps {
   product: HomeProduct;
@@ -55,7 +56,9 @@ export function ProductCard({
         },
       ]}
       accessibilityRole="button"
-      accessibilityLabel={`${product.name}, ${product.dimensionLabel}${outOfStock ? ', out of stock' : ''}`}
+      accessibilityLabel={`${product.name}, ${formatHomeProductCategoryLabel(product.category)}${
+        product.pricePhp ? `, ${formatPhp(product.pricePhp)}` : ''
+      }, ${product.dimensionLabel}${outOfStock ? ', out of stock' : ''}`}
     >
       <View
         style={[
@@ -117,6 +120,18 @@ export function ProductCard({
         >
           {product.name}
         </AppText>
+        <View style={styles.metaRow}>
+          <View style={[styles.categoryChip, { backgroundColor: colors.accentSoft }]}>
+            <AppText variant="caption" weight="600" style={{ color: colors.accent }}>
+              {formatHomeProductCategoryLabel(product.category)}
+            </AppText>
+          </View>
+          {product.pricePhp ? (
+            <AppText variant="caption" weight="700" style={{ color: colors.textPrimary }}>
+              {formatPhp(product.pricePhp)}
+            </AppText>
+          ) : null}
+        </View>
         <AppText
           variant="caption"
           numberOfLines={1}
@@ -196,6 +211,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 18,
     minHeight: 36,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.xs,
+  },
+  categoryChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radii.pill,
   },
   dims: {
     fontSize: 11,

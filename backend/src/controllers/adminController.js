@@ -57,6 +57,12 @@ const toAdminFurniture = (doc) => ({
   heightIn: doc.heightIn || 0,
   quantity: parseQuantity(doc.quantity),
   availableColors: Array.isArray(doc.availableColors) ? doc.availableColors : [],
+  pricePhp: Number(doc.pricePhp) || 0,
+  styles: Array.isArray(doc.styles) ? doc.styles : [],
+  rooms: Array.isArray(doc.rooms) ? doc.rooms : [],
+  roomTypes: Array.isArray(doc.roomTypes) && doc.roomTypes.length > 0
+    ? doc.roomTypes
+    : (Array.isArray(doc.rooms) ? doc.rooms : []),
   active: doc.active,
   sortOrder: doc.sortOrder,
   createdAt: doc.createdAt,
@@ -238,6 +244,10 @@ const adminController = {
         heightIn = 0,
         quantity = 0,
         availableColors = [],
+        pricePhp = 0,
+        styles = [],
+        rooms = [],
+        roomTypes = [],
         active = true,
         sortOrder = 0,
         id: customId,
@@ -275,6 +285,14 @@ const adminController = {
         heightIn: Number(heightIn) || 0,
         quantity: Math.max(0, Math.floor(Number(quantity) || 0)),
         availableColors: parseAvailableColors(availableColors),
+        pricePhp: Math.max(0, Math.round(Number(pricePhp) || 0)),
+        styles: Array.isArray(styles) ? styles.map(String) : [],
+        rooms: Array.isArray(rooms) && rooms.length > 0
+          ? rooms.map(String)
+          : (Array.isArray(roomTypes) ? roomTypes.map(String) : []),
+        roomTypes: Array.isArray(roomTypes) && roomTypes.length > 0
+          ? roomTypes.map(String)
+          : (Array.isArray(rooms) ? rooms.map(String) : []),
         active: active !== false && active !== 'false',
         sortOrder: Number(sortOrder) || 0,
       });
@@ -298,6 +316,7 @@ const adminController = {
         'displayName', 'category', 'glbUrl', 'thumbnailUrl',
         'width', 'height', 'depth', 'dimensionLabel',
         'lengthIn', 'widthIn', 'heightIn', 'quantity', 'availableColors',
+        'pricePhp', 'styles', 'rooms', 'roomTypes',
         'active', 'sortOrder',
       ];
 
@@ -307,6 +326,15 @@ const adminController = {
             item.active = req.body.active !== false && req.body.active !== 'false';
           } else if (field === 'availableColors') {
             item.availableColors = parseAvailableColors(req.body.availableColors);
+          } else if (field === 'styles') {
+            item.styles = Array.isArray(req.body.styles) ? req.body.styles.map(String) : [];
+          } else if (field === 'rooms' || field === 'roomTypes') {
+            const list = Array.isArray(req.body[field]) ? req.body[field].map(String) : [];
+            item[field] = list;
+            if (field === 'roomTypes') item.rooms = list;
+            if (field === 'rooms') item.roomTypes = list;
+          } else if (field === 'pricePhp') {
+            item.pricePhp = Math.max(0, Math.round(Number(req.body.pricePhp) || 0));
           } else if (['width', 'height', 'depth', 'lengthIn', 'widthIn', 'heightIn', 'sortOrder', 'quantity'].includes(field)) {
             item[field] = field === 'quantity'
               ? Math.max(0, Math.floor(Number(req.body[field]) || 0))

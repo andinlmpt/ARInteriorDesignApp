@@ -55,6 +55,14 @@ const furnitureSchema = new mongoose.Schema({
     type: [String],
     default: [],
   },
+  /** Retail price in ₱. 0 = not set (API serves a mock price). */
+  pricePhp: { type: Number, default: 0, min: 0 },
+  /** Design styles (Minimalist, Modern, …). Empty = API serves mock styles. */
+  styles: { type: [String], default: [] },
+  /** Suitable room types. Empty = inferred from category. */
+  rooms: { type: [String], default: [] },
+  /** Alias used by admin + design API (same data as rooms when unset). */
+  roomTypes: { type: [String], default: [] },
   active: { type: Boolean, default: true },
   sortOrder: { type: Number, default: 0 },
 }, {

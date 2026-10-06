@@ -80,6 +80,12 @@ public class ARDesignLayoutModeController : MonoBehaviour
     public ViewMode CurrentViewMode => viewMode;
     public Vector3 FocusPoint => focus;
 
+    /// <summary>
+    /// While true, RN planner gestures do not auto-switch a live AR session into the planner;
+    /// only an explicit <see cref="SetViewMode(ViewMode)"/> changes the view.
+    /// </summary>
+    public bool HoldRealRoom { get; set; }
+
     public event Action<ViewMode> ViewModeChanged;
 
     void Awake()
@@ -466,6 +472,9 @@ public class ARDesignLayoutModeController : MonoBehaviour
 
         // Never enter planner shell for furniture-only synthetic rooms.
         if (scanController.IsFurniturePlacementOnly)
+            return;
+
+        if (HoldRealRoom && sessionActive && viewMode == ViewMode.RealRoom)
             return;
 
         var switched = !sessionActive || viewMode != ViewMode.Planner;

@@ -373,6 +373,28 @@ export default function RoomMeasurementsScreen() {
           {!selectMode ? (
           <View style={styles.cardActions}>
             <TouchableOpacity
+              onPress={() =>
+                router.push({
+                  pathname: '/design-preferences',
+                  params: {
+                    measurementId: item.id,
+                    width: String(item.width),
+                    depth: String(item.depth),
+                    height: String(item.height),
+                    dimensionLabel: item.dimensionLabel || '',
+                    projectId: item.projectId || '',
+                    flow: 'design',
+                  },
+                })
+              }
+              hitSlop={8}
+              style={[styles.actionBtn, { backgroundColor: hexToRgba(colors.accent, 0.1) }]}
+              accessibilityRole="button"
+              accessibilityLabel={`Design layouts from ${item.name || 'room scan'}`}
+            >
+              <Ionicons name="color-wand-outline" size={18} color={colors.accent} />
+            </TouchableOpacity>
+            <TouchableOpacity
               onPress={() => openExportPreview(item)}
               hitSlop={8}
               disabled={previewBusy}

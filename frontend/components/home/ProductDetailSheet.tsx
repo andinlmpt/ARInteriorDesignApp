@@ -19,7 +19,8 @@ import { AppText } from '@/components/ui/Text';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, radii } from '@/components/ui/theme';
 import { BRAND } from '@/constants/branding';
-import type { HomeProduct } from '@/types/home-product';
+import { formatHomeProductCategoryLabel, type HomeProduct } from '@/types/home-product';
+import { formatPhp } from '@/utils/designFlowFormat';
 import {
   formatHomeProductInches,
   formatHomeProductMeters,
@@ -35,11 +36,6 @@ interface ProductDetailSheetProps {
   onClose: () => void;
   onToggleSave: (product: HomeProduct) => void;
   onViewInAR: (product: HomeProduct) => void;
-}
-
-function titleCaseCategory(category: string): string {
-  if (!category) return 'Other';
-  return category.charAt(0).toUpperCase() + category.slice(1).toLowerCase();
 }
 
 export function ProductDetailSheet({
@@ -121,10 +117,17 @@ export function ProductDetailSheet({
               >
                 {product.name}
               </AppText>
-              <View style={[styles.categoryChip, { backgroundColor: colors.accentSoft }]}>
-                <AppText variant="caption" weight="600" style={{ color: colors.accent }}>
-                  {titleCaseCategory(product.category)}
-                </AppText>
+              <View style={styles.titleMeta}>
+                <View style={[styles.categoryChip, { backgroundColor: colors.accentSoft }]}>
+                  <AppText variant="caption" weight="600" style={{ color: colors.accent }}>
+                    {formatHomeProductCategoryLabel(product.category)}
+                  </AppText>
+                </View>
+                {product.pricePhp ? (
+                  <AppText variant="subtitle" weight="700" style={{ color: colors.textPrimary }}>
+                    {formatPhp(product.pricePhp)}
+                  </AppText>
+                ) : null}
               </View>
             </View>
             <TouchableOpacity
@@ -346,6 +349,13 @@ const styles = StyleSheet.create({
   titleBlock: {
     flex: 1,
     gap: 4,
+  },
+  titleMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
   },
   categoryChip: {
     alignSelf: 'flex-start',

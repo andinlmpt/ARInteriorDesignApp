@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { ARViewErrorBoundary } from '@/components/ar-view/ARViewErrorBoundary';
 import { ARViewUnityDevNotice } from '@/components/ar-view/ARViewUnityDevNotice';
@@ -15,6 +15,12 @@ import { colors, spacing, radii } from '@/components/ui/theme';
 
 function ARViewWebUnsupported() {
   const router = useRouter();
+  const params = useLocalSearchParams<{
+    flow?: string | string[];
+    projectId?: string | string[];
+  }>();
+  const flow = Array.isArray(params.flow) ? params.flow[0] : params.flow;
+  const projectId = Array.isArray(params.projectId) ? params.projectId[0] : params.projectId;
 
   return (
     <View style={webStyles.container}>
@@ -24,6 +30,21 @@ function ARViewWebUnsupported() {
         AR furniture placement is developed in Unity for iOS and Android. Use Unity Build
         &amp; Run on a device, or enable React Native Unity embed when integration is ready.
       </Text>
+      {flow === 'design' ? (
+        <TouchableOpacity
+          style={webStyles.backButton}
+          onPress={() =>
+            router.replace({
+              pathname: '/design-preferences',
+              params: { projectId: projectId || '', flow: 'design' },
+            })
+          }
+          accessibilityRole="button"
+          accessibilityLabel="Continue to design preferences"
+        >
+          <Text style={webStyles.backLabel}>Continue to preferences</Text>
+        </TouchableOpacity>
+      ) : null}
       <TouchableOpacity
         style={webStyles.backButton}
         onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}

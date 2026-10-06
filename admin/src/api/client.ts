@@ -86,6 +86,10 @@ export interface FurnitureItem {
   heightIn: number;
   quantity: number;
   availableColors: string[];
+  pricePhp?: number;
+  styles?: string[];
+  rooms?: string[];
+  roomTypes?: string[];
   active: boolean;
   sortOrder: number;
   createdAt?: string;

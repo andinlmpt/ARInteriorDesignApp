@@ -10,7 +10,9 @@ import {
   TouchableOpacity,
   Pressable,
   TextInput,
+  Platform,
 } from 'react-native';
+import { UNITY_AR_EMBED_ENABLED } from '@/config/unity-ar.config';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -49,6 +51,22 @@ export default function CameraScreen() {
       setStarting(true);
       try {
         const project = await projectService.createProject({ name, arMode: mode });
+        if (mode === 'design') {
+          const canScan =
+            UNITY_AR_EMBED_ENABLED && (Platform.OS === 'ios' || Platform.OS === 'android');
+          router.push(
+            canScan
+              ? {
+                  pathname: '/ar-view',
+                  params: { mode: 'measure', projectId: project.id, flow: 'design' },
+                }
+              : {
+                  pathname: '/design-preferences',
+                  params: { projectId: project.id, flow: 'design' },
+                },
+          );
+          return;
+        }
         router.push({ pathname: '/ar-view', params: { mode, projectId: project.id } });
       } catch (err) {
         setStarting(false);
@@ -142,6 +160,31 @@ export default function CameraScreen() {
               <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>AR Measurement</Text>
               <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
                 Measure rooms with your phone camera
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+          </Pressable>
+
+          <Pressable
+            onPress={() => openAr('design')}
+            style={({ pressed }) => [
+              styles.card,
+              {
+                backgroundColor: colors.surfacePrimary,
+                borderColor: colors.border,
+                opacity: pressed ? 0.92 : 1,
+              },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Design a room"
+          >
+            <View style={[styles.iconBadge, { backgroundColor: colors.accentSoft }]}>
+              <Ionicons name="color-wand-outline" size={28} color={colors.accent} />
+            </View>
+            <View style={styles.cardCopy}>
+              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Design a room</Text>
+              <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
+                Scan, set a budget, and generate layout options
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />

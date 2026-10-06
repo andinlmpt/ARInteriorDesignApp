@@ -18,6 +18,12 @@ export interface HomeProduct {
   heightIn?: number;
   availableColors: string[];
   quantity?: number;
+  pricePhp?: number;
+  /** Design styles (Minimalist, Modern, …). */
+  styles?: string[];
+  /** Suitable room types (Bedroom, Living Room, …). */
+  rooms?: string[];
+  roomTypes?: string[];
 }
 
 export type HomeProductCategoryFilter = 'all' | 'chair' | 'sofa' | 'beds' | 'other';
@@ -31,3 +37,18 @@ export const HOME_PRODUCT_CATEGORY_CHIPS: {
   { id: 'sofa', label: 'Sofas' },
   { id: 'beds', label: 'Beds' },
 ];
+
+const CATEGORY_LABELS: Record<string, string> = {
+  chair: 'Chair',
+  sofa: 'Sofa',
+  beds: 'Bed',
+  other: 'Other',
+};
+
+/** Display label for admin category on Home product cards. */
+export function formatHomeProductCategoryLabel(category: string): string {
+  const key = String(category || '').trim().toLowerCase();
+  if (CATEGORY_LABELS[key]) return CATEGORY_LABELS[key];
+  if (!key) return 'Other';
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}

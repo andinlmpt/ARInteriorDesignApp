@@ -26,6 +26,15 @@ public class MainMenuController : MonoBehaviour
 
     void Awake()
     {
+        // MainMenu has no RN bridge, so the host app would never get unityReady.
+        // Hand off to a bridged scene; RN then routes to measurement or furniture.
+        if (ARDesignHostDetect.IsEmbeddedInReactNative())
+        {
+            enabled = false;
+            SceneManager.LoadScene(furnitureSceneName);
+            return;
+        }
+
         if (rebuildUiOnAwake)
             BuildBrandedUi();
 

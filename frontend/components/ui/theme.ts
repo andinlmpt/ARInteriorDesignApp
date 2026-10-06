@@ -39,8 +39,6 @@ export const typography = {
   family: {
     playfairBold:     'PlayfairDisplay-Bold',
     playfairSemiBold: 'PlayfairDisplay-SemiBold',
-    playfairMedium:   'PlayfairDisplay-Medium',
-    playfairRegular:  'PlayfairDisplay-Regular',
     interBold:        'Inter-Bold',
     interSemiBold:    'Inter-SemiBold',
     interMedium:      'Inter-Medium',

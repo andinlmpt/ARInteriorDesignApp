@@ -134,10 +134,12 @@ export const Unity3DViewer: React.FC<Unity3DViewerProps> = ({
   // Handle WebView errors
   const handleError = useCallback((syntheticEvent: any) => {
     const { nativeEvent } = syntheticEvent;
-    console.error('WebView error:', nativeEvent);
+    console.warn(
+      `[Unity3DViewer] Could not load ${nativeEvent.url || unityBuildUrl} (${nativeEvent.description || 'unknown error'}) — falling back to Three.js`
+    );
     setIsLoading(false);
     onError?.(nativeEvent.description || 'Failed to load Unity viewer');
-  }, [onError]);
+  }, [onError, unityBuildUrl]);
 
   // Web platform: show message (WebView not available on web)
   if (Platform.OS === 'web') {

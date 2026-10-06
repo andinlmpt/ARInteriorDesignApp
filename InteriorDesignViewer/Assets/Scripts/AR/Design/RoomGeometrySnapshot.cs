@@ -126,30 +126,13 @@ public static class RoomGeometryBuilder
             floor.uvs.Add(new Vector2(ring[i].x, ring[i].z));
         }
 
-        // Shoelace in XZ: > 0 means counter-clockwise when viewed from above.
-        var signedArea = 0f;
-        for (var i = 0; i < ring.Length; i++)
+        // Ear clipping so concave (L-shaped) outlines don't spill outside the walls.
+        var tris = RoomPolygonUtil.TriangulateCcw(ring);
+        for (var t = 0; t < tris.Count; t += 3)
         {
-            var a = ring[i];
-            var b = ring[(i + 1) % ring.Length];
-            signedArea += a.x * b.z - b.x * a.z;
-        }
-
-        var ccw = signedArea > 0f;
-        for (var i = 1; i < ring.Length - 1; i++)
-        {
-            if (ccw)
-            {
-                floor.triangles.Add(floorBase);
-                floor.triangles.Add(floorBase + i);
-                floor.triangles.Add(floorBase + i + 1);
-            }
-            else
-            {
-                floor.triangles.Add(floorBase);
-                floor.triangles.Add(floorBase + i + 1);
-                floor.triangles.Add(floorBase + i);
-            }
+            floor.triangles.Add(floorBase + tris[t]);
+            floor.triangles.Add(floorBase + tris[t + 1]);
+            floor.triangles.Add(floorBase + tris[t + 2]);
         }
 
         // Double-sided floor so orbit from any angle still shows the grid.
@@ -161,20 +144,11 @@ public static class RoomGeometryBuilder
             floor.uvs.Add(new Vector2(ring[i].x, ring[i].z));
         }
 
-        for (var i = 1; i < ring.Length - 1; i++)
+        for (var t = 0; t < tris.Count; t += 3)
         {
-            if (ccw)
-            {
-                floor.triangles.Add(dualBase);
-                floor.triangles.Add(dualBase + i + 1);
-                floor.triangles.Add(dualBase + i);
-            }
-            else
-            {
-                floor.triangles.Add(dualBase);
-                floor.triangles.Add(dualBase + i);
-                floor.triangles.Add(dualBase + i + 1);
-            }
+            floor.triangles.Add(dualBase + tris[t]);
+            floor.triangles.Add(dualBase + tris[t + 2]);
+            floor.triangles.Add(dualBase + tris[t + 1]);
         }
 
         // Walls extruded from each edge — one surface per wall for orbit cutaway.
@@ -253,20 +227,11 @@ public static class RoomGeometryBuilder
         }
 
         // From below, downward normals need opposite winding to the floor's upward face.
-        for (var i = 1; i < ring.Length - 1; i++)
+        for (var t = 0; t < tris.Count; t += 3)
         {
-            if (ccw)
-            {
-                ceiling.triangles.Add(ceilingBase);
-                ceiling.triangles.Add(ceilingBase + i + 1);
-                ceiling.triangles.Add(ceilingBase + i);
-            }
-            else
-            {
-                ceiling.triangles.Add(ceilingBase);
-                ceiling.triangles.Add(ceilingBase + i);
-                ceiling.triangles.Add(ceilingBase + i + 1);
-            }
+            ceiling.triangles.Add(ceilingBase + tris[t]);
+            ceiling.triangles.Add(ceilingBase + tris[t + 2]);
+            ceiling.triangles.Add(ceilingBase + tris[t + 1]);
         }
 
         // Double-sided so the roof reads from above when cutaway leaves it visible.
@@ -280,20 +245,11 @@ public static class RoomGeometryBuilder
             ceiling.uvs.Add(new Vector2(p.x, p.z));
         }
 
-        for (var i = 1; i < ring.Length - 1; i++)
+        for (var t = 0; t < tris.Count; t += 3)
         {
-            if (ccw)
-            {
-                ceiling.triangles.Add(ceilingDual);
-                ceiling.triangles.Add(ceilingDual + i);
-                ceiling.triangles.Add(ceilingDual + i + 1);
-            }
-            else
-            {
-                ceiling.triangles.Add(ceilingDual);
-                ceiling.triangles.Add(ceilingDual + i + 1);
-                ceiling.triangles.Add(ceilingDual + i);
-            }
+            ceiling.triangles.Add(ceilingDual + tris[t]);
+            ceiling.triangles.Add(ceilingDual + tris[t + 1]);
+            ceiling.triangles.Add(ceilingDual + tris[t + 2]);
         }
 
         var ceilingMid = new Vector3(centroid.x, ceilingY, centroid.z);

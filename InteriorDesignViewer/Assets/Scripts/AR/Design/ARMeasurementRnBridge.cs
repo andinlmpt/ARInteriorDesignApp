@@ -18,6 +18,12 @@ public class ARMeasurementRnBridge : MonoBehaviour
     Coroutine armFurnitureRoutine;
     Coroutine wakePlannerRoutine;
 
+    /// <summary>RN design-flow "View in AR" — room shell from saved dimensions, no scan UI.</summary>
+    public static string PendingDesignLayoutPayload;
+
+    public static bool HasPendingDesignLayout =>
+        !string.IsNullOrWhiteSpace(PendingDesignLayoutPayload);
+
     public static ARMeasurementRnBridge EnsureOn(GameObject host)
     {
         if (host == null) return null;
@@ -43,6 +49,8 @@ public class ARMeasurementRnBridge : MonoBehaviour
     void Start()
     {
         UnityMessageBridge.SendToApp("unityReady", MeasurementSceneName);
+        if (HasPendingDesignLayout)
+            StartCoroutine(DesignLayoutAfterSceneLoadRoutine());
     }
 
     /// <summary>Called by the native Unity ↔ RN bridge on Managers.</summary>
@@ -93,6 +101,18 @@ public class ARMeasurementRnBridge : MonoBehaviour
             case "spawnFurniture":
             case "selectFurniture":
                 EnsureFurnitureBootstrap()?.SpawnFurniture(message.data);
+                break;
+
+            case "applyLayout":
+                EnsureFurnitureBootstrap()?.ApplyLayout(message.data);
+                break;
+
+            case "replaceSelectedFurniture":
+                EnsureFurnitureBootstrap()?.ReplaceSelectedFurniture(message.data);
+                break;
+
+            case "setFurnitureColor":
+                EnsureFurnitureBootstrap()?.SetFurnitureColor(message.data);
                 break;
 
             case "removeSelectedFurniture":
@@ -157,6 +177,31 @@ public class ARMeasurementRnBridge : MonoBehaviour
                 OpenMeasuredFurnitureDesign(message.data);
                 break;
 
+            case "openDesignLayoutInAr":
+                BeginDesignLayoutAr(message.data);
+                break;
+
+            case "beginLayoutAlignment":
+                EnsureFurnitureBootstrap();
+                ARDesignLayoutAlignmentController.EnsureOn(gameObject)?.Begin();
+                break;
+
+            case "markAlignmentCorner":
+                ARDesignLayoutAlignmentController.EnsureOn(gameObject)?.MarkCorner();
+                break;
+
+            case "undoAlignmentCorner":
+                ARDesignLayoutAlignmentController.EnsureOn(gameObject)?.UndoCorner();
+                break;
+
+            case "flipLayoutAlignment":
+                ARDesignLayoutAlignmentController.EnsureOn(gameObject)?.Flip();
+                break;
+
+            case "setLayoutView":
+                ARDesignLayoutAlignmentController.EnsureOn(gameObject)?.SetView(message.data ?? string.Empty);
+                break;
+
             case "requestClose":
             case "closeUnity":
                 SoftClose(notifyRn: true);
@@ -187,6 +232,50 @@ public class ARMeasurementRnBridge : MonoBehaviour
         if (armFurnitureRoutine != null)
             StopCoroutine(armFurnitureRoutine);
         armFurnitureRoutine = StartCoroutine(ArmMeasuredFurnitureRoutine(rnPayloadJson));
+    }
+
+    /// <summary>
+    /// Design-flow handoff: build the room from RN dimensions and skip the measure scan HUD.
+    /// </summary>
+    public void BeginDesignLayoutAr(string rnPayloadJson)
+    {
+        PendingDesignLayoutPayload = rnPayloadJson ?? string.Empty;
+
+        if (SceneManager.GetActiveScene().name != MeasurementSceneName)
+        {
+            SceneManager.LoadScene(MeasurementSceneName);
+            return;
+        }
+
+        if (reloadRoutine != null)
+            StopCoroutine(reloadRoutine);
+        reloadRoutine = StartCoroutine(DesignLayoutBootRoutine());
+    }
+
+    IEnumerator DesignLayoutAfterSceneLoadRoutine()
+    {
+        yield return null;
+        yield return new WaitForEndOfFrame();
+        if (!HasPendingDesignLayout)
+            yield break;
+        BeginDesignLayoutAr(PendingDesignLayoutPayload);
+    }
+
+    IEnumerator DesignLayoutBootRoutine()
+    {
+        yield return null;
+
+        SoftClose(notifyRn: false);
+
+        var scan = UnityEngine.Object.FindFirstObjectByType<RoomScanController>();
+        scan?.ResetToIdle();
+
+        OpenMeasuredFurnitureDesign(PendingDesignLayoutPayload);
+        ARMainMenuBackButton.SetUiVisible(false);
+
+        yield return null;
+        UnityMessageBridge.SendToApp("reloadComplete", MeasurementSceneName);
+        reloadRoutine = null;
     }
 
     IEnumerator ArmMeasuredFurnitureRoutine(string rnPayloadJson)
@@ -236,6 +325,7 @@ public class ARMeasurementRnBridge : MonoBehaviour
         UnityMessageBridge.SendToApp("measuredFurnitureReady", MeasurementSceneName);
         yield return null;
         UnityMessageBridge.SendToApp("reloadComplete", MeasurementSceneName);
+        PendingDesignLayoutPayload = null;
         Debug.Log("[ARMeasurementRnBridge] Measured furniture unlocked on ARRoomMeasurement.");
         armFurnitureRoutine = null;
     }
@@ -289,6 +379,7 @@ public class ARMeasurementRnBridge : MonoBehaviour
         }
 
         ARMeasurementSession.Reset();
+        GetComponent<ARDesignLayoutAlignmentController>()?.ResetSession();
 
         var furniture = GetComponent<ARMeasurementFurnitureBootstrap>();
         furniture?.Placement?.ClearFurniture();
@@ -337,6 +428,12 @@ public class ARMeasurementRnBridge : MonoBehaviour
         SoftClose(notifyRn: false);
 
         var scan = UnityEngine.Object.FindFirstObjectByType<RoomScanController>();
+        if (HasPendingDesignLayout)
+        {
+            reloadRoutine = StartCoroutine(DesignLayoutBootRoutine());
+            yield break;
+        }
+
         if (scan != null)
             scan.StartRoomScan();
 

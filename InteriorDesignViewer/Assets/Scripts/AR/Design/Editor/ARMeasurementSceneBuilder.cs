@@ -245,6 +245,11 @@ public static class ARMeasurementSceneBuilder
         var scanVisualization = Ensure<ScanVisualizationController>(managers);
         var roomMeshVisualizer = Ensure<RoomMeshVisualizer>(managers);
         var cornerBuilder = Ensure<ARDesignCornerRoomBuilder>(managers);
+        var spatialMapping = Ensure<ARDesignSpatialMappingController>(managers);
+        if (spatialMapping.GetComponent<ARDesignSpatialMappingVisualizer>() == null)
+            spatialMapping.gameObject.AddComponent<ARDesignSpatialMappingVisualizer>();
+        if (spatialMapping.GetComponent<ARFurnitureAutoSuggestService>() == null)
+            spatialMapping.gameObject.AddComponent<ARFurnitureAutoSuggestService>();
         var scanHud = Ensure<ARDesignScanHUD>(managers);
         var layoutMode = Ensure<ARDesignLayoutModeController>(managers);
         var planHud = Ensure<ARMeasurementPlanHUD>(managers);
@@ -254,6 +259,7 @@ public static class ARMeasurementSceneBuilder
         Ensure<ARMainMenuBackButton>(managers);
         Ensure<ARMeasurementRnBridge>(managers);
         edgeVisualizer.enabled = false;
+        cornerBuilder.enabled = true;
 
         var cameraBackground = rig.camera != null
             ? rig.camera.GetComponent<ARCameraBackground>()
@@ -292,12 +298,23 @@ public static class ARMeasurementSceneBuilder
 
         Wire(roomMeshVisualizer, so => so.Set("scanController", scanController));
 
+        Wire(spatialMapping, so =>
+        {
+            so.Set("scanController", scanController);
+            so.Set("cornerBuilder", cornerBuilder);
+            so.Set("raycastManager", rig.raycastManager);
+            so.Set("arCamera", rig.camera);
+            so.Set("visualizer", spatialMapping.GetComponent<ARDesignSpatialMappingVisualizer>());
+        });
+
         Wire(scanHud, so =>
         {
             so.Set("scanController", scanController);
             so.Set("placementIndicator", rig.placementIndicator);
             so.Set("cornerBuilder", cornerBuilder);
+            so.Set("spatialMapping", spatialMapping);
             so.SetBool("measurementOnlyMode", true);
+            so.SetBool("enableNativeHud", true);
             so.SetBool("spawnSampleOnConfirm", false);
         });
 
@@ -333,6 +350,7 @@ public static class ARMeasurementSceneBuilder
         {
             so.Set("scanController", scanController);
             so.SetBool("measurementOnlyMode", true);
+            so.SetBool("enableNativeModal", true);
         });
     }
 

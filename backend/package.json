@@ -19,7 +19,8 @@
     "seed:furniture:normalize-thumbs": "node scripts/normalize-furniture-thumbnails.mjs",
     "seed:furniture:local-glbs": "node scripts/materialize-local-glbs.mjs",
     "seed:admin": "node scripts/seed-admin.mjs",
-    "recategorize:furniture": "node scripts/recategorize-furniture.mjs"
+    "recategorize:furniture": "node scripts/recategorize-furniture.mjs",
+    "seed:furniture:merchandising": "node scripts/seed-furniture-merchandising.mjs --apply"
   },
   "keywords": [
     "api",

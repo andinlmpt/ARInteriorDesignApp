@@ -15,6 +15,9 @@ export type ScreenName =
   | 'signup'
   | '(tabs)'
   | 'theme-recommend'
+  | 'design-preferences'
+  | 'design-layouts'
+  | 'design-final'
   | 'ar-view'
   | 'layout-3d'
   | 'model-preview'
@@ -115,6 +118,24 @@ export const NAVIGATION_SCREENS: Record<string, ScreenConfig[]> = {
   aiDesign: [
     {
       name: 'theme-recommend',
+      options: {
+        ...ANIMATION_PRESETS.slideRight,
+      },
+    },
+    {
+      name: 'design-preferences',
+      options: {
+        ...ANIMATION_PRESETS.slideRight,
+      },
+    },
+    {
+      name: 'design-layouts',
+      options: {
+        ...ANIMATION_PRESETS.slideRight,
+      },
+    },
+    {
+      name: 'design-final',
       options: {
         ...ANIMATION_PRESETS.slideRight,
       },

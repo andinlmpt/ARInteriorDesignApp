@@ -9,6 +9,7 @@ import {
   resolveFurnitureThumbnailUrl,
 } from '../utils/publicAssetUrl.js';
 import { inferFurnitureCategory } from '../utils/furnitureCategory.js';
+import { mockPricePhp, mockStyles, suitableRooms } from '../utils/furnitureMockPricing.js';
 
 const inferCategory = (doc) =>
   inferFurnitureCategory(doc.id, doc.displayName, doc.glbUrl) || 'other';
@@ -42,7 +43,17 @@ const toPublicItem = (doc, req) => ({
   heightIn: doc.heightIn || 0,
   quantity: parseQuantity(doc.quantity),
   availableColors: Array.isArray(doc.availableColors) ? doc.availableColors : [],
+  pricePhp: mockPricePhp({ ...doc, category: doc.category || inferCategory(doc) }),
+  styles: mockStyles(doc),
+  rooms: suitableRooms({ ...doc, category: doc.category || inferCategory(doc) }),
+  roomTypes: getPublicRoomTypes(doc),
 });
+
+function getPublicRoomTypes(doc) {
+  if (Array.isArray(doc.roomTypes) && doc.roomTypes.length > 0) return doc.roomTypes;
+  if (Array.isArray(doc.rooms) && doc.rooms.length > 0) return doc.rooms;
+  return suitableRooms({ ...doc, category: doc.category || inferCategory(doc) });
+}
 
 const furnitureController = {
   async getAllFurniture(req, res, next) {

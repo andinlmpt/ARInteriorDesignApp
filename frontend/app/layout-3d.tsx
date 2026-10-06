@@ -12,10 +12,11 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Dimensions,
+  type GestureResponderEvent,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { GLView } from 'expo-gl';
 import { Ionicons } from '@expo/vector-icons';
 import type { DesignProposal } from '@/types/ai-design';
@@ -33,6 +34,7 @@ import { useLayout3DActions } from '@/hooks/useLayout3DActions';
 // Utilities
 import { parseDesignFromParams } from '@/utils/layout3dStorage';
 import { calculateArea } from '@/utils/layout3dExport';
+import { formatMeters, formatPhp } from '@/utils/designFlowFormat';
 
 // Theme
 import { useTheme } from '@/contexts/ThemeContext';
@@ -60,6 +62,7 @@ export default function Layout3DScreen() {
   const [useUnity, setUseUnity] = useState(false);
   
   const unityBuildUrl = process.env.EXPO_PUBLIC_UNITY_BUILD_URL;
+  const roomDimensionsLabel = `${formatMeters(roomDimensions.width)} × ${formatMeters(roomDimensions.length)} × ${formatMeters(roomDimensions.height)}`;
 
   // Initialize scene hook
   const scene = useLayout3DScene({
@@ -78,12 +81,19 @@ export default function Layout3DScreen() {
     furnitureGroupRef: scene.furnitureGroupRef,
   });
 
+  const designIdParam = params.designId as string | undefined;
+  const designDataParam = params.designData as string | undefined;
+  const roomDimensionsParam = params.roomDimensions as string | undefined;
+  const budgetPhp = Number(params.budgetPhp) || 0;
+  const viewerSizeRef = useRef({ width: 0, height: 0 });
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+
   // Load design from params
   useEffect(() => {
     const { design: parsedDesign, dimensions: parsedDimensions } = parseDesignFromParams({
-      designId: params.designId as string,
-      designData: params.designData as string,
-      roomDimensions: params.roomDimensions as string,
+      designId: designIdParam,
+      designData: designDataParam,
+      roomDimensions: roomDimensionsParam,
     });
 
     if (parsedDesign) {
@@ -92,13 +102,25 @@ export default function Layout3DScreen() {
     if (parsedDimensions) {
       setRoomDimensions(parsedDimensions);
     }
-  }, [params]);
+  }, [designIdParam, designDataParam, roomDimensionsParam]);
 
-  // Handle furniture tap
-  const handleFurnitureTap = (event: any) => {
-    const { locationX, locationY } = event.nativeEvent;
-    scene.handleFurnitureTap(locationX, locationY);
+  // Handle furniture tap (ignore drags used to orbit the camera)
+  const handleTouchStart = (event: GestureResponderEvent) => {
+    const { pageX, pageY } = event.nativeEvent;
+    touchStartRef.current = { x: pageX, y: pageY };
   };
+  const handleFurnitureTap = (event: GestureResponderEvent) => {
+    const { locationX, locationY, pageX, pageY } = event.nativeEvent;
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (start && Math.hypot(pageX - start.x, pageY - start.y) > 8) return;
+    const { width, height } = viewerSizeRef.current;
+    scene.handleFurnitureTap(locationX, locationY, width || undefined, height || undefined);
+  };
+
+  const selectedFurniture = design?.layout?.furniture?.find((item) => item.id === scene.selectedFurnitureId);
+  const totalPhp = design?.estimatedCost.currency === 'PHP' ? design.estimatedCost.totalPhp : undefined;
+  const budgetDelta = budgetPhp > 0 && totalPhp != null ? totalPhp - budgetPhp : null;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -156,6 +178,11 @@ export default function Layout3DScreen() {
             <View
               style={styles.glViewContainer}
               {...scene.panResponder.panHandlers}
+              onLayout={(event) => {
+                const { width, height } = event.nativeEvent.layout;
+                viewerSizeRef.current = { width, height };
+              }}
+              onTouchStart={handleTouchStart}
               onTouchEnd={handleFurnitureTap}
             >
               <GLView
@@ -244,11 +271,13 @@ export default function Layout3DScreen() {
             {/* Info Display */}
             <View style={[styles.infoOverlay, { backgroundColor: colors.surfacePrimary + 'CC' }]}>
               <Text style={[styles.infoText, { color: colors.textPrimary }]}>
-                {roomDimensions.width}m × {roomDimensions.length}m × {roomDimensions.height}m
+                {roomDimensionsLabel}
               </Text>
               {design && (
                 <Text style={[styles.infoText, { color: colors.textPrimary }]}>
-                  {design.layout?.furniture?.length || 0} items
+                  {selectedFurniture
+                    ? `${selectedFurniture.name} · ${formatMeters(selectedFurniture.dimensions.width)} × ${formatMeters(selectedFurniture.dimensions.length)}`
+                    : `${design.layout?.furniture?.length || 0} items · tap one to identify`}
                 </Text>
               )}
             </View>
@@ -277,11 +306,27 @@ export default function Layout3DScreen() {
           <FadeInView delay={300}>
             <View style={[styles.roomInfo, { backgroundColor: colors.surfacePrimary, borderColor: colors.border }]}>
               <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Room Details</Text>
-              <InfoRow label="Dimensions" value={`${roomDimensions.width}m × ${roomDimensions.length}m × ${roomDimensions.height}m`} colors={colors} />
+              <InfoRow label="Dimensions" value={roomDimensionsLabel} colors={colors} />
               <InfoRow label="Area" value={`${calculateArea(roomDimensions)} m²`} colors={colors} />
               <InfoRow label="Furniture Items" value={`${design.layout.furniture.length} pieces`} colors={colors} />
-              <InfoRow label="Est. Cost" value={`$${design.estimatedCost.low.toLocaleString()} - $${design.estimatedCost.high.toLocaleString()}`} colors={colors} />
-              <InfoRow label="Performance Score" value={`${design.performanceScore.overall.toFixed(0)}/100`} colors={colors} />
+              <InfoRow
+                label="Est. Cost"
+                value={design.estimatedCost.currency === 'PHP' && design.estimatedCost.totalPhp != null
+                  ? formatPhp(design.estimatedCost.totalPhp)
+                  : `$${design.estimatedCost.low.toLocaleString()} - $${design.estimatedCost.high.toLocaleString()}`}
+                colors={colors}
+              />
+              {budgetDelta != null && (
+                <InfoRow
+                  label="Budget"
+                  value={budgetDelta > 0
+                    ? `${formatPhp(budgetDelta)} over ${formatPhp(budgetPhp)}`
+                    : `Within ${formatPhp(budgetPhp)}`}
+                  valueColor={budgetDelta > 0 ? colors.danger : colors.success}
+                  colors={colors}
+                />
+              )}
+              <InfoRow label="Layout Score" value={`${design.performanceScore.overall.toFixed(0)}/100`} colors={colors} />
             </View>
           </FadeInView>
         )}
@@ -293,18 +338,30 @@ export default function Layout3DScreen() {
               <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Furniture Layout</Text>
               {design.layout.furniture.map((item, idx) => (
                 <ScaleInView key={idx} delay={idx * 50}>
-                  <View style={[styles.furnitureItem, { borderBottomColor: colors.border }]}>
+                  <TouchableOpacity
+                    style={[
+                      styles.furnitureItem,
+                      { borderBottomColor: colors.border },
+                      scene.selectedFurnitureId === item.id && { backgroundColor: colors.accentSoft },
+                    ]}
+                    onPress={() => scene.selectFurniture(scene.selectedFurnitureId === item.id ? null : item.id)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Highlight ${item.name} in 3D`}
+                  >
+                    {item.color ? (
+                      <View style={[styles.furnitureSwatch, { backgroundColor: item.color }]} />
+                    ) : null}
                     <View style={styles.furnitureInfo}>
                       <Text style={[styles.furnitureName, { color: colors.textPrimary }]}>{item.name}</Text>
                       <Text style={[styles.furnitureDetails, { color: colors.textSecondary }]}>
-                        {item.dimensions.width}m × {item.dimensions.length}m × {item.dimensions.height}m
+                        {formatMeters(item.dimensions.width)} × {formatMeters(item.dimensions.length)} × {formatMeters(item.dimensions.height)}
                       </Text>
                       <Text style={[styles.furniturePosition, { color: colors.textMuted }]}>
                         Position: ({item.position.x.toFixed(1)}, {item.position.z.toFixed(1)}) | Rotation: {item.position.rotation}°
                       </Text>
                     </View>
                     <Text style={[styles.furnitureCategory, { color: colors.accent, backgroundColor: colors.accentSoft }]}>{item.category}</Text>
-                  </View>
+                  </TouchableOpacity>
                 </ScaleInView>
               ))}
             </View>
@@ -409,11 +466,11 @@ export default function Layout3DScreen() {
 }
 
 // Helper component for info rows
-function InfoRow({ label, value, colors }: { label: string; value: string; colors: any }) {
+function InfoRow({ label, value, colors, valueColor }: { label: string; value: string; colors: any; valueColor?: string }) {
   return (
     <View style={[styles.infoRow, { borderBottomColor: colors.border }]}>
       <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>{label}:</Text>
-      <Text style={[styles.infoValue, { color: colors.textPrimary }]}>{value}</Text>
+      <Text style={[styles.infoValue, { color: valueColor || colors.textPrimary }]}>{value}</Text>
     </View>
   );
 }
@@ -613,6 +670,12 @@ const styles = StyleSheet.create({
   },
   furnitureInfo: {
     flex: 1,
+  },
+  furnitureSwatch: {
+    width: 14,
+    height: 14,
+    borderRadius: 4,
+    marginRight: 10,
   },
   furnitureName: {
     fontSize: 14,

@@ -2,6 +2,7 @@ import React from 'react';
 import { Text, TextProps, StyleSheet } from 'react-native';
 import { useTheme, ThemeColors } from '@/contexts/ThemeContext';
 import { typography } from './theme';
+import { familyForWeight } from '@/utils/fontFamily';
 
 type Variant = 'h1' | 'h2' | 'h3' | 'subtitle' | 'body' | 'small' | 'caption' | 'label';
 
@@ -83,8 +84,14 @@ export const AppText: React.FC<AppTextProps> = ({
   // because the file loader registers specific files (e.g. PlayfairDisplay-Bold)
   // and setting a fontWeight property forces the OS to look for weights inside that font file,
   // failing validation and falling back to default system sans-serif.
-  const finalFontFamily = flattenedStyle.fontFamily || variantStyle.fontFamily;
-  const finalFontWeight = finalFontFamily ? undefined : (weight ?? flattenedStyle.fontWeight ?? variantStyle.fontWeight);
+  // A requested weight is expressed through the matching font file instead.
+  const requestedWeight = weight ?? flattenedStyle.fontWeight;
+  const finalFontFamily =
+    flattenedStyle.fontFamily ||
+    (requestedWeight != null
+      ? familyForWeight(variantStyle.fontFamily, requestedWeight)
+      : variantStyle.fontFamily);
+  const finalFontWeight = finalFontFamily ? undefined : (requestedWeight ?? variantStyle.fontWeight);
 
   return (
     <Text

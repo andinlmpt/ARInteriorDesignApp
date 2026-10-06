@@ -193,6 +193,11 @@ public class ARSceneBridge : MonoBehaviour
                 OpenMeasuredFurnitureDesign();
                 break;
 
+            case "openDesignLayoutInAr":
+                ARMeasurementRnBridge.PendingDesignLayoutPayload = message.data ?? string.Empty;
+                OpenRoomMeasurement();
+                break;
+
             case "ping":
                 UnityMessageBridge.SendToApp(EventReady, SceneManager.GetActiveScene().name);
                 break;
@@ -253,6 +258,10 @@ public class ARSceneBridge : MonoBehaviour
             case "spawnFurniture":
             case "selectFurniture": // legacy alias — RN used to send a bare catalog id
                 SpawnFurniture(message.data);
+                break;
+
+            case "applyLayout":
+                ApplyLayout(message.data);
                 break;
 
             case "removeSelectedFurniture":
@@ -606,6 +615,32 @@ public class ARSceneBridge : MonoBehaviour
         }
 
         placementController.SpawnFurniture(ParseSpawnRequest(payload));
+    }
+
+    /// <summary>Places a full design-flow proposal at explicit world poses.</summary>
+    public void ApplyLayout(string payload)
+    {
+        if (placementController == null)
+        {
+            SendError("notConfigured", "FurniturePlacementController is missing from the scene.");
+            return;
+        }
+
+        ApplyLayoutRequest request = null;
+        if (!string.IsNullOrWhiteSpace(payload))
+        {
+            try
+            {
+                request = JsonUtility.FromJson<ApplyLayoutRequest>(payload);
+            }
+            catch (System.Exception e)
+            {
+                SendError("badRequest", $"applyLayout JSON was invalid: {e.Message}");
+                return;
+            }
+        }
+
+        placementController.ApplyLayout(request);
     }
 
     /// <summary>Direct entry point for native callers that prefer positional arguments.</summary>

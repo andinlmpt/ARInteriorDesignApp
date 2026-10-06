@@ -83,6 +83,8 @@ export interface FurnitureItem {
     high: number;
   };
   zIndex: number; // for layering
+  /** Display color for 3D/floor-plan rendering (hex). */
+  color?: string;
 }
 
 // Generated Layout
@@ -129,6 +131,8 @@ export interface DesignProposal {
     low: number;
     mid: number;
     high: number;
+    totalPhp?: number;
+    currency?: 'PHP' | 'USD';
   };
   pros: string[];
   cons: string[];

@@ -1,3 +1,5 @@
+import type { RoomObstacle, RoomOpening, RoomValidation, RoomWall } from './room-measurement';
+
 export const UNITY_AR_GAME_OBJECT = 'Managers';
 export const UNITY_AR_RECEIVE_METHOD = 'ReceiveMessage';
 
@@ -23,7 +25,8 @@ export type UnityToRNEvent =
   | 'measurementPlanReady'
   | 'measurementPlanClosed'
   | 'requestRnExport3d'
-  | 'measuredFurnitureReady';
+  | 'measuredFurnitureReady'
+  | 'layoutAlignment';
 
 export type RNToUnityMethod =
   | 'selectFurniture'
@@ -34,10 +37,14 @@ export type RNToUnityMethod =
   | 'openRoomMeasurement'
   | 'openFurnitureDesign'
   | 'openMeasuredFurnitureDesign'
+  | 'openDesignLayoutInAr'
   | 'getScanStatus'
   | 'confirmRoomScan'
   | 'spawnFurniture'
+  | 'applyLayout'
   | 'removeSelectedFurniture'
+  | 'replaceSelectedFurniture'
+  | 'setFurnitureColor'
   | 'clearScene'
   | 'getCurrentLayout'
   | 'exportLayout'
@@ -56,7 +63,12 @@ export type RNToUnityMethod =
   | 'plannerOrbit'
   | 'plannerPointer'
   | 'wakePlanner'
-  | 'furnitureGesture';
+  | 'furnitureGesture'
+  | 'beginLayoutAlignment'
+  | 'markAlignmentCorner'
+  | 'undoAlignmentCorner'
+  | 'flipLayoutAlignment'
+  | 'setLayoutView';
 
 export interface UnityOutboundMessage {
   event: UnityToRNEvent | string;
@@ -107,6 +119,48 @@ export interface SpawnFurnitureRequest {
   width: number;
   height: number;
   depth: number;
+  /**
+   * When true, Unity places immediately at `position` instead of waiting for a tap.
+   * Required because a missing vector and (0,0,0) look the same to JsonUtility.
+   */
+  hasPosition?: boolean;
+  /** World-space floor point in metres (feet of the piece). */
+  position?: UnityVec3;
+  /** Degrees around Y. Used only when hasPosition is true. */
+  rotationY?: number;
+  /** Optional "#RRGGBB" tint applied once the piece is placed. */
+  colorHex?: string;
+}
+
+/** Payload for `setFurnitureColor`. Empty `instanceId` targets the selected piece. */
+export interface FurnitureColorRequest {
+  instanceId?: string;
+  /** "#RRGGBB", or empty to restore the model's own colours. */
+  colorHex: string;
+}
+
+export type LayoutAlignmentState = 'idle' | 'aligning' | 'aligned';
+export type LayoutViewMode = 'real' | 'plan';
+export type LayoutAlignmentError = '' | 'noFloor' | 'tooClose' | 'noRoom';
+
+/** `layoutAlignment` event — lining the design layout up with the real room. */
+export interface LayoutAlignmentPayload {
+  state: LayoutAlignmentState;
+  /** Corners marked so far while aligning (0 or 1). */
+  step: number;
+  floorDetected: boolean;
+  /** Distance between the marked corners (live while aiming the second), metres. */
+  measuredM: number;
+  /** Length of the plan wall it was matched to, metres. */
+  planM: number;
+  view: LayoutViewMode;
+  error: LayoutAlignmentError;
+}
+
+/** Payload for the `applyLayout` method — a full design-flow proposal. */
+export interface ApplyLayoutRequest {
+  clearExisting?: boolean;
+  items: SpawnFurnitureRequest[];
 }
 
 export type ScanPhase = 'idle' | 'scanning' | 'readyToConfirm' | 'confirmed';
@@ -123,6 +177,8 @@ export type ScanHint =
   | 'moveAround'
   | 'scanWalls'
   | 'keepScanning'
+  | 'closeOutline'
+  | 'outlineCrosses'
   | 'readyToConfirm'
   | 'confirmed';
 
@@ -163,6 +219,14 @@ export interface RoomConfirmedPayload extends ScanStatusPayload {
   floorPolygon?: { points?: UnityVec3[] };
   /** True when Unity skipped real measurement (synthetic open floor). */
   furniturePlacementOnly?: boolean;
+  /** World-space floor height in metres. Older Unity builds omit the room-model fields. */
+  floorY?: number;
+  perimeterM?: number;
+  volumeM3?: number;
+  walls?: RoomWall[];
+  openings?: RoomOpening[];
+  obstacles?: RoomObstacle[];
+  validation?: RoomValidation;
 }
 
 /** Payload of the `furniturePlaced` event and of each entry in `layoutChanged`. */
@@ -176,6 +240,15 @@ export interface PlacedFurniturePayload {
   scale: number;
   dimensions: UnityVec3;
   selected: boolean;
+  /** "#RRGGBB" tint chosen by the user; empty keeps the model's own colours. */
+  colorHex?: string;
+  /**
+   * True when `sourcePosition` is valid: the pose in the frame sent with `applyLayout`
+   * (room-centred metres), with the two-corner wall alignment undone.
+   */
+  hasSource?: boolean;
+  sourcePosition?: UnityVec3;
+  sourceRotationY?: number;
 }
 
 /** Payload of the `layoutChanged` event. */

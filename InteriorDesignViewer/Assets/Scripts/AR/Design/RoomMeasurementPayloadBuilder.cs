@@ -55,7 +55,42 @@ public static class RoomMeasurementPayloadBuilder
         }
 
         payload.floorPolygon = BuildPolygon(scanController.FloorPolygon);
+        ApplyRoomModel(payload, scanController.FloorPolygon, dims.height);
         return payload;
+    }
+
+    static void ApplyRoomModel(RoomConfirmedPayload payload, IReadOnlyList<Vector3> polygon, float height)
+    {
+        var walls = RoomPolygonUtil.BuildWalls(polygon);
+        payload.walls = new RoomWallPayload[walls.Count];
+        for (var i = 0; i < walls.Count; i++)
+        {
+            payload.walls[i] = new RoomWallPayload
+            {
+                index = walls[i].index,
+                start = new ARDesignVec3(walls[i].start),
+                end = new ARDesignVec3(walls[i].end),
+                length = walls[i].length,
+            };
+        }
+
+        payload.floorY = RoomPolygonUtil.ComputeFloorY(polygon);
+        payload.perimeterM = RoomPolygonUtil.ComputePerimeter(polygon);
+        payload.volumeM3 = payload.floorAreaSqm * height;
+        var spatial = Object.FindFirstObjectByType<ARDesignSpatialMappingController>();
+        payload.openings = spatial != null
+            ? spatial.ToOpeningPayloads()
+            : System.Array.Empty<RoomOpeningPayload>();
+        payload.obstacles = spatial != null
+            ? spatial.ToObstaclePayloads()
+            : System.Array.Empty<RoomObstaclePayload>();
+
+        var errors = RoomPolygonUtil.Validate(polygon);
+        payload.validation = new RoomValidationPayload
+        {
+            isValid = errors.Count == 0,
+            errors = errors.ToArray(),
+        };
     }
 
     static RoomPolygonPayload BuildPolygon(IReadOnlyList<Vector3> polygon)

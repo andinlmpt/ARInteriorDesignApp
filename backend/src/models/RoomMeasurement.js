@@ -13,6 +13,41 @@ const vec3Schema = new mongoose.Schema(
   { _id: false },
 );
 
+const wallSchema = new mongoose.Schema(
+  {
+    index: { type: Number, default: 0 },
+    start: vec3Schema,
+    end: vec3Schema,
+    length: { type: Number, default: 0 },
+  },
+  { _id: false },
+);
+
+const openingSchema = new mongoose.Schema(
+  {
+    id: { type: String, trim: true, default: '' },
+    type: { type: String, enum: ['door', 'window'], required: true },
+    wallIndex: { type: Number, default: 0 },
+    offsetAlongWall: { type: Number, default: 0 },
+    width: { type: Number, default: 0 },
+    height: { type: Number, default: 0 },
+    sillHeight: { type: Number, default: 0 },
+    swing: { type: String, enum: ['left', 'right', 'none'], default: 'none' },
+  },
+  { _id: false },
+);
+
+const obstacleSchema = new mongoose.Schema(
+  {
+    id: { type: String, trim: true, default: '' },
+    type: { type: String, trim: true, default: 'other' },
+    center: vec3Schema,
+    size: vec3Schema,
+    yaw: { type: Number, default: 0 },
+  },
+  { _id: false },
+);
+
 const roomMeasurementSchema = new mongoose.Schema(
   {
     userId: {
@@ -45,6 +80,16 @@ const roomMeasurementSchema = new mongoose.Schema(
     floorPolygon: {
       type: [vec3Schema],
       default: [],
+    },
+    floorY: { type: Number, default: 0 },
+    perimeterM: { type: Number, default: 0 },
+    volumeM3: { type: Number, default: 0 },
+    walls: { type: [wallSchema], default: [] },
+    openings: { type: [openingSchema], default: [] },
+    obstacles: { type: [obstacleSchema], default: [] },
+    validation: {
+      isValid: { type: Boolean, default: true },
+      errors: { type: [String], default: [] },
     },
     scanMetadata: {
       planeCount: { type: Number, default: 0 },

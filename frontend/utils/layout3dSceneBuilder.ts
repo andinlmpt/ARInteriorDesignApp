@@ -254,7 +254,10 @@ export function createFurnitureMesh(item: Layout3DFurnitureItem): THREE.Mesh | n
   
   // Get color based on category
   const categoryColor = FURNITURE_COLORS[item.category?.toLowerCase() || 'default'] || FURNITURE_COLORS.default;
-  const color = item.color ? parseInt(item.color.replace('#', '0x')) : categoryColor;
+  const parsedColor = item.color && /^#?[0-9a-f]{6}$/i.test(item.color)
+    ? parseInt(item.color.replace('#', ''), 16)
+    : NaN;
+  const color = Number.isFinite(parsedColor) ? parsedColor : categoryColor;
   
   // Create material
   const material = new THREE.MeshStandardMaterial({
@@ -284,6 +287,7 @@ export function createFurnitureMesh(item: Layout3DFurnitureItem): THREE.Mesh | n
   // Store metadata
   mesh.userData.furnitureId = item.id;
   mesh.userData.furnitureName = item.name;
+  mesh.userData.baseColor = color;
   
   return mesh;
 }
@@ -359,7 +363,9 @@ export function highlightFurniture(mesh: THREE.Mesh, highlight: boolean): void {
  * Reset furniture material to original
  */
 export function resetFurnitureMaterial(mesh: THREE.Mesh, category?: string): void {
-  const color = FURNITURE_COLORS[category?.toLowerCase() || 'default'] || FURNITURE_COLORS.default;
+  const color = typeof mesh.userData.baseColor === 'number'
+    ? mesh.userData.baseColor
+    : FURNITURE_COLORS[category?.toLowerCase() || 'default'] || FURNITURE_COLORS.default;
   mesh.material = new THREE.MeshStandardMaterial({
     color,
     roughness: 0.7,

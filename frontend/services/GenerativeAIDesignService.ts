@@ -42,6 +42,7 @@ export class GenerativeAIDesignService {
           budget: preferences.aestheticPreferences?.budget,
           userPrompt: preferences.userPrompt,
           optimizationGoal: options.optimizationGoal,
+          variationCount: 3,
           constraints: {
             minimumWalkwayDistance: constraints.minimumWalkwayDistance,
             doorClearance: constraints.doorClearance,

@@ -63,6 +63,8 @@ export interface FurnitureLibraryItem {
   emoji?: string;
   icon?: string;
   price: string;
+  /** Numeric catalog price in ₱ when available. */
+  pricePhp?: number;
   color: string;
   category: FurnitureCategory;
   thumbnail?: string;
@@ -73,6 +75,8 @@ export interface FurnitureLibraryItem {
   roomTypes?: string[];
   /** Inventory count from admin catalog; 0 = out of stock. */
   quantity?: number;
+  /** Finish/upholstery colours from the admin catalog (names or #hex). */
+  availableColors?: string[];
   model3D?: {
     url: string | number;
     format: 'glb' | 'gltf';

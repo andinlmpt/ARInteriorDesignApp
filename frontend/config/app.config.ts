@@ -23,9 +23,6 @@ export const FONTS = {
   // Playfair Display — App Name & Screen Titles (34–40px, 28–32px)
   playfairBold:     'PlayfairDisplay-Bold',
   playfairSemiBold: 'PlayfairDisplay-SemiBold',
-  playfairMedium:   'PlayfairDisplay-Medium',
-  playfairRegular:  'PlayfairDisplay-Regular',
-
   // Inter — Section Titles, Body, Caption, Buttons
   interBold:        'Inter-Bold',
   interSemiBold:    'Inter-SemiBold',

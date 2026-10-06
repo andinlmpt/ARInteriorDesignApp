@@ -9,6 +9,25 @@ const CATEGORIES = [
   { value: 'beds', label: 'Beds' },
 ];
 
+const DESIGN_STYLES = [
+  'Minimalist',
+  'Modern',
+  'Scandinavian',
+  'Industrial',
+  'Contemporary',
+  'Traditional',
+  'Rustic',
+];
+
+const ROOM_TYPES = [
+  'Living Room',
+  'Bedroom',
+  'Kitchen',
+  'Dining Room',
+  'Office',
+  'Bathroom',
+];
+
 const emptyForm: Partial<FurnitureItem> = {
   displayName: '',
   category: 'chair',
@@ -25,6 +44,9 @@ const emptyForm: Partial<FurnitureItem> = {
   availableColors: [],
   active: true,
   sortOrder: 0,
+  pricePhp: 0,
+  styles: [],
+  roomTypes: [],
 };
 
 type FurnitureFormModalProps = {
@@ -52,6 +74,16 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
 
   function updateField<K extends keyof FurnitureItem>(key: K, value: FurnitureItem[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function toggleListValue(key: 'styles' | 'roomTypes', value: string) {
+    setForm((prev) => {
+      const list = Array.isArray(prev[key]) ? [...(prev[key] as string[])] : [];
+      const index = list.indexOf(value);
+      if (index >= 0) list.splice(index, 1);
+      else list.push(value);
+      return { ...prev, [key]: list, ...(key === 'roomTypes' ? { rooms: list } : {}) };
+    });
   }
 
   async function handleGlbUpload(file: File | null) {
@@ -99,6 +131,10 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
       heightIn: Number(form.heightIn) || 0,
       quantity: Math.max(0, Math.floor(Number(form.quantity) || 0)),
       availableColors: Array.isArray(form.availableColors) ? form.availableColors : [],
+      pricePhp: Math.max(0, Math.round(Number(form.pricePhp) || 0)),
+      styles: Array.isArray(form.styles) ? form.styles : [],
+      roomTypes: Array.isArray(form.roomTypes) ? form.roomTypes : [],
+      rooms: Array.isArray(form.roomTypes) ? form.roomTypes : [],
       active: form.active !== false,
       sortOrder: Number(form.sortOrder) || 0,
     };
@@ -167,6 +203,58 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
               </option>
             ))}
           </select>
+        </div>
+
+        <div className="field">
+          <label htmlFor="modal-pricePhp">Price (₱)</label>
+          <input
+            id="modal-pricePhp"
+            type="number"
+            min={0}
+            step={100}
+            value={form.pricePhp ?? 0}
+            onChange={(e) => updateField('pricePhp', Math.max(0, Math.round(Number(e.target.value) || 0)))}
+            placeholder="e.g. 18999"
+          />
+          <small style={{ color: 'var(--muted)' }}>Used for budget-aware AI layouts. 0 = mock price on mobile.</small>
+        </div>
+
+        <div className="field">
+          <label>Design styles</label>
+          <div className="chip-row">
+            {DESIGN_STYLES.map((style) => {
+              const selected = (form.styles || []).includes(style);
+              return (
+                <button
+                  key={style}
+                  type="button"
+                  className={`chip-toggle${selected ? ' chip-toggle-active' : ''}`}
+                  onClick={() => toggleListValue('styles', style)}
+                >
+                  {style}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Suitable rooms</label>
+          <div className="chip-row">
+            {ROOM_TYPES.map((room) => {
+              const selected = (form.roomTypes || form.rooms || []).includes(room);
+              return (
+                <button
+                  key={room}
+                  type="button"
+                  className={`chip-toggle${selected ? ' chip-toggle-active' : ''}`}
+                  onClick={() => toggleListValue('roomTypes', room)}
+                >
+                  {room}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <div className="field">

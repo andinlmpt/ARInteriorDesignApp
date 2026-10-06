@@ -17,7 +17,7 @@ export type ProjectStatus = 'draft' | 'in-progress' | 'completed';
 /** How the project was created / last updated. */
 export type ProjectSource = 'manual' | 'unity-export';
 
-export type ProjectArMode = 'furniture' | 'measure';
+export type ProjectArMode = 'furniture' | 'measure' | 'design';
 
 export type DesignStyle = 
   | 'Modern'

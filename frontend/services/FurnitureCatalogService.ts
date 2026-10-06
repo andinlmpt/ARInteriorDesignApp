@@ -20,6 +20,9 @@ export interface RemoteFurnitureItem {
   heightIn?: number;
   availableColors?: string[];
   quantity?: number;
+  pricePhp?: number;
+  styles?: string[];
+  rooms?: string[];
 }
 
 export interface FurnitureCatalogResponse {

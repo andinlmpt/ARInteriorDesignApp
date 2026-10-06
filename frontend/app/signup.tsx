@@ -8,7 +8,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AUTH_USER_STORAGE_KEY } from '@/data/authData';
 import AuthService from '@/services/AuthService';
 import { useTheme } from '@/contexts/ThemeContext';
-import { spacing, radii } from '@/components/ui/theme';
+import { spacing, radii, typography } from '@/components/ui/theme';
 import { AnimatedButton, FadeInView, SlideInView } from '@/components/interactive';
 import { getHorizontalPadding, isSmallScreen, getResponsiveFontSize } from '@/utils/responsive';
 import { AppLogo } from '@/components/ui/AppLogo';
@@ -468,7 +468,7 @@ const styles = StyleSheet.create({
   },
   topAppName: {
     fontSize: getResponsiveFontSize(isSmallScreen ? 24 : 28),
-    fontWeight: '700',
+    fontFamily: typography.family.playfairBold,
     marginBottom: spacing.xs,
     letterSpacing: 0.5,
     textAlign: 'center',
@@ -480,14 +480,14 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     textAlign: 'center',
     width: '100%',
-    color: '#E69868',
+    color: '#FFFFFF',
   },
   titleContainer: {
     marginBottom: isSmallScreen ? spacing.lg : spacing.xl,
   },
   title: {
     fontSize: getResponsiveFontSize(isSmallScreen ? 28 : 32),
-    fontWeight: '700',
+    fontFamily: typography.family.playfairBold,
     marginBottom: spacing.xs,
   },
   titleUnderline: {

@@ -7,7 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import AuthService from '@/services/AuthService';
 import { ApiError } from '@/services/apiClient';
 import { useTheme } from '@/contexts/ThemeContext';
-import { spacing, radii } from '@/components/ui/theme';
+import { spacing, radii, typography } from '@/components/ui/theme';
 import { AnimatedButton, FadeInView, SlideInView } from '@/components/interactive';
 import { getHorizontalPadding, isSmallScreen, getResponsiveFontSize } from '@/utils/responsive';
 import { AppLogo } from '@/components/ui/AppLogo';
@@ -445,7 +445,7 @@ const styles = StyleSheet.create({
   },
   topAppName: {
     fontSize: getResponsiveFontSize(isSmallScreen ? 24 : 28),
-    fontWeight: '700',
+    fontFamily: typography.family.playfairBold,
     marginBottom: spacing.xs,
     letterSpacing: 0.5,
     textAlign: 'center',
@@ -464,7 +464,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: getResponsiveFontSize(isSmallScreen ? 28 : 32),
-    fontWeight: '700',
+    fontFamily: typography.family.playfairBold,
     marginBottom: spacing.xs,
   },
   titleUnderline: {

@@ -53,7 +53,11 @@ public class ARMeasurementFurnitureBootstrap : MonoBehaviour
         if (scan != null && scan.IsConfirmed)
         {
             layout?.EnterLayoutMode();
-            layout?.ApplyMeasurementViewPreset(topDown: false);
+            var alignment = GetComponent<ARDesignLayoutAlignmentController>();
+            if (alignment != null && alignment.OwnsView)
+                layout?.SetViewMode(alignment.PreferredView);
+            else
+                layout?.ApplyMeasurementViewPreset(topDown: false);
         }
 
         var exportManager = FindFirstObjectByType<RoomExportManager>(FindObjectsInactive.Include);
@@ -146,12 +150,63 @@ public class ARMeasurementFurnitureBootstrap : MonoBehaviour
     {
         if (history == null) return;
         UnityMessageBridge.SendToApp("historyChanged", JsonUtility.ToJson(history.BuildState()));
+        // History changes on every committed move/rotate/undo/redo — keep RN's layout copy current.
+        SendLayout();
     }
 
     void SendLayout()
     {
         if (placement == null) return;
-        UnityMessageBridge.SendToApp("layoutChanged", JsonUtility.ToJson(placement.BuildLayout()));
+        var layout = placement.BuildLayout();
+        GetComponent<ARDesignLayoutAlignmentController>()?.FillSourcePoses(layout);
+        UnityMessageBridge.SendToApp("layoutChanged", JsonUtility.ToJson(layout));
+    }
+
+    public void ReplaceSelectedFurniture(string data)
+    {
+        if (placement == null)
+        {
+            OnSpawnFailed("notConfigured", "Furniture placement is not ready yet.");
+            return;
+        }
+
+        SpawnFurnitureRequest request;
+        try
+        {
+            request = JsonUtility.FromJson<SpawnFurnitureRequest>(data ?? string.Empty);
+        }
+        catch (Exception e)
+        {
+            OnSpawnFailed("badRequest", e.Message);
+            return;
+        }
+
+        if (!placement.ReplaceSelected(request))
+            OnSpawnFailed("nothingSelected", "Select a piece of furniture to replace.");
+    }
+
+    public void SetFurnitureColor(string data)
+    {
+        if (placement == null) return;
+
+        FurnitureColorRequest request;
+        try
+        {
+            request = JsonUtility.FromJson<FurnitureColorRequest>(data ?? string.Empty);
+        }
+        catch (Exception e)
+        {
+            OnSpawnFailed("badRequest", e.Message);
+            return;
+        }
+
+        if (request == null || !placement.SetFurnitureColor(request.instanceId, request.colorHex))
+        {
+            OnSpawnFailed("nothingSelected", "Select a piece of furniture to recolour.");
+            return;
+        }
+
+        SendLayout();
     }
 
     public void SpawnFurniture(string data)
@@ -177,5 +232,34 @@ public class ARMeasurementFurnitureBootstrap : MonoBehaviour
         }
 
         placement.SpawnFurniture(request);
+    }
+
+    public void ApplyLayout(string data)
+    {
+        if (placement == null)
+            ActivateForMeasuredPlacement();
+
+        if (placement == null)
+        {
+            OnSpawnFailed("notConfigured", "Furniture placement is not ready yet.");
+            return;
+        }
+
+        ApplyLayoutRequest request = null;
+        if (!string.IsNullOrWhiteSpace(data))
+        {
+            try
+            {
+                request = JsonUtility.FromJson<ApplyLayoutRequest>(data);
+            }
+            catch (Exception e)
+            {
+                OnSpawnFailed("badRequest", e.Message);
+                return;
+            }
+        }
+
+        GetComponent<ARDesignLayoutAlignmentController>()?.TransformRequest(request);
+        placement.ApplyLayout(request);
     }
 }

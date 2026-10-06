@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radii } from '@/components/ui/theme';
 
@@ -18,10 +18,23 @@ const UNITY_STEPS = [
 
 export function ARViewUnityDevNotice() {
   const router = useRouter();
+  const params = useLocalSearchParams<{
+    flow?: string | string[];
+    projectId?: string | string[];
+  }>();
+  const flow = Array.isArray(params.flow) ? params.flow[0] : params.flow;
+  const projectId = Array.isArray(params.projectId) ? params.projectId[0] : params.projectId;
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/(tabs)');
+  };
+
+  const continueDesign = () => {
+    router.replace({
+      pathname: '/design-preferences',
+      params: { projectId: projectId || '', flow: 'design' },
+    });
   };
 
   return (
@@ -54,7 +67,22 @@ export function ARViewUnityDevNotice() {
         on your LAN and you tap Save measurement after confirming a scan.
       </Text>
 
-      <TouchableOpacity style={styles.primaryButton} onPress={goBack} accessibilityRole="button">
+      {flow === 'design' ? (
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={continueDesign}
+          accessibilityRole="button"
+          accessibilityLabel="Continue to design preferences"
+        >
+          <Text style={styles.primaryButtonText}>Continue to preferences</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      <TouchableOpacity
+        style={flow === 'design' ? [styles.primaryButton, styles.secondaryButton] : styles.primaryButton}
+        onPress={goBack}
+        accessibilityRole="button"
+      >
         <Text style={styles.primaryButtonText}>Back to app</Text>
       </TouchableOpacity>
     </ScrollView>
@@ -149,5 +177,9 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
+  },
+  secondaryButton: {
+    marginTop: spacing.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
   },
 });

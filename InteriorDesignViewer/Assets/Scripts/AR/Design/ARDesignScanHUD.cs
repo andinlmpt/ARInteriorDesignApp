@@ -12,6 +12,7 @@ public class ARDesignScanHUD : MonoBehaviour
     [SerializeField] private FurnitureCatalog catalog;
     [SerializeField] private ARPlacementIndicator placementIndicator;
     [SerializeField] private ARDesignCornerRoomBuilder cornerBuilder;
+    [SerializeField] private ARDesignSpatialMappingController spatialMapping;
     [SerializeField] private bool spawnSampleOnConfirm = false;
     [SerializeField] private bool measurementOnlyMode = false;
     [SerializeField] private bool enableNativeHud = true;
@@ -35,6 +36,12 @@ public class ARDesignScanHUD : MonoBehaviour
     RectTransform bottomShadow;
     Button confirmButton;
     Button undoButton;
+    Button auxTypeButton;
+    Button auxSwingButton;
+    Text auxTypeLabel;
+    Text auxSwingLabel;
+    Image auxTypeImage;
+    Image auxSwingImage;
     Button startButton;
     Button finishButton;
     Text confirmLabel;
@@ -62,6 +69,9 @@ public class ARDesignScanHUD : MonoBehaviour
         if (catalog == null) catalog = FindFirstObjectByType<FurnitureCatalog>();
         if (placementIndicator == null) placementIndicator = FindFirstObjectByType<ARPlacementIndicator>();
         if (cornerBuilder == null) cornerBuilder = FindFirstObjectByType<ARDesignCornerRoomBuilder>();
+        if (spatialMapping == null) spatialMapping = FindFirstObjectByType<ARDesignSpatialMappingController>();
+        if (measurementOnlyMode && spatialMapping == null && scanController != null)
+            spatialMapping = EnsureSpatialMappingRuntime(scanController.gameObject);
 
         active = enableNativeHud && ShouldShowNativeHud();
         if (!active)
@@ -100,6 +110,12 @@ public class ARDesignScanHUD : MonoBehaviour
             cornerBuilder.CornersChanged += OnCornersChanged;
             cornerBuilder.HeightPhaseChanged += OnCornersChanged;
         }
+
+        if (spatialMapping != null)
+        {
+            spatialMapping.PhaseChanged += OnSpatialChanged;
+            spatialMapping.DataChanged += OnSpatialChanged;
+        }
     }
 
     void OnDisable()
@@ -112,7 +128,15 @@ public class ARDesignScanHUD : MonoBehaviour
             cornerBuilder.CornersChanged -= OnCornersChanged;
             cornerBuilder.HeightPhaseChanged -= OnCornersChanged;
         }
+
+        if (spatialMapping != null)
+        {
+            spatialMapping.PhaseChanged -= OnSpatialChanged;
+            spatialMapping.DataChanged -= OnSpatialChanged;
+        }
     }
+
+    void OnSpatialChanged() => RefreshCornerUi();
 
     void Start()
     {
@@ -186,11 +210,23 @@ public class ARDesignScanHUD : MonoBehaviour
 
     void RefreshCornerUi()
     {
+        if (spatialMapping != null
+            && spatialMapping.CurrentPhase != ARDesignSpatialMappingController.Phase.Outline)
+        {
+            RefreshSpatialUi();
+            return;
+        }
+
+        if (auxTypeButton != null)
+            auxTypeButton.gameObject.SetActive(false);
+
         var inHeightPhase = cornerBuilder != null && cornerBuilder.IsInHeightPhase;
         var count = cornerBuilder != null ? cornerBuilder.CornerCount : 0;
         var canConfirmHeight = cornerBuilder != null && cornerBuilder.CanConfirmHeight;
+        var canCloseWidth = cornerBuilder != null && cornerBuilder.CanClose;
         var canConfirmWidth = cornerBuilder != null && cornerBuilder.CanConfirm;
-        var canConfirm = inHeightPhase ? canConfirmHeight : canConfirmWidth;
+        var outlineCrosses = cornerBuilder != null && cornerBuilder.IsOutlineSelfIntersecting;
+        var canConfirm = inHeightPhase ? canConfirmHeight : (canConfirmWidth || canCloseWidth);
         var liveHeightCm = cornerBuilder != null && cornerBuilder.HasLiveHeightPreview
             ? Mathf.RoundToInt(cornerBuilder.LiveHeightMeters * 100f)
             : 0;
@@ -230,16 +266,24 @@ public class ARDesignScanHUD : MonoBehaviour
             {
                 subtitleLabel.text = "Walk the room · tap each floor corner";
             }
+            else if (outlineCrosses)
+            {
+                subtitleLabel.text = "Walls cross · tap Undo to fix the last corner";
+            }
+            else if (canConfirmWidth)
+            {
+                subtitleLabel.text = $"{count} walls · room closed";
+            }
             else if (liveWidthCm > 0)
             {
-                subtitleLabel.text = canConfirmWidth
-                    ? $"{count} corners · live {liveWidthCm} cm · ready to lock"
+                subtitleLabel.text = canCloseWidth
+                    ? $"{count} corners · live {liveWidthCm} cm · ready to close"
                     : $"{count} corners · live {liveWidthCm} cm";
             }
             else
             {
-                subtitleLabel.text = canConfirmWidth
-                    ? $"{count} corners · ready to lock"
+                subtitleLabel.text = canCloseWidth
+                    ? $"{count} corners · ready to close"
                     : $"{count} corners · keep outlining";
             }
         }
@@ -249,7 +293,7 @@ public class ARDesignScanHUD : MonoBehaviour
             if (stepDots[i] == null) continue;
             var filled = inHeightPhase
                 ? (i == 0 && cornerBuilder.HasHeightBase) || (canConfirmHeight && i < 2)
-                : i < count || (canConfirmWidth && i < 3);
+                : i < count || ((canConfirmWidth || canCloseWidth) && i < 3);
             stepDots[i].color = filled ? DotActive : DotIdle;
             stepDots[i].rectTransform.sizeDelta = filled ? new Vector2(14f, 14f) : new Vector2(10f, 10f);
         }
@@ -326,10 +370,15 @@ public class ARDesignScanHUD : MonoBehaviour
                     }
                     else
                     {
-                        confirmLabel.text = canConfirmWidth
-                            ? (measurementOnlyMode ? "Generate Layout" : "Done")
-                            : (measurementOnlyMode ? "Create a node" : "Add corners");
-                        confirmLabel.color = canConfirmWidth
+                        if (canConfirmWidth)
+                            confirmLabel.text = measurementOnlyMode ? "Generate Layout" : "Done";
+                        else if (canCloseWidth)
+                            confirmLabel.text = "Close room";
+                        else if (outlineCrosses)
+                            confirmLabel.text = "Walls cross";
+                        else
+                            confirmLabel.text = measurementOnlyMode ? "Create a node" : "Add corners";
+                        confirmLabel.color = canConfirm
                             ? Color.white
                             : new Color(1f, 1f, 1f, 0.55f);
                     }
@@ -338,6 +387,113 @@ public class ARDesignScanHUD : MonoBehaviour
                 if (confirmImage != null)
                     confirmImage.color = canConfirm ? AccentReady : new Color(0.55f, 0.56f, 0.58f, 0.85f);
             }
+        }
+    }
+
+    void RefreshSpatialUi()
+    {
+        if (spatialMapping == null) return;
+
+        if (bottomDock != null) bottomDock.gameObject.SetActive(true);
+        if (bottomShadow != null) bottomShadow.gameObject.SetActive(true);
+        if (startButton != null) startButton.gameObject.SetActive(false);
+        if (finishButton != null) finishButton.gameObject.SetActive(false);
+
+        var phase = spatialMapping.CurrentPhase;
+        if (topHintLabel != null)
+        {
+            topHintLabel.text = phase switch
+            {
+                ARDesignSpatialMappingController.Phase.Openings =>
+                    "Mark doors & windows",
+                ARDesignSpatialMappingController.Phase.ExistingFurniture =>
+                    "Mark existing furniture",
+                _ => "Review your room map",
+            };
+        }
+
+        if (subtitleLabel != null)
+        {
+            subtitleLabel.text = phase switch
+            {
+                ARDesignSpatialMappingController.Phase.Openings => spatialMapping.HasPendingOpeningEdge
+                    ? $"Now tap the other edge of the {(spatialMapping.OpeningIsDoor ? "door" : "window")} on the same wall"
+                    : $"Tap the floor at one edge of a {(spatialMapping.OpeningIsDoor ? "door" : "window")} · {spatialMapping.OpeningCount} marked",
+                ARDesignSpatialMappingController.Phase.ExistingFurniture =>
+                    $"{spatialMapping.PendingSuggestionCount} auto · tap orange to add · " +
+                    $"{spatialMapping.ObstacleCount} saved · manual: {spatialMapping.SelectedObstacleType}",
+                _ => $"{spatialMapping.OpeningCount} openings · {spatialMapping.ObstacleCount} existing pieces",
+            };
+        }
+
+        if (auxTypeButton != null)
+        {
+            auxTypeButton.gameObject.SetActive(
+                phase == ARDesignSpatialMappingController.Phase.Openings
+                || phase == ARDesignSpatialMappingController.Phase.ExistingFurniture);
+            if (auxTypeLabel != null)
+            {
+                auxTypeLabel.text = phase switch
+                {
+                    ARDesignSpatialMappingController.Phase.Openings =>
+                        spatialMapping.OpeningIsDoor ? "Door" : "Window",
+                    ARDesignSpatialMappingController.Phase.ExistingFurniture =>
+                        spatialMapping.SelectedObstacleType,
+                    _ => "Type",
+                };
+            }
+        }
+
+        if (auxSwingButton != null)
+        {
+            var showSwing = phase == ARDesignSpatialMappingController.Phase.Openings
+                            && spatialMapping.OpeningIsDoor;
+            var showScan = phase == ARDesignSpatialMappingController.Phase.ExistingFurniture;
+            auxSwingButton.gameObject.SetActive(showSwing || showScan);
+            if (auxSwingLabel != null)
+            {
+                if (showScan)
+                    auxSwingLabel.text = "Scan";
+                else if (showSwing)
+                    auxSwingLabel.text = $"Swing {spatialMapping.OpeningSwing}";
+            }
+        }
+
+        if (undoButton != null)
+        {
+            var canUndo = spatialMapping.CanUndo();
+            undoButton.interactable = canUndo;
+            undoLabel.text = "Undo";
+            undoLabel.color = canUndo ? Ink : InkMuted;
+        }
+
+        if (confirmButton != null)
+        {
+            confirmButton.gameObject.SetActive(true);
+            confirmButton.interactable = true;
+            confirmLabel.text = phase switch
+            {
+                ARDesignSpatialMappingController.Phase.Openings => "Next: Furniture",
+                ARDesignSpatialMappingController.Phase.ExistingFurniture => "Next: Review",
+                _ => measurementOnlyMode ? "Generate Layout" : "Confirm map",
+            };
+            confirmLabel.color = Color.white;
+            if (confirmImage != null)
+                confirmImage.color = AccentReady;
+        }
+
+        for (var i = 0; i < stepDots.Length; i++)
+        {
+            if (stepDots[i] == null) continue;
+            var filled = phase switch
+            {
+                ARDesignSpatialMappingController.Phase.Openings => i <= 0,
+                ARDesignSpatialMappingController.Phase.ExistingFurniture => i <= 1,
+                ARDesignSpatialMappingController.Phase.ConfirmReview => i <= 2,
+                _ => false,
+            };
+            stepDots[i].color = filled ? DotActive : DotIdle;
+            stepDots[i].rectTransform.sizeDelta = filled ? new Vector2(14f, 14f) : new Vector2(10f, 10f);
         }
     }
 
@@ -353,6 +509,8 @@ public class ARDesignScanHUD : MonoBehaviour
             "tapNextCorner" => "Great job! Keep marking the corners of the room.",
             "tapThirdCorner" => "Tap a third corner",
             "tapMoreCorners" => "Keep tapping corners",
+            "closeOutline" => "Tap Close room when every corner is marked",
+            "outlineCrosses" => "Walls cross — undo the last corner",
             "readyToConfirm" => measurementOnlyMode
                 ? "Looking good — tap Generate Layout"
                 : "Looking good — tap Done",
@@ -367,17 +525,53 @@ public class ARDesignScanHUD : MonoBehaviour
     {
         return cornerBuilder != null
                && !cornerBuilder.IsInHeightPhase
+               && !cornerBuilder.IsLoopClosed
+               && !cornerBuilder.IsOutlineSelfIntersecting
                && cornerBuilder.CornerCount >= RetryCornerCount;
     }
 
     void OnUndoClicked()
     {
+        if (spatialMapping != null && spatialMapping.CanUndo())
+        {
+            spatialMapping.UndoLast();
+            RefreshCornerUi();
+            return;
+        }
+
         if (cornerBuilder != null && cornerBuilder.IsInHeightPhase)
             cornerBuilder.UndoHeightBase();
+        else if (cornerBuilder != null && cornerBuilder.IsLoopClosed)
+        {
+            cornerBuilder.ReopenLoop();
+            spatialMapping?.ResetToOutline();
+        }
         else if (IsRetryMode())
             cornerBuilder.ResetCorners();
         else
             cornerBuilder?.UndoLastCorner();
+        RefreshCornerUi();
+    }
+
+    void OnAuxTypeClicked()
+    {
+        if (spatialMapping == null) return;
+        if (spatialMapping.CurrentPhase == ARDesignSpatialMappingController.Phase.Openings)
+            spatialMapping.ToggleOpeningKind();
+        else if (spatialMapping.CurrentPhase == ARDesignSpatialMappingController.Phase.ExistingFurniture)
+            spatialMapping.CycleObstacleType();
+        RefreshCornerUi();
+    }
+
+    void OnAuxSwingClicked()
+    {
+        if (spatialMapping == null)
+            return;
+        if (spatialMapping.CurrentPhase == ARDesignSpatialMappingController.Phase.ExistingFurniture)
+            spatialMapping.RunFurnitureAutoScan();
+        else if (spatialMapping.CurrentPhase == ARDesignSpatialMappingController.Phase.Openings
+                 && spatialMapping.OpeningIsDoor)
+            spatialMapping.CycleOpeningSwing();
         RefreshCornerUi();
     }
 
@@ -421,9 +615,34 @@ public class ARDesignScanHUD : MonoBehaviour
             return;
         }
 
+        if (cornerBuilder != null && cornerBuilder.CanClose)
+        {
+            cornerBuilder.CloseLoop();
+            RefreshCornerUi();
+            return;
+        }
+
+        if (spatialMapping != null
+            && spatialMapping.CurrentPhase != ARDesignSpatialMappingController.Phase.Outline)
+        {
+            if (spatialMapping.TryPrimaryAction(out var confirmedRoom))
+            {
+                if (confirmedRoom)
+                    FinalizeRoomScan();
+                RefreshCornerUi();
+            }
+
+            return;
+        }
+
         if (cornerBuilder != null && !cornerBuilder.CanConfirm)
             return;
 
+        FinalizeRoomScan();
+    }
+
+    void FinalizeRoomScan()
+    {
         if (bridge != null)
             bridge.ConfirmRoomScan();
         else if (scanController != null && !scanController.ConfirmRoomScan())
@@ -543,11 +762,35 @@ public class ARDesignScanHUD : MonoBehaviour
             stepDots[i] = dot;
         }
 
+        auxTypeButton = CreatePillButton(
+            bottom,
+            "Door",
+            new Vector2(0.05f, 0.60f),
+            new Vector2(0.48f, 0.88f),
+            FrostSoft,
+            Ink,
+            OnAuxTypeClicked,
+            out auxTypeImage,
+            out auxTypeLabel);
+        auxTypeButton.gameObject.SetActive(false);
+
+        auxSwingButton = CreatePillButton(
+            bottom,
+            "Swing",
+            new Vector2(0.52f, 0.60f),
+            new Vector2(0.95f, 0.88f),
+            FrostSoft,
+            Ink,
+            OnAuxSwingClicked,
+            out auxSwingImage,
+            out auxSwingLabel);
+        auxSwingButton.gameObject.SetActive(false);
+
         undoButton = CreatePillButton(
             bottom,
             "Undo",
             new Vector2(0.05f, 0.14f),
-            new Vector2(0.36f, 0.58f),
+            new Vector2(0.30f, 0.52f),
             Frost,
             Ink,
             OnUndoClicked,
@@ -557,13 +800,25 @@ public class ARDesignScanHUD : MonoBehaviour
         confirmButton = CreatePillButton(
             bottom,
             "Add corners",
-            new Vector2(0.40f, 0.14f),
-            new Vector2(0.95f, 0.58f),
+            new Vector2(0.32f, 0.14f),
+            new Vector2(0.95f, 0.52f),
             new Color(0.55f, 0.56f, 0.58f, 0.85f),
             Color.white,
             OnConfirmClicked,
             out confirmImage,
             out confirmLabel);
+    }
+
+    static ARDesignSpatialMappingController EnsureSpatialMappingRuntime(GameObject host)
+    {
+        var spatial = host.GetComponent<ARDesignSpatialMappingController>();
+        if (spatial == null)
+            spatial = host.AddComponent<ARDesignSpatialMappingController>();
+        if (host.GetComponent<ARDesignSpatialMappingVisualizer>() == null)
+            host.AddComponent<ARDesignSpatialMappingVisualizer>();
+        if (host.GetComponent<ARFurnitureAutoSuggestService>() == null)
+            host.AddComponent<ARFurnitureAutoSuggestService>();
+        return spatial;
     }
 
     static RectTransform CreateShadowChip(Transform parent, Vector2 anchor, Vector2 anchoredPos, Vector2 size)

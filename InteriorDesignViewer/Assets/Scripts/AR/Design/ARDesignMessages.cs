@@ -57,6 +57,29 @@ public class SpawnFurnitureRequest
 
     /// <summary>Exact reference label from the product sheet, e.g. L 90" × W 32" × H 32".</summary>
     public string dimensionLabel;
+
+    /// <summary>
+    /// When true, place immediately at <see cref="position"/> instead of waiting for a floor tap.
+    /// Required because JsonUtility cannot distinguish a missing vector from (0,0,0).
+    /// </summary>
+    public bool hasPosition;
+
+    /// <summary>World-space floor point in metres (feet of the piece). Used only when hasPosition is true.</summary>
+    public ARDesignVec3 position;
+
+    /// <summary>Y-axis rotation in degrees. Used only when hasPosition is true.</summary>
+    public float rotationY;
+
+    /// <summary>Optional "#RRGGBB" tint applied once the piece is placed.</summary>
+    public string colorHex;
+}
+
+/// <summary>Payload for applyLayout — drop a full proposal on the confirmed floor.</summary>
+[Serializable]
+public class ApplyLayoutRequest
+{
+    public bool clearExisting = true;
+    public SpawnFurnitureRequest[] items;
 }
 
 /// <summary>Scan coverage/quality snapshot returned by GetScanStatus and pushed on scanProgress.</summary>
@@ -93,6 +116,51 @@ public class ScanStatusPayload
 public class RoomPolygonPayload
 {
     public ARDesignVec3[] points;
+}
+
+/// <summary>One wall of the floor outline (edge from corner index to index + 1).</summary>
+[Serializable]
+public class RoomWallPayload
+{
+    public int index;
+    public ARDesignVec3 start;
+    public ARDesignVec3 end;
+    public float length;
+}
+
+/// <summary>Door or window on a wall. Offsets are metres from the wall's start corner.</summary>
+[Serializable]
+public class RoomOpeningPayload
+{
+    public string id;
+    /// <summary>"door" | "window".</summary>
+    public string type;
+    public int wallIndex;
+    public float offsetAlongWall;
+    public float width;
+    public float height;
+    public float sillHeight;
+    /// <summary>"left" | "right" | "none".</summary>
+    public string swing;
+}
+
+/// <summary>Existing furniture the user marked during the scan.</summary>
+[Serializable]
+public class RoomObstaclePayload
+{
+    public string id;
+    public string type;
+    public ARDesignVec3 center;
+    public ARDesignVec3 size;
+    public float yaw;
+}
+
+[Serializable]
+public class RoomValidationPayload
+{
+    public bool isValid;
+    /// <summary>Codes: "tooFewCorners", "selfIntersecting", "zeroArea".</summary>
+    public string[] errors;
 }
 
 /// <summary>
@@ -132,6 +200,15 @@ public class RoomConfirmedPayload
     /// <summary>True when the scene skipped real measurement (synthetic open floor).</summary>
     public bool furniturePlacementOnly;
 
+    /// <summary>World-space floor height in metres.</summary>
+    public float floorY;
+    public float perimeterM;
+    public float volumeM3;
+    public RoomWallPayload[] walls;
+    public RoomOpeningPayload[] openings;
+    public RoomObstaclePayload[] obstacles;
+    public RoomValidationPayload validation;
+
     public RoomMeasurementSaveRequest ToSaveRequest()
     {
         return new RoomMeasurementSaveRequest
@@ -145,6 +222,12 @@ public class RoomConfirmedPayload
             boundsMin = boundsMin,
             boundsMax = boundsMax,
             floorPolygon = floorPolygon?.points ?? System.Array.Empty<ARDesignVec3>(),
+            floorY = floorY,
+            perimeterM = perimeterM,
+            volumeM3 = volumeM3,
+            walls = walls ?? System.Array.Empty<RoomWallPayload>(),
+            openings = openings ?? System.Array.Empty<RoomOpeningPayload>(),
+            obstacles = obstacles ?? System.Array.Empty<RoomObstaclePayload>(),
             scanMetadata = new RoomScanMetadataPayload
             {
                 planeCount = planeCount,
@@ -184,6 +267,12 @@ public class RoomMeasurementSaveRequest
     public ARDesignVec3 boundsMin;
     public ARDesignVec3 boundsMax;
     public ARDesignVec3[] floorPolygon;
+    public float floorY;
+    public float perimeterM;
+    public float volumeM3;
+    public RoomWallPayload[] walls;
+    public RoomOpeningPayload[] openings;
+    public RoomObstaclePayload[] obstacles;
     public RoomScanMetadataPayload scanMetadata;
 }
 
@@ -205,6 +294,26 @@ public class PlacedFurniturePayload
     public ARDesignVec3 dimensions;
 
     public bool selected;
+
+    /// <summary>"#RRGGBB" tint chosen by the user, empty for the model's own colours.</summary>
+    public string colorHex;
+
+    /// <summary>
+    /// True when <see cref="sourcePosition"/> is valid: the pose in the frame RN sent with
+    /// applyLayout (room-centred metres), i.e. with the two-corner wall alignment undone.
+    /// </summary>
+    public bool hasSource;
+    public ARDesignVec3 sourcePosition;
+    public float sourceRotationY;
+}
+
+/// <summary>Payload for setFurnitureColor. Empty instanceId targets the selected piece.</summary>
+[Serializable]
+public class FurnitureColorRequest
+{
+    public string instanceId;
+    /// <summary>"#RRGGBB", or empty to restore the model's own colours.</summary>
+    public string colorHex;
 }
 
 /// <summary>Placement safety feedback for the selected furniture piece.</summary>
@@ -293,4 +402,30 @@ public class HistoryStatePayload
     public bool canRedo;
     public int undoCount;
     public int redoCount;
+}
+
+/// <summary>Design-flow AR: progress of lining the saved layout up with the real room.</summary>
+[Serializable]
+public class LayoutAlignmentPayload
+{
+    /// <summary>"idle" | "aligning" | "aligned".</summary>
+    public string state;
+
+    /// <summary>Corners marked so far while aligning (0 or 1).</summary>
+    public int step;
+
+    /// <summary>True while the reticle is locked on a real floor plane.</summary>
+    public bool floorDetected;
+
+    /// <summary>Distance between the two marked corners, metres.</summary>
+    public float measuredM;
+
+    /// <summary>Length of the plan wall the marked wall was matched to, metres.</summary>
+    public float planM;
+
+    /// <summary>"real" | "plan".</summary>
+    public string view;
+
+    /// <summary>"" | "noFloor" | "tooClose" | "noRoom".</summary>
+    public string error;
 }

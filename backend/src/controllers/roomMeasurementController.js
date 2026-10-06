@@ -4,6 +4,33 @@
 
 import mongoose from 'mongoose';
 import RoomMeasurement from '../models/RoomMeasurement.js';
+import {
+  computeRoomGeometry,
+  sanitizeObstacles,
+  sanitizeOpenings,
+} from '../utils/roomGeometry.js';
+
+/** Fill room-model fields for rooms saved before walls/perimeter/volume existed. */
+const withRoomModel = (doc) => {
+  const hasModel = Array.isArray(doc.walls) && doc.walls.length > 0;
+  if (hasModel) {
+    return {
+      floorY: doc.floorY ?? 0,
+      perimeterM: doc.perimeterM ?? 0,
+      volumeM3: doc.volumeM3 ?? 0,
+      walls: doc.walls,
+      validation: doc.validation || { isValid: true, errors: [] },
+    };
+  }
+  const geometry = computeRoomGeometry(doc.floorPolygon || [], doc.wallHeight || doc.height);
+  return {
+    floorY: geometry.floorY,
+    perimeterM: geometry.perimeterM,
+    volumeM3: geometry.volumeM3 || (doc.floorAreaSqm || 0) * (doc.height || 0),
+    walls: geometry.walls,
+    validation: geometry.validation,
+  };
+};
 
 const toPublicMeasurement = (doc) => ({
   id: doc._id.toString(),
@@ -19,6 +46,9 @@ const toPublicMeasurement = (doc) => ({
   boundsMin: doc.boundsMin || null,
   boundsMax: doc.boundsMax || null,
   floorPolygon: doc.floorPolygon || [],
+  ...withRoomModel(doc),
+  openings: doc.openings || [],
+  obstacles: doc.obstacles || [],
   scanMetadata: doc.scanMetadata || {},
   confirmedAt: doc.confirmedAt,
   createdAt: doc.createdAt,
@@ -58,6 +88,8 @@ const roomMeasurementController = {
         boundsMin,
         boundsMax,
         floorPolygon,
+        openings,
+        obstacles,
         scanMetadata,
         confirmedAt,
       } = req.body ?? {};
@@ -77,6 +109,8 @@ const roomMeasurementController = {
       }
 
       const userId = req.user?.userId || req.user?.id || '';
+      const polygon = Array.isArray(floorPolygon) ? floorPolygon : [];
+      const geometry = computeRoomGeometry(polygon, typeof wallHeight === 'number' ? wallHeight : height);
 
       const doc = await RoomMeasurement.create({
         userId,
@@ -90,7 +124,14 @@ const roomMeasurementController = {
         dimensionLabel: dimensionLabel ? String(dimensionLabel).trim() : '',
         boundsMin: boundsMin || undefined,
         boundsMax: boundsMax || undefined,
-        floorPolygon: Array.isArray(floorPolygon) ? floorPolygon : [],
+        floorPolygon: polygon,
+        floorY: geometry.floorY,
+        perimeterM: geometry.perimeterM,
+        volumeM3: geometry.volumeM3 || (typeof floorAreaSqm === 'number' ? floorAreaSqm * height : 0),
+        walls: geometry.walls,
+        openings: sanitizeOpenings(openings, geometry.walls.length),
+        obstacles: sanitizeObstacles(obstacles),
+        validation: geometry.validation,
         scanMetadata: scanMetadata && typeof scanMetadata === 'object' ? scanMetadata : {},
         confirmedAt: confirmedAt ? new Date(confirmedAt) : new Date(),
       });

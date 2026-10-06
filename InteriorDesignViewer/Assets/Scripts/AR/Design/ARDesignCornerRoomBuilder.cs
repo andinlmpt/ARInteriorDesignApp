@@ -87,6 +87,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     Transform root;
     bool active;
     bool roomLocked;
+    bool loopClosed;
     bool heightBaseSet;
     bool heightLocked;
     RoomOutlinePhase outlinePhase = RoomOutlinePhase.Height;
@@ -102,7 +103,12 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
 
     public IReadOnlyList<Vector3> Corners => corners;
     public int CornerCount => corners.Count;
-    public bool CanConfirm => corners.Count >= 3;
+    /// <summary>True when walls of the current outline cross each other.</summary>
+    public bool IsOutlineSelfIntersecting => corners.Count >= 4 && RoomPolygonUtil.IsSelfIntersecting(corners);
+    public bool IsLoopClosed => loopClosed;
+    /// <summary>Close Polygon is available once 3+ corners form a valid outline.</summary>
+    public bool CanClose => !loopClosed && corners.Count >= RoomPolygonUtil.MinCorners && !IsOutlineSelfIntersecting;
+    public bool CanConfirm => loopClosed && corners.Count >= RoomPolygonUtil.MinCorners && !IsOutlineSelfIntersecting;
     public float WallHeight => wallHeight;
     public RoomOutlinePhase OutlinePhase => outlinePhase;
     public bool RequireHeightBeforeCorners => requireHeightBeforeCorners;
@@ -208,6 +214,12 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         if (heightLocked && heightBaseSet && corners.Count == 0)
             UpdateHeightPreview(forceLocked: true);
 
+        if (loopClosed)
+        {
+            HideLivePreview();
+            return;
+        }
+
         UpdatePreview();
 
         if (Touch.activeTouches.Count != 1) return;
@@ -260,6 +272,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
             return;
         }
 
+        EnsureLineMaterial();
         if (floorLoop != null) floorLoop.enabled = true;
         for (var i = 0; i < markers.Count; i++)
         {
@@ -369,12 +382,33 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         CornersChanged?.Invoke();
     }
 
+    /// <summary>Close the floor outline (last corner joins the first). Further taps are ignored until reopened.</summary>
+    public bool CloseLoop()
+    {
+        if (!CanClose) return false;
+        loopClosed = true;
+        HideLivePreview();
+        RebuildVisuals(closed: true);
+        CornersChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>Reopen a closed outline so more corners can be added.</summary>
+    public void ReopenLoop()
+    {
+        if (!loopClosed) return;
+        loopClosed = false;
+        RebuildVisuals();
+        CornersChanged?.Invoke();
+    }
+
     public void UndoLastCorner()
     {
         if (corners.Count == 0) return;
         // Keep the seeded height-base corner while width outline is active.
         if (heightLocked && corners.Count <= 1) return;
 
+        loopClosed = false;
         corners.RemoveAt(corners.Count - 1);
         if (cornerAnchors.Count > corners.Count)
         {
@@ -394,6 +428,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         var keep = heightLocked ? 1 : 0;
         if (corners.Count <= keep) return;
 
+        loopClosed = false;
         corners.RemoveRange(keep, corners.Count - keep);
         for (var i = keep; i < cornerAnchors.Count; i++)
             ReleaseCornerSlot(cornerAnchors[i]);
@@ -608,6 +643,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
 
     void TryAddCorner(Vector3 worldPoint)
     {
+        if (loopClosed) return;
         worldPoint.y = FindFloorY(worldPoint);
 
         // Snap near the height base so the outline stays anchored to it.
@@ -620,8 +656,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         // Close the loop by tapping near the first corner.
         if (corners.Count >= 3 && Vector3.Distance(Flat(worldPoint), Flat(corners[0])) <= closeSnapDistance)
         {
-            RebuildVisuals(closed: true);
-            CornersChanged?.Invoke();
+            CloseLoop();
             return;
         }
 
@@ -1037,8 +1072,8 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
             return;
         }
 
-        var loopClosed = closed || corners.Count >= 3;
-        floorLoop.loop = loopClosed;
+        var drawClosed = closed || loopClosed || corners.Count >= 3;
+        floorLoop.loop = drawClosed;
         floorLoop.positionCount = corners.Count;
         floorLoop.enabled = !roomLocked;
         for (var i = 0; i < corners.Count; i++)
@@ -1062,7 +1097,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         if (corners.Count >= 2 && !roomLocked)
         {
             ceilingLoop.enabled = true;
-            ceilingLoop.loop = loopClosed;
+            ceilingLoop.loop = drawClosed;
             ceilingLoop.positionCount = corners.Count;
             for (var i = 0; i < corners.Count; i++)
                 ceilingLoop.SetPosition(i, corners[i] + Vector3.up * wallHeight);
@@ -1072,7 +1107,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
             ceilingLoop.enabled = false;
         }
 
-        RebuildMeasurementLabels(loopClosed);
+        RebuildMeasurementLabels(drawClosed);
     }
 
     void RebuildMeasurementLabels(bool loopClosed)
@@ -1174,6 +1209,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
 
     public void Clear()
     {
+        loopClosed = false;
         corners.Clear();
         foreach (var slot in cornerAnchors)
             ReleaseCornerSlot(slot);
@@ -1305,15 +1341,23 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         return line;
     }
 
-    static Material CreateLineMaterial(Color color)
+    static Material CreateLineMaterial(Color color) => ARLineMaterialUtil.Create(color);
+
+    void EnsureLineMaterial()
     {
-        var shader = Shader.Find("Universal Render Pipeline/Unlit")
-                     ?? Shader.Find("Unlit/Color")
-                     ?? Shader.Find("Sprites/Default");
-        var material = new Material(shader);
-        if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color);
-        material.color = color;
-        return material;
+        if (ARLineMaterialUtil.IsUsable(lineMaterial)) return;
+
+        if (lineMaterial != null) Destroy(lineMaterial);
+        lineMaterial = CreateLineMaterial(edgeColor);
+        foreach (var line in new[] { floorLoop, previewSegment, heightLine, ceilingLoop })
+        {
+            if (line != null) line.sharedMaterial = lineMaterial;
+        }
+
+        foreach (var guide in wallGuides)
+        {
+            if (guide != null) guide.sharedMaterial = lineMaterial;
+        }
     }
 
     static bool IsPointerOverUI(int touchId)

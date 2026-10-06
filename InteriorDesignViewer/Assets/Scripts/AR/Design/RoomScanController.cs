@@ -136,6 +136,10 @@ public class RoomScanController : MonoBehaviour
             return;
         }
 
+        // Design-flow "View in AR" arms the shell from RN — do not show the scan HUD.
+        if (ARMeasurementRnBridge.HasPendingDesignLayout)
+            return;
+
         if (autoStartScanOnLoad && Phase == ScanPhase.Idle)
             StartRoomScan();
     }
@@ -247,7 +251,11 @@ public class RoomScanController : MonoBehaviour
         if (meshManager != null)
             meshManager.enabled = true;
 
+        // The builder draws the height/width lines in Update, so it must be enabled to scan.
+        if (cornerBuilder != null)
+            cornerBuilder.enabled = true;
         cornerBuilder?.PrepareForRescan();
+        FindFirstObjectByType<ARDesignSpatialMappingController>()?.ResetToOutline();
 
         SetPhase(ScanPhase.Scanning);
     }
@@ -268,6 +276,7 @@ public class RoomScanController : MonoBehaviour
         cachedProgress = 0f;
 
         cornerBuilder?.PrepareForRescan();
+        FindFirstObjectByType<ARDesignSpatialMappingController>()?.ResetToOutline();
         if (cornerBuilder != null)
             cornerBuilder.enabled = true;
 
@@ -287,7 +296,17 @@ public class RoomScanController : MonoBehaviour
             return false;
         }
 
+        var spatial = FindFirstObjectByType<ARDesignSpatialMappingController>();
+        if (spatial != null && !spatial.CanConfirmRoom)
+        {
+            Debug.LogWarning("[RoomScanController] Complete spatial mapping (doors, furniture, review) before confirming.");
+            return false;
+        }
+
         RoomGeometrySnapshot snapshot = null;
+
+        if (cornerBuilder != null && cornerBuilder.CanClose)
+            cornerBuilder.CloseLoop();
 
         if (cornerBuilder != null && cornerBuilder.CanConfirm)
         {
@@ -780,7 +799,7 @@ public class RoomScanController : MonoBehaviour
 
         // Corner-to-corner is ready with 3+ taps. Plane heuristics remain a fallback.
         var ready = Phase != ScanPhase.Idle && (
-            (cornerBuilder != null && cornerBuilder.CanConfirm) ||
+            (cornerBuilder != null && (cornerBuilder.CanConfirm || cornerBuilder.CanClose)) ||
             (Time.unscaledTime - scanStartTime >= minScanDuration
              && horizontalCount > 0
              && floorScore >= readyFloorScore
@@ -814,6 +833,8 @@ public class RoomScanController : MonoBehaviour
             }
 
             if (cornerBuilder.CanConfirm) return "readyToConfirm";
+            if (cornerBuilder.IsOutlineSelfIntersecting) return "outlineCrosses";
+            if (cornerBuilder.CanClose) return "closeOutline";
             if (cornerCount == 0) return "tapFirstCorner";
             if (cornerCount == 1) return "tapNextCorner";
             if (cornerCount == 2) return "tapThirdCorner";

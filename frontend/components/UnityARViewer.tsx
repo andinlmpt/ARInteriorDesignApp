@@ -12,11 +12,15 @@ import {
   type ScanStatusPayload,
   type RoomConfirmedPayload,
   type SelectionPayload,
+  type ApplyLayoutRequest,
   type SpawnFurnitureRequest,
+  type FurnitureColorRequest,
   type UnityErrorPayload,
   type UnityInboundMessage,
   type UnityOutboundMessage,
   type PlacementSafetyPayload,
+  type LayoutAlignmentPayload,
+  type LayoutViewMode,
 } from '@/types/unity-bridge';
 import { isUnityViewAvailable } from '@/utils/unityAvailability';
 
@@ -36,6 +40,13 @@ export interface UnityARViewerHandle {
   /** Ensure ARDesignScene + furniture placement (safe after measurement). */
   openFurnitureDesign: () => void;
   /** Load ARDesignScene with the measured room shell for real GLB placement. */
+  openDesignLayoutInAr: (payload?: {
+    roomName?: string;
+    width?: number;
+    depth?: number;
+    height?: number;
+    wallHeight?: number;
+  }) => void;
   openMeasuredFurnitureDesign: (payload?: {
     roomName?: string;
     width?: number;
@@ -50,7 +61,11 @@ export interface UnityARViewerHandle {
   getScanStatus: () => void;
   confirmRoomScan: () => void;
   spawnFurniture: (request: SpawnFurnitureRequest) => void;
+  applyLayout: (request: ApplyLayoutRequest) => void;
   removeSelectedFurniture: () => void;
+  /** Swaps the selected piece for another catalog item at the same spot and facing. */
+  replaceSelectedFurniture: (request: SpawnFurnitureRequest) => void;
+  setFurnitureColor: (request: FurnitureColorRequest) => void;
   clearScene: () => void;
   /** Asks Unity to push a fresh `layoutChanged` event. */
   getCurrentLayout: () => void;
@@ -105,6 +120,14 @@ export interface UnityARViewerHandle {
   commitRoomName: (name: string) => void;
   /** AR Measurement: dismiss name modal with "Untitled room". */
   cancelRoomName: () => void;
+  /** Design layout AR: live camera + start the two-corner alignment. */
+  beginLayoutAlignment: () => void;
+  /** Mark the floor point under the reticle as a wall corner. */
+  markAlignmentCorner: () => void;
+  undoAlignmentCorner: () => void;
+  /** Swap the matched plan wall for the opposite one (180° turn). */
+  flipLayoutAlignment: () => void;
+  setLayoutView: (view: LayoutViewMode) => void;
 }
 
 interface UnityARViewerProps {
@@ -144,6 +167,8 @@ interface UnityARViewerProps {
   onMeasurementPlanClosed?: () => void;
   /** Unity plan Export 3D — RN should build/link the GLB. */
   onRequestRnExport3d?: () => void;
+  /** Design layout AR alignment progress. */
+  onLayoutAlignment?: (payload: LayoutAlignmentPayload) => void;
 }
 
 type UnityViewComponent = React.ComponentType<{
@@ -201,6 +226,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
       onMeasurementPlanReady,
       onMeasurementPlanClosed,
       onRequestRnExport3d,
+      onLayoutAlignment,
     },
     ref
   ) {
@@ -252,6 +278,11 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
         startFurniturePlacement: () => sendToUnity('startFurniturePlacement', ''),
         openRoomMeasurement: () => sendToUnity('openRoomMeasurement', ''),
         openFurnitureDesign: () => sendToUnity('openFurnitureDesign', ''),
+        openDesignLayoutInAr: (payload) =>
+          sendToUnity(
+            'openDesignLayoutInAr',
+            payload ? JSON.stringify(payload) : ''
+          ),
         openMeasuredFurnitureDesign: (payload) =>
           sendToUnity(
             'openMeasuredFurnitureDesign',
@@ -261,7 +292,13 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
         confirmRoomScan: () => sendToUnity('confirmRoomScan', ''),
         spawnFurniture: (request: SpawnFurnitureRequest) =>
           sendToUnity('spawnFurniture', JSON.stringify(request)),
+        applyLayout: (request: ApplyLayoutRequest) =>
+          sendToUnity('applyLayout', JSON.stringify(request)),
         removeSelectedFurniture: () => sendToUnity('removeSelectedFurniture', ''),
+        replaceSelectedFurniture: (request: SpawnFurnitureRequest) =>
+          sendToUnity('replaceSelectedFurniture', JSON.stringify(request)),
+        setFurnitureColor: (request: FurnitureColorRequest) =>
+          sendToUnity('setFurnitureColor', JSON.stringify(request)),
         clearScene: () => sendToUnity('clearScene', ''),
         getCurrentLayout: () => sendToUnity('getCurrentLayout', ''),
         exportLayout: () => sendToUnity('exportLayout', ''),
@@ -324,6 +361,11 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
           ),
         commitRoomName: (name: string) => sendToUnity('commitRoomName', name ?? ''),
         cancelRoomName: () => sendToUnity('cancelRoomName', ''),
+        beginLayoutAlignment: () => sendToUnity('beginLayoutAlignment', ''),
+        markAlignmentCorner: () => sendToUnity('markAlignmentCorner', ''),
+        undoAlignmentCorner: () => sendToUnity('undoAlignmentCorner', ''),
+        flipLayoutAlignment: () => sendToUnity('flipLayoutAlignment', ''),
+        setLayoutView: (view: LayoutViewMode) => sendToUnity('setLayoutView', view),
       }),
       [sendToUnity, wakeUnityPlayer, resumeUnityPlayer]
     );
@@ -467,9 +509,16 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
           case 'requestRnExport3d':
             onRequestRnExport3d?.();
             break;
+
+          case 'layoutAlignment': {
+            const payload = parseUnityPayload<LayoutAlignmentPayload>(msg);
+            if (payload) onLayoutAlignment?.(payload);
+            break;
+          }
         }
       },
       [
+        onLayoutAlignment,
         onExportComplete,
         onExportStarted,
         onPhotoCaptured,

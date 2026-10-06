@@ -6,8 +6,29 @@
 import '../loadEnv.js';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
+
+/** Tried in order when Groq answers model_not_found (models get retired or are not enabled per key). */
+const MODEL_CANDIDATES = [
+  ...new Set([
+    process.env.GROQ_MODEL,
+    'llama-3.3-70b-versatile',
+    'openai/gpt-oss-120b',
+    'llama-3.1-8b-instant',
+    'openai/gpt-oss-20b',
+  ].filter(Boolean)),
+];
+
+let modelIndex = 0;
+let allModelsUnavailable = false;
+
+export function getActiveModel() {
+  return MODEL_CANDIDATES[Math.min(modelIndex, MODEL_CANDIDATES.length - 1)];
+}
+
+function isModelNotFound(status, errorText) {
+  return status === 404 || /model_not_found|model_decommissioned/.test(errorText);
+}
 
 /**
  * Call Groq API to generate content
@@ -18,13 +39,15 @@ async function callGroqAPI(prompt, systemPrompt = 'You are a helpful assistant.'
     console.warn('[Groq] API key not configured');
     return null;
   }
+  if (allModelsUnavailable) return null;
 
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT);
 
+    const model = getActiveModel();
     const requestBody = {
-      model: DEFAULT_MODEL,
+      model,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt }
@@ -52,6 +75,22 @@ async function callGroqAPI(prompt, systemPrompt = 'You are a helpful assistant.'
 
     if (!response.ok) {
       const errorText = await response.text();
+      if (isModelNotFound(response.status, errorText)) {
+        if (allModelsUnavailable) return null;
+        if (getActiveModel() === model && modelIndex < MODEL_CANDIDATES.length - 1) {
+          modelIndex += 1;
+          console.warn(`[Groq] Model "${model}" unavailable for this key, switching to "${getActiveModel()}"`);
+        } else if (getActiveModel() === model) {
+          allModelsUnavailable = true;
+          console.error(
+            `[Groq] None of the models are available for this key (${MODEL_CANDIDATES.join(', ')}). ` +
+              'Set GROQ_MODEL in backend/.env to a model listed at https://console.groq.com/docs/models. ' +
+              'Using built-in titles, descriptions, and palettes until restart.',
+          );
+          return null;
+        }
+        return callGroqAPI(prompt, systemPrompt, temperature, maxTokens, isJson);
+      }
       console.error('[Groq] API error:', response.status, errorText);
       return null;
     }
@@ -340,6 +379,7 @@ export async function generateImage(proposal, preferences) {
 }
 
 export default {
+  getActiveModel,
   analyzeDesignPrompt,
   generateDesignIdeas,
   generateDesignDescription,

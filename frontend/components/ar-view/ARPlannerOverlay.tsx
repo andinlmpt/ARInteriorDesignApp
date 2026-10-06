@@ -78,17 +78,26 @@ interface ARPlannerOverlayProps {
   style?: StyleProp<ViewStyle>;
 }
 
-export function parseFurniturePrice(price: string): number {
-  const digits = price.replace(/[^0-9.]/g, '');
+export function parseFurniturePrice(price: string | number | undefined | null): number {
+  if (typeof price === 'number' && Number.isFinite(price)) return price;
+  const digits = String(price ?? '').replace(/[^0-9.]/g, '');
   const value = Number.parseFloat(digits);
   return Number.isFinite(value) ? value : 0;
 }
 
-export function formatPlannerTotal(amount: number): string {
+export function formatPlannerTotal(amount: number, currency: 'PHP' | 'USD' = 'PHP'): string {
+  if (currency === 'PHP') {
+    return `₱${Math.round(amount).toLocaleString('en-PH')}`;
+  }
   return `$${amount.toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+export function libraryItemPricePhp(item: { pricePhp?: number; price?: string }): number {
+  if (typeof item.pricePhp === 'number' && item.pricePhp > 0) return item.pricePhp;
+  return parseFurniturePrice(item.price);
 }
 
 export function ARPlannerOverlay({
@@ -439,7 +448,8 @@ export function ARPlannerOverlay({
                           ? 'Limit reached'
                           : remaining != null
                             ? `${remaining} left`
-                            : item.price || formatDimensionSubtitle(item)}
+                            : (item.pricePhp ? formatPlannerTotal(item.pricePhp, 'PHP') : item.price)
+                              || formatDimensionSubtitle(item)}
                     </Text>
                   </TouchableOpacity>
                 );

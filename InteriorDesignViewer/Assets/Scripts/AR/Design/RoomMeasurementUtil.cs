@@ -83,17 +83,39 @@ public static class RoomMeasurementUtil
         depth = 0f;
         if (polygon == null || polygon.Count == 0) return;
 
-        var minX = polygon[0].x;
-        var maxX = polygon[0].x;
-        var minZ = polygon[0].z;
-        var maxZ = polygon[0].z;
-
-        for (var i = 1; i < polygon.Count; i++)
+        // Measure along the longest wall: world axes rarely line up with the room,
+        // and a world-axis box overstates the size of a rotated room.
+        var angle = 0f;
+        var longest = 0f;
+        for (var i = 0; i < polygon.Count; i++)
         {
-            minX = Mathf.Min(minX, polygon[i].x);
-            maxX = Mathf.Max(maxX, polygon[i].x);
-            minZ = Mathf.Min(minZ, polygon[i].z);
-            maxZ = Mathf.Max(maxZ, polygon[i].z);
+            var a = polygon[i];
+            var b = polygon[(i + 1) % polygon.Count];
+            var dx = b.x - a.x;
+            var dz = b.z - a.z;
+            var len = dx * dx + dz * dz;
+            if (len > longest)
+            {
+                longest = len;
+                angle = Mathf.Atan2(dz, dx);
+            }
+        }
+
+        var cos = Mathf.Cos(-angle);
+        var sin = Mathf.Sin(-angle);
+        var minX = float.MaxValue;
+        var maxX = float.MinValue;
+        var minZ = float.MaxValue;
+        var maxZ = float.MinValue;
+
+        for (var i = 0; i < polygon.Count; i++)
+        {
+            var x = polygon[i].x * cos - polygon[i].z * sin;
+            var z = polygon[i].x * sin + polygon[i].z * cos;
+            minX = Mathf.Min(minX, x);
+            maxX = Mathf.Max(maxX, x);
+            minZ = Mathf.Min(minZ, z);
+            maxZ = Mathf.Max(maxZ, z);
         }
 
         width = Mathf.Max(0f, maxX - minX);

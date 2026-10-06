@@ -4,6 +4,7 @@
 
 import type { RemoteFurnitureItem } from '@/services/FurnitureCatalogService';
 import { resolveMediaUrl } from '@/services/apiClient';
+import { formatPhp } from '@/utils/designFlowFormat';
 import type { HomeProduct, HomeProductCategoryFilter } from '@/types/home-product';
 import type { FurnitureCategory, FurnitureLibraryItem } from '@/types/ar-view';
 
@@ -110,6 +111,10 @@ export function remoteItemToHomeProduct(item: RemoteFurnitureItem): HomeProduct 
     widthIn: item.widthIn,
     heightIn: item.heightIn,
     availableColors: Array.isArray(item.availableColors) ? item.availableColors : [],
+    pricePhp: Number(item.pricePhp) > 0 ? Number(item.pricePhp) : undefined,
+    styles: Array.isArray(item.styles) ? item.styles : undefined,
+    rooms: Array.isArray(item.rooms) ? item.rooms : (Array.isArray(item.roomTypes) ? item.roomTypes : undefined),
+    roomTypes: Array.isArray(item.roomTypes) ? item.roomTypes : (Array.isArray(item.rooms) ? item.rooms : undefined),
     quantity: (() => {
       const q = Number(item.quantity);
       return Number.isFinite(q) ? q : undefined;
@@ -123,11 +128,13 @@ export function remoteItemToLibraryItem(item: RemoteFurnitureItem): FurnitureLib
     const q = Number(item.quantity);
     return Number.isFinite(q) ? q : undefined;
   })();
+  const pricePhp = Number(item.pricePhp) > 0 ? Number(item.pricePhp) : undefined;
   return {
     id: item.id,
     name: item.displayName,
     category,
-    price: '',
+    price: pricePhp ? formatPhp(pricePhp) : '',
+    pricePhp,
     color: colorForFurnitureId(item.id, item.category),
     dimensions: {
       width: item.width,
@@ -137,6 +144,7 @@ export function remoteItemToLibraryItem(item: RemoteFurnitureItem): FurnitureLib
     description: item.dimensionLabel,
     thumbnail: resolveMediaUrl(item.thumbnailUrl),
     quantity,
+    availableColors: Array.isArray(item.availableColors) ? item.availableColors : [],
     model3D: item.glbUrl
       ? { url: resolveMediaUrl(item.glbUrl) || item.glbUrl, format: 'glb' as const }
       : undefined,

@@ -12,30 +12,41 @@ import {
 } from '../types/project';
 import type { ExportResultPayload } from '@/types/unity-bridge';
 import { getJson, setJson, removeKey } from '@/utils/storage';
+import { AUTH_USER_KEY } from '@/services/AuthService';
 
-const STORAGE_KEY = 'userProjects';
+const STORAGE_KEY_PREFIX = 'userProjects';
 const MAX_PROJECTS = 100;
+
+/** Projects are stored per account so a new login never sees another user's projects. */
+async function resolveStorageKey(): Promise<string> {
+  try {
+    const user = await getJson<{ id?: string } | null>(AUTH_USER_KEY, null);
+    const userId = user?.id?.trim();
+    return userId ? `${STORAGE_KEY_PREFIX}:${userId}` : `${STORAGE_KEY_PREFIX}:guest`;
+  } catch {
+    return `${STORAGE_KEY_PREFIX}:guest`;
+  }
+}
 
 class ProjectService {
   private projects: Project[] = [];
-  private initialized: boolean = false;
+  private storageKey: string | null = null;
 
   /**
-   * Initialize projects from storage
+   * Load the current account's projects, reloading whenever the logged-in user changes.
    */
   private async initialize(): Promise<void> {
-    if (this.initialized) return;
+    const key = await resolveStorageKey();
+    if (this.storageKey === key) return;
 
     try {
-      const stored = await getJson<Project[]>(STORAGE_KEY, []);
-      if (Array.isArray(stored)) {
-        this.projects = stored;
-      }
+      const stored = await getJson<Project[]>(key, []);
+      this.projects = Array.isArray(stored) ? stored : [];
     } catch (error) {
       console.warn('[ProjectService] Failed to load projects from storage:', error);
       this.projects = [];
     } finally {
-      this.initialized = true;
+      this.storageKey = key;
     }
   }
 
@@ -48,7 +59,7 @@ class ProjectService {
       const projectsToSave = this.projects
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(0, MAX_PROJECTS);
-      await setJson(STORAGE_KEY, projectsToSave);
+      await setJson(this.storageKey ?? (await resolveStorageKey()), projectsToSave);
     } catch (error) {
       console.warn('[ProjectService] Failed to persist projects:', error);
     }
@@ -88,7 +99,12 @@ class ProjectService {
     const project: Project = {
       id: `project-${now}-${Math.random().toString(36).substring(2, 9)}`,
       name,
-      description: input.arMode === 'measure' ? 'AR Measurement project' : 'AR Furniture project',
+      description:
+        input.arMode === 'design'
+          ? 'AI room design project'
+          : input.arMode === 'measure'
+            ? 'AR Measurement project'
+            : 'AR Furniture project',
       roomType: 'Living Room',
       status: 'in-progress',
       createdAt: now,
@@ -263,9 +279,10 @@ class ProjectService {
    * Clear all projects (for testing/reset)
    */
   async clearAllProjects(): Promise<void> {
+    const key = await resolveStorageKey();
     this.projects = [];
-    this.initialized = true;
-    await removeKey(STORAGE_KEY);
+    this.storageKey = key;
+    await removeKey(key);
   }
 
   /**

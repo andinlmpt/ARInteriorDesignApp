@@ -1,0 +1,49 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="Theoretical Framework" id="theoretical-framework">
+    <mxGraphModel dx="1300" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1280" pageHeight="680" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="Theoretical Framework – VisionSpace" style="text;html=1;fontStyle=1;fontFamily=Arial;fontSize=16;align=center;" vertex="1" parent="1">
+          <mxGeometry x="340" y="20" width="600" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Theories ===== -->
+        <mxCell id="T1" value="&lt;b&gt;Reality–Virtuality Continuum&lt;/b&gt;&lt;br&gt;&lt;i&gt;Milgram &amp;amp; Kishino (1994); Azuma (1997)&lt;/i&gt;&lt;br&gt;&lt;br&gt;Overlaying virtual 3D furniture on the real room in real time" style="rounded=1;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="80" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="T2" value="&lt;b&gt;Simultaneous Localization and Mapping (SLAM)&lt;/b&gt;&lt;br&gt;&lt;i&gt;Durrant-Whyte &amp;amp; Bailey (2006)&lt;/i&gt;&lt;br&gt;&lt;br&gt;Real-time spatial mapping of the room: surfaces, dimensions and device position" style="rounded=1;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="280" y="80" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="T3" value="&lt;b&gt;Generative AI (Transformer Model)&lt;/b&gt;&lt;br&gt;&lt;i&gt;Vaswani et al. (2017)&lt;/i&gt;&lt;br&gt;&lt;br&gt;AI-generated room layouts, themes and furniture suggestions from user preferences" style="rounded=1;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="520" y="80" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="T4" value="&lt;b&gt;Cognitive Load Theory&lt;/b&gt;&lt;br&gt;&lt;i&gt;Sweller (1988)&lt;/i&gt;&lt;br&gt;&lt;br&gt;Visualizing furniture in place reduces the mental effort of imagining a design" style="rounded=1;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="760" y="80" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="T5" value="&lt;b&gt;Technology Acceptance Model&lt;/b&gt;&lt;br&gt;&lt;i&gt;Davis (1989)&lt;/i&gt;&lt;br&gt;&lt;br&gt;Perceived usefulness and perceived ease of use drive user acceptance" style="rounded=1;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="80" width="220" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- ===== System ===== -->
+        <mxCell id="SYS" value="&lt;b style=&quot;font-size:14px&quot;&gt;VISIONSPACE&lt;/b&gt;&lt;br&gt;An AI-Powered AR Interior Design System with Real-Time Spatial Mapping and Generative Layouts&lt;br&gt;&lt;br&gt;AR Furniture Placement • Real-Time Spatial Mapping &amp;amp; Room Measurement • Generative AI Layouts &amp;amp; Themes • Furniture Catalog • Saved Projects" style="rounded=1;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="340" y="290" width="600" height="130" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Outcome ===== -->
+        <mxCell id="OUT" value="&lt;b&gt;Expected Outcome&lt;/b&gt;&lt;br&gt;Better-informed interior design decisions and high user acceptance of AR-based furniture visualization" style="rounded=1;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="440" y="510" width="400" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Connectors ===== -->
+        <mxCell id="c1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.1;entryY=0;" edge="1" parent="1" source="T1" target="SYS"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="c2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.3;entryY=0;" edge="1" parent="1" source="T2" target="SYS"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="c3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="T3" target="SYS"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="c4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.7;entryY=0;" edge="1" parent="1" source="T4" target="SYS"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="c5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.9;entryY=0;" edge="1" parent="1" source="T5" target="SYS"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="c6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="SYS" target="OUT"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

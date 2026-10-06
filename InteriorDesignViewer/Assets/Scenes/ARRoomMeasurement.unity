@@ -119,85 +119,6 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!1 &78738672
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 78738675}
-  - component: {fileID: 78738674}
-  - component: {fileID: 78738673}
-  m_Layer: 0
-  m_Name: EventSystem
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &78738673
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 78738672}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 01614664b831546d2ae94a42149d80ac, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Unity.InputSystem::UnityEngine.InputSystem.UI.InputSystemUIInputModule
-  m_SendPointerHoverToParent: 1
-  m_MoveRepeatDelay: 0.5
-  m_MoveRepeatRate: 0.1
-  m_XRTrackingOrigin: {fileID: 0}
-  m_ActionsAsset: {fileID: -944628639613478452, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_PointAction: {fileID: -1654692200621890270, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_MoveAction: {fileID: -8784545083839296357, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_SubmitAction: {fileID: 392368643174621059, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_CancelAction: {fileID: 7727032971491509709, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_LeftClickAction: {fileID: 3001919216989983466, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_MiddleClickAction: {fileID: -2185481485913320682, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_RightClickAction: {fileID: -4090225696740746782, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_ScrollWheelAction: {fileID: 6240969308177333660, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_TrackedDevicePositionAction: {fileID: 6564999863303420839, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_TrackedDeviceOrientationAction: {fileID: 7970375526676320489, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_DeselectOnBackgroundClick: 1
-  m_PointerBehavior: 0
-  m_CursorLockBehavior: 0
-  m_ScrollDeltaPerTick: 6
---- !u!114 &78738674
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 78738672}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 76c392e42b5098c458856cdf6ecaaaa1, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.EventSystems.EventSystem
-  m_FirstSelected: {fileID: 0}
-  m_sendNavigationEvents: 1
-  m_DragThreshold: 10
---- !u!4 &78738675
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 78738672}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &477532500
 GameObject:
   m_ObjectHideFlags: 0
@@ -261,8 +182,8 @@ MonoBehaviour:
   cameraManager: {fileID: 1122902182}
   requestedLightEstimation: 31
   smoothing: 6
-  minIntensity: 0.55
-  maxIntensity: 2
+  minIntensity: 0.35
+  maxIntensity: 0.95
 --- !u!108 &477532503
 Light:
   m_ObjectHideFlags: 0
@@ -355,12 +276,17 @@ GameObject:
   - component: {fileID: 521325920}
   - component: {fileID: 521325919}
   - component: {fileID: 521325918}
+  - component: {fileID: 521325912}
   - component: {fileID: 521325910}
   - component: {fileID: 521325908}
   - component: {fileID: 521325907}
   - component: {fileID: 521325906}
   - component: {fileID: 521325922}
   - component: {fileID: 521325923}
+  - component: {fileID: 521325928}
+  - component: {fileID: 521325927}
+  - component: {fileID: 521325926}
+  - component: {fileID: 521325925}
   - component: {fileID: 521325924}
   m_Layer: 0
   m_Name: Managers
@@ -405,6 +331,9 @@ MonoBehaviour:
   roomMeshVisualizer: {fileID: 521325918}
   defaultViewMode: 1
   orbitSensitivity: 0.18
+  rnOrbitSensitivity: 0.12
+  rnOrbitPixelScale: 0.065
+  rnOrbitSmoothing: 14
   pinchZoomSensitivity: 0.01
   minDistance: 1.2
   maxDistance: 12
@@ -428,6 +357,8 @@ MonoBehaviour:
   planeManager: {fileID: 1786306640}
   arCamera: {fileID: 1122902184}
   placementIndicator: {fileID: 1330154966}
+  anchorManager: {fileID: 0}
+  anchorCorners: 1
   edgeColor: {r: 1, g: 1, b: 1, a: 0.98}
   floorLineWidth: 0.028
   wallLineWidth: 0.022
@@ -437,9 +368,10 @@ MonoBehaviour:
   minWallHeight: 0.5
   defaultWallHeight: 2.5
   maxWallHeight: 5
-  ceilingSnapTolerance: 0.18
+  ceilingSnapTolerance: 0.25
   minCeilingHeightAboveBase: 1.8
-  heightAimScreenY: 0.52
+  minReliableLockHeight: 1.8
+  heightAimScreenY: 0.62
   heightPlacementIconSize: 0.32
   measurementIconResourcePath: MeasurementIcons/measurement-icon
   cornerMarkerSize: 0.06
@@ -487,9 +419,35 @@ MonoBehaviour:
   catalog: {fileID: 0}
   placementIndicator: {fileID: 1330154966}
   cornerBuilder: {fileID: 521325907}
+  spatialMapping: {fileID: 521325928}
   spawnSampleOnConfirm: 0
   measurementOnlyMode: 1
   enableNativeHud: 1
+--- !u!114 &521325912
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0f65ea30d7a59dd4ab60415ef964c339, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RoomExportManager
+  placementController: {fileID: 0}
+  scanController: {fileID: 521325920}
+  meshManager: {fileID: 2075736066}
+  legacyExportService: {fileID: 0}
+  outputFolder: exports
+  fileNamePrefix: room-layout
+  includeRoomGeometry: 1
+  includeLiveArMeshes: 1
+  shareAfterExport: 1
+  preferUnityGltfWhenAvailable: 1
+  embedTextures: 1
+  maxTextureSize: 1024
+  maxFurnitureTrianglesForRn: 120000
 --- !u!114 &521325918
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -557,6 +515,7 @@ MonoBehaviour:
   minPlaneArea: 0.08
   statusPushInterval: 0.4
   cornerBuilder: {fileID: 521325907}
+  furniturePlacementOnly: 0
   autoStartScanOnLoad: 1
 --- !u!114 &521325922
 MonoBehaviour:
@@ -599,13 +558,73 @@ MonoBehaviour:
   m_GameObject: {fileID: 521325901}
   m_Enabled: 1
   m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a7c3e91f2b4d48e6a5d0c8f1e3b69742, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ARMeasurementRnBridge
+--- !u!114 &521325925
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 46c8693738da7d246a6218160ae8e5dd, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ARMainMenuBackButton
+  mainMenuSceneName: MainMenu
+  enableNativeButton: 1
+--- !u!114 &521325926
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c91b41a62b83eb64a9f6daa95ef26e39, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ARMeasurementPlanHUD
   scanController: {fileID: 521325920}
   layoutMode: {fileID: 521325906}
+  exportManager: {fileID: 521325912}
   mainMenuSceneName: MainMenu
   enableNativeHud: 1
+  topSafePadding: 56
+--- !u!114 &521325927
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b82e4ae521130434cb551056394ce36f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ARDesignSpatialMappingVisualizer
+  doorColor: {r: 0.2, g: 0.55, b: 0.95, a: 0.85}
+  windowColor: {r: 0.95, g: 0.85, b: 0.2, a: 0.85}
+  obstacleColor: {r: 0.55, g: 0.35, b: 0.2, a: 0.55}
+--- !u!114 &521325928
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 521325901}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e34f5769db1eaf44995c7996c9288602, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ARDesignSpatialMappingController
+  scanController: {fileID: 521325920}
+  cornerBuilder: {fileID: 521325907}
+  raycastManager: {fileID: 1786306641}
+  arCamera: {fileID: 1122902184}
+  visualizer: {fileID: 521325927}
 --- !u!1 &535005051
 GameObject:
   m_ObjectHideFlags: 0
@@ -1129,6 +1148,85 @@ MonoBehaviour:
   minFloorArea: 0.25
   floorSurfaceInset: 0.002
   arCamera: {fileID: 1122902184}
+--- !u!1 &1404063184
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1404063187}
+  - component: {fileID: 1404063186}
+  - component: {fileID: 1404063185}
+  m_Layer: 0
+  m_Name: EventSystem
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1404063185
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1404063184}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 01614664b831546d2ae94a42149d80ac, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.InputSystem::UnityEngine.InputSystem.UI.InputSystemUIInputModule
+  m_SendPointerHoverToParent: 1
+  m_MoveRepeatDelay: 0.5
+  m_MoveRepeatRate: 0.1
+  m_XRTrackingOrigin: {fileID: 0}
+  m_ActionsAsset: {fileID: -944628639613478452, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_PointAction: {fileID: -1654692200621890270, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_MoveAction: {fileID: -8784545083839296357, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_SubmitAction: {fileID: 392368643174621059, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_CancelAction: {fileID: 7727032971491509709, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_LeftClickAction: {fileID: 3001919216989983466, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_MiddleClickAction: {fileID: -2185481485913320682, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_RightClickAction: {fileID: -4090225696740746782, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_ScrollWheelAction: {fileID: 6240969308177333660, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_TrackedDevicePositionAction: {fileID: 6564999863303420839, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_TrackedDeviceOrientationAction: {fileID: 7970375526676320489, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
+  m_DeselectOnBackgroundClick: 1
+  m_PointerBehavior: 0
+  m_CursorLockBehavior: 0
+  m_ScrollDeltaPerTick: 6
+--- !u!114 &1404063186
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1404063184}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c392e42b5098c458856cdf6ecaaaa1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.EventSystems.EventSystem
+  m_FirstSelected: {fileID: 0}
+  m_sendNavigationEvents: 1
+  m_DragThreshold: 10
+--- !u!4 &1404063187
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1404063184}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1774506372
 GameObject:
   m_ObjectHideFlags: 0
@@ -1394,4 +1492,4 @@ SceneRoots:
   - {fileID: 521325905}
   - {fileID: 1330154965}
   - {fileID: 477532504}
-  - {fileID: 78738675}
+  - {fileID: 1404063187}

@@ -1,0 +1,120 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="Context Diagram" id="context-diagram">
+    <mxGraphModel dx="1300" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ===== System (single process) ===== -->
+        <mxCell id="SYS" value="0" style="swimlane;rounded=1;arcSize=10;startSize=26;fontStyle=1;html=1;collapsible=0;fontFamily=Arial;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="450" y="300" width="380" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="SYSt" value="AR Interior Design&lt;br&gt;App System" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=14;fontStyle=1;" vertex="1" parent="SYS">
+          <mxGeometry y="26" width="380" height="174" as="geometry" />
+        </mxCell>
+
+        <!-- ===== External entities ===== -->
+        <mxCell id="U" value="User" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="320" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="A" value="Admin" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="420" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="AI" value="AI Services&lt;br&gt;(Groq / Hugging Face / OpenAI)" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="560" y="60" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="PX" value="Pexels Image API" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="450" y="680" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="SEN" value="Sentry" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="690" y="680" width="140" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="DB" value="MongoDB Atlas" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="320" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="GCS" value="Google Cloud Storage" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Arial;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="420" width="150" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ===== User ===== -->
+        <mxCell id="e1" value="Login Details, Room Photos,&lt;br&gt;Measurements, Preferences" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=6;fontFamily=Arial;fontSize=10;labelBackgroundColor=#ffffff;exitX=1;exitY=0.3;entryX=0;entryY=0.19;" edge="1" parent="1" source="U" target="SYS">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint y="-22" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" value="AR View, AI Designs,&lt;br&gt;Themes, Saved Projects" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=6;fontFamily=Arial;fontSize=10;labelBackgroundColor=#ffffff;exitX=0;exitY=0.29;entryX=1;entryY=0.633;" edge="1" parent="1" source="SYS" target="U">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint y="22" as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ===== Admin ===== -->
+        <mxCell id="e3" value="Login, Furniture Data, 3D Models,&lt;br&gt;User &amp;amp; Store Updates" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=6;fontFamily=Arial;fontSize=10;labelBackgroundColor=#ffffff;exitX=1;exitY=0.3;entryX=0;entryY=0.69;" edge="1" parent="1" source="A" target="SYS">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint y="-22" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e4" value="Dashboard Stats,&lt;br&gt;User List, Catalog" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=6;fontFamily=Arial;fontSize=10;labelBackgroundColor=#ffffff;exitX=0;exitY=0.79;entryX=1;entryY=0.633;" edge="1" parent="1" source="SYS" target="A">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint y="22" as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ===== AI Services ===== -->
+        <mxCell id="e5" value="Design Prompts" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=6;fontFamily=Arial;fontSize=10;labelBackgroundColor=#ffffff;exitX=0.3947;exitY=0;entryX=0.25;entryY=1;" edge="1" parent="1" source="SYS" target="AI">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-50" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" value="Design Suggestions,&lt;br&gt;Generated Images" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=6;fontFamily=Arial;fontSize=10;labelBackgroundColor=#ffffff;exitX=0.75;exitY=1;entryX=0.6053;entryY=0;" edge="1" parent="1" source="AI" target="SYS">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="60" as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ===== Pexels ===== -->
+        <mxCell id="e7" value="Image Search&lt;br&gt;Queries" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=6;fontFamily=Arial;fontSize=10;labelBackgroundColor=#ffffff;exitX=0.105;exitY=1;entryX=0.25;entryY=0;" edge="1" parent="1" source="SYS" target="PX">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-45" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e8" value="Interior Design&lt;br&gt;Photos" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=6;fontFamily=Arial;fontSize=10;labelBackgroundColor=#ffffff;exitX=0.75;exitY=0;entryX=0.3158;entryY=1;" edge="1" parent="1" source="PX" target="SYS">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="45" as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ===== Sentry ===== -->
+        <mxCell id="e9" value="Error Reports" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=6;fontFamily=Arial;fontSize=10;labelBackgroundColor=#ffffff;exitX=0.8158;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="SYS" target="SEN">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="45" as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ===== MongoDB Atlas ===== -->
+        <mxCell id="e10" value="Users, Furniture,&lt;br&gt;Projects, Saved Items" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=6;fontFamily=Arial;fontSize=10;labelBackgroundColor=#ffffff;exitX=1;exitY=0.19;entryX=0;entryY=0.3;" edge="1" parent="1" source="SYS" target="DB">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint y="-22" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e11" value="Stored Records" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=6;fontFamily=Arial;fontSize=10;labelBackgroundColor=#ffffff;exitX=0;exitY=0.633;entryX=1;entryY=0.29;" edge="1" parent="1" source="DB" target="SYS">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint y="16" as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ===== Google Cloud Storage ===== -->
+        <mxCell id="e12" value="3D Models, Thumbnails,&lt;br&gt;Avatars" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=6;fontFamily=Arial;fontSize=10;labelBackgroundColor=#ffffff;exitX=1;exitY=0.69;entryX=0;entryY=0.3;" edge="1" parent="1" source="SYS" target="GCS">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint y="-22" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e13" value="File URLs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;endSize=6;fontFamily=Arial;fontSize=10;labelBackgroundColor=#ffffff;exitX=0;exitY=0.633;entryX=1;entryY=0.79;" edge="1" parent="1" source="GCS" target="SYS">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint y="16" as="offset" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

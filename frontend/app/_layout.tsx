@@ -3,6 +3,7 @@
  * Main app layout with navigation stack and initialization logic
  */
 
+import '@/utils/installDefaultFont';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import * as SplashScreen from 'expo-splash-screen';
@@ -17,8 +18,6 @@ import {
   Inter_700Bold,
 } from '@expo-google-fonts/inter';
 import {
-  PlayfairDisplay_400Regular,
-  PlayfairDisplay_500Medium,
   PlayfairDisplay_600SemiBold,
   PlayfairDisplay_700Bold,
 } from '@expo-google-fonts/playfair-display';
@@ -50,8 +49,6 @@ function RootLayoutContent() {
     'Inter-Medium': Inter_500Medium,
     'Inter-SemiBold': Inter_600SemiBold,
     'Inter-Bold': Inter_700Bold,
-    'PlayfairDisplay-Regular': PlayfairDisplay_400Regular,
-    'PlayfairDisplay-Medium': PlayfairDisplay_500Medium,
     'PlayfairDisplay-SemiBold': PlayfairDisplay_600SemiBold,
     'PlayfairDisplay-Bold': PlayfairDisplay_700Bold,
   });

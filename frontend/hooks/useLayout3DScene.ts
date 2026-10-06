@@ -48,7 +48,8 @@ interface UseLayout3DSceneReturn {
   selectedFurnitureId: string | null;
   // Functions
   onGLContextCreate: (gl: ExpoWebGLRenderingContext) => Promise<void>;
-  handleFurnitureTap: (locationX: number, locationY: number) => void;
+  handleFurnitureTap: (locationX: number, locationY: number, viewWidth?: number, viewHeight?: number) => void;
+  selectFurniture: (id: string | null) => void;
   resetCamera: () => void;
   panResponder: ReturnType<typeof PanResponder.create>;
 }
@@ -70,6 +71,11 @@ export function useLayout3DScene({
   const measurementGroupRef = useRef<THREE.Group | null>(null);
   const glLayoutRef = useRef<GLLayoutDimensions>({ width: 0, height: 0 });
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
+
+  const glRef = useRef<ExpoWebGLRenderingContext | null>(null);
+  const fitZoomRef = useRef<number>(CONTROL_DEFAULTS.zoom);
+  const latestPropsRef = useRef({ roomDimensions, design, viewMode, showGrid, showMeasurements });
+  latestPropsRef.current = { roomDimensions, design, viewMode, showGrid, showMeasurements };
 
   // Control refs
   const controlsRef = useRef<CameraControls>({ ...CONTROL_DEFAULTS });
@@ -101,13 +107,14 @@ export function useLayout3DScene({
 
         cameraRef.current.lookAt(controls.panX, 0, controls.panY);
       } else if (cameraRef.current instanceof THREE.OrthographicCamera) {
-        cameraRef.current.position.set(0, controls.zoom, 0);
-        cameraRef.current.lookAt(0, 0, 0);
-        cameraRef.current.zoom = controls.zoom;
+        cameraRef.current.position.set(controls.panX, 30, controls.panY);
+        cameraRef.current.lookAt(controls.panX, 0, controls.panY);
+        cameraRef.current.zoom = fitZoomRef.current / Math.max(0.1, controls.zoom);
         cameraRef.current.updateProjectionMatrix();
       }
 
       rendererRef.current.render(sceneRef.current, cameraRef.current);
+      glRef.current?.endFrameEXP();
       animationFrameRef.current = requestAnimationFrame(animate);
     } catch (error) {
       console.error('[Layout3DScene] Animation error:', error);
@@ -118,21 +125,68 @@ export function useLayout3DScene({
     }
   }, []);
 
+  const fitControlsToRoom = useCallback((dimensions: RoomDimensions) => {
+    const maxDim = Math.max(dimensions.width, dimensions.length, 1);
+    const zoom = Math.min(
+      CONTROL_DEFAULTS.maxZoom,
+      Math.max(CONTROL_DEFAULTS.minZoom, maxDim * 1.4)
+    );
+    fitZoomRef.current = zoom;
+    controlsRef.current = { ...CONTROL_DEFAULTS, zoom };
+  }, []);
+
+  // (Re)build camera, room and furniture from the latest props
+  const buildSceneContents = useCallback(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const { roomDimensions: dims, design: currentDesign, viewMode: mode, showGrid: grid, showMeasurements: measure } =
+      latestPropsRef.current;
+    const { width, height } = glLayoutRef.current;
+    const aspect = height > 0 ? width / height : 1;
+
+    const maxDim = Math.max(dims.width, dims.length, 1);
+    cameraRef.current = mode === 'top-down' || mode === 'orthographic'
+      ? createOrthographicCamera(aspect, maxDim * 0.65)
+      : createPerspectiveCamera(aspect);
+
+    if (roomGroupRef.current) scene.remove(roomGroupRef.current);
+    const roomGroup = createRoom(dims, grid);
+    roomGroupRef.current = roomGroup;
+    scene.add(roomGroup);
+
+    const furnitureGroup = furnitureGroupRef.current;
+    const newFurnitureMeshes = new Map<string, THREE.Mesh>();
+    if (furnitureGroup) {
+      furnitureGroup.clear();
+      if (currentDesign?.layout?.furniture) {
+        const { meshMap } = createFurnitureGroup(currentDesign.layout.furniture);
+        meshMap.forEach((mesh, id) => {
+          furnitureGroup.add(mesh);
+          newFurnitureMeshes.set(id, mesh);
+        });
+      }
+    }
+    setFurnitureMeshes(newFurnitureMeshes);
+    setSelectedFurnitureId(null);
+
+    if (measurementGroupRef.current) {
+      measurementGroupRef.current.clear();
+      if (measure) {
+        measurementGroupRef.current.add(createMeasurementLines(dims));
+      }
+    }
+  }, []);
+
   // Initialize 3D scene
   const onGLContextCreate = useCallback(
     async (gl: ExpoWebGLRenderingContext) => {
       const { drawingBufferWidth, drawingBufferHeight } = gl;
+      glRef.current = gl;
+      glLayoutRef.current = { width: drawingBufferWidth, height: drawingBufferHeight };
 
       // Create scene
       const scene = createScene();
       sceneRef.current = scene;
-
-      // Create camera based on view mode
-      const aspect = drawingBufferWidth / drawingBufferHeight;
-      const camera = viewMode === 'top-down' || viewMode === 'orthographic'
-        ? createOrthographicCamera(aspect)
-        : createPerspectiveCamera(aspect);
-      cameraRef.current = camera;
 
       // Create renderer
       const renderer = new ExpoThreeRenderer({ gl, width: drawingBufferWidth, height: drawingBufferHeight });
@@ -145,53 +199,54 @@ export function useLayout3DScene({
       const lights = createLighting();
       lights.children.forEach(light => scene.add(light));
 
-      // Create room
-      const roomGroup = createRoom(roomDimensions, showGrid);
-      roomGroupRef.current = roomGroup;
-      scene.add(roomGroup);
-
-      // Create furniture
       const furnitureGroup = new THREE.Group();
       furnitureGroupRef.current = furnitureGroup;
       scene.add(furnitureGroup);
 
-      // Create measurement group
       const measurementGroup = new THREE.Group();
       measurementGroupRef.current = measurementGroup;
       scene.add(measurementGroup);
 
-      // Add furniture if design is loaded
-      const newFurnitureMeshes = new Map<string, THREE.Mesh>();
-      if (design?.layout?.furniture) {
-        const { meshMap } = createFurnitureGroup(design.layout.furniture);
-        meshMap.forEach((mesh, id) => {
-          furnitureGroup.add(mesh);
-          newFurnitureMeshes.set(id, mesh);
-        });
-      }
-      setFurnitureMeshes(newFurnitureMeshes);
-
-      // Store GL layout dimensions
-      glLayoutRef.current = { width: drawingBufferWidth, height: drawingBufferHeight };
-
-      // Create measurements if enabled
-      if (showMeasurements) {
-        const measurements = createMeasurementLines(roomDimensions);
-        measurementGroupRef.current.add(measurements);
-      }
+      fitControlsToRoom(latestPropsRef.current.roomDimensions);
+      buildSceneContents();
 
       setIsRendering(true);
       animate();
     },
-    [roomDimensions, design, viewMode, showGrid, showMeasurements, animate]
+    [animate, buildSceneContents, fitControlsToRoom]
   );
 
-  // Handle furniture tap
+  // Rebuild when the design, room, or camera mode changes after the GL context exists
+  useEffect(() => {
+    if (!sceneRef.current) return;
+    buildSceneContents();
+  }, [design, roomDimensions, viewMode, showGrid, buildSceneContents]);
+
+  useEffect(() => {
+    if (!sceneRef.current) return;
+    fitControlsToRoom(roomDimensions);
+  }, [roomDimensions, fitControlsToRoom]);
+
+  const selectFurniture = useCallback(
+    (id: string | null) => {
+      furnitureMeshes.forEach((mesh) => {
+        const furniture = design?.layout?.furniture.find((f: any) => f.id === mesh.userData.furnitureId);
+        resetFurnitureMaterial(mesh, furniture?.category);
+      });
+      const mesh = id ? furnitureMeshes.get(id) : undefined;
+      if (mesh) highlightFurniture(mesh, true);
+      setSelectedFurnitureId(mesh ? id : null);
+    },
+    [furnitureMeshes, design]
+  );
+
+  // Handle furniture tap (location and view size in the same units, e.g. points)
   const handleFurnitureTap = useCallback(
-    (locationX: number, locationY: number) => {
+    (locationX: number, locationY: number, viewWidth?: number, viewHeight?: number) => {
       if (!sceneRef.current || !cameraRef.current) return;
 
-      const { width, height } = glLayoutRef.current;
+      const width = viewWidth ?? glLayoutRef.current.width;
+      const height = viewHeight ?? glLayoutRef.current.height;
       if (width === 0 || height === 0) return;
 
       // Convert screen coordinates to NDC
@@ -205,34 +260,16 @@ export function useLayout3DScene({
       // Check intersection with furniture
       const furnitureArray = Array.from(furnitureMeshes.values());
       const intersects = raycasterRef.current.intersectObjects(furnitureArray, true);
-
-      if (intersects.length > 0) {
-        const selectedMesh = intersects[0].object as THREE.Mesh;
-        for (const [id, mesh] of furnitureMeshes.entries()) {
-          if (mesh === selectedMesh) {
-            setSelectedFurnitureId(id);
-            highlightFurniture(mesh, true);
-            break;
-          }
-        }
-      } else {
-        setSelectedFurnitureId(null);
-        // Reset all furniture materials
-        furnitureMeshes.forEach((mesh) => {
-          const furniture = design?.layout?.furniture.find((f: any) => f.id === mesh.userData.furnitureId);
-          if (furniture) {
-            resetFurnitureMaterial(mesh, furniture.category);
-          }
-        });
-      }
+      const hit = intersects.find((i) => (i.object as THREE.Mesh).userData.furnitureId);
+      selectFurniture(hit ? (hit.object as THREE.Mesh).userData.furnitureId : null);
     },
-    [furnitureMeshes, design]
+    [furnitureMeshes, selectFurniture]
   );
 
   // Reset camera to default position
   const resetCamera = useCallback(() => {
-    controlsRef.current = { ...CONTROL_DEFAULTS };
-  }, []);
+    fitControlsToRoom(latestPropsRef.current.roomDimensions);
+  }, [fitControlsToRoom]);
 
   // Pan responder for touch gestures
   const panResponder = PanResponder.create({
@@ -323,6 +360,7 @@ export function useLayout3DScene({
     selectedFurnitureId,
     onGLContextCreate,
     handleFurnitureTap,
+    selectFurniture,
     resetCamera,
     panResponder,
   };

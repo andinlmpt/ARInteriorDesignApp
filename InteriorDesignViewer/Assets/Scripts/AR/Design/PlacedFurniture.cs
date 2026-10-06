@@ -39,6 +39,12 @@ public class PlacedFurniture : MonoBehaviour
 
     public bool IsSelected { get; private set; }
 
+    /// <summary>"#RRGGBB" tint chosen by the user; empty keeps the model's own colours.</summary>
+    public string ColorHex { get; private set; } = string.Empty;
+
+    static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
+    static readonly int ColorId = Shader.PropertyToID("_Color");
+
     /// <summary>Live-AR world anchor that keeps this piece locked to the real room.</summary>
     public ARAnchor WorldAnchor { get; private set; }
 
@@ -91,6 +97,11 @@ public class PlacedFurniture : MonoBehaviour
         var existingLabel = GetComponent<FurnitureDimensionLabel>();
         if (existingLabel != null)
             Destroy(existingLabel);
+    }
+
+    public void SetPlacementSpace(ARDesignLayoutModeController.ViewMode space)
+    {
+        PlacementSpace = space;
     }
 
     public void BindWorldAnchor(ARAnchor anchor)
@@ -164,6 +175,35 @@ public class PlacedFurniture : MonoBehaviour
         outline.SetPlacementSafe(isSafe);
     }
 
+    /// <summary>
+    /// Recolours the model's meshes. Uses property blocks so shared GLB materials (and other
+    /// instances of the same model) stay untouched; an empty or invalid hex restores the original.
+    /// </summary>
+    public void ApplyColor(string hex)
+    {
+        var hasTint = !string.IsNullOrWhiteSpace(hex) && ColorUtility.TryParseHtmlString(hex, out _);
+        ColorUtility.TryParseHtmlString(hex ?? string.Empty, out var tint);
+        ColorHex = hasTint ? hex.Trim() : string.Empty;
+
+        var block = new MaterialPropertyBlock();
+        foreach (var r in GetComponentsInChildren<Renderer>(true))
+        {
+            // Selection outline and other line helpers keep their own colours.
+            if (r is LineRenderer) continue;
+
+            if (!hasTint)
+            {
+                r.SetPropertyBlock(null);
+                continue;
+            }
+
+            r.GetPropertyBlock(block);
+            block.SetColor(BaseColorId, tint);
+            block.SetColor(ColorId, tint);
+            r.SetPropertyBlock(block);
+        }
+    }
+
     public PlacedFurniturePayload ToPayload()
     {
         return new PlacedFurniturePayload
@@ -175,6 +215,7 @@ public class PlacedFurniture : MonoBehaviour
             scale = ScaleMultiplier,
             dimensions = new ARDesignVec3(CurrentDimensions),
             selected = IsSelected,
+            colorHex = ColorHex,
         };
     }
 
