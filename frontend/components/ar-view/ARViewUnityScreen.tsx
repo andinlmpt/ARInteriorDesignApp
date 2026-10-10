@@ -828,18 +828,22 @@ export function ARViewUnityScreen() {
   const { handleLayout: handleCustomizeLayout, handleSelection: handleCustomizeSelection } = customization;
 
   const handleFinishDesign = useCallback(async () => {
-    unityRef.current?.getCurrentLayout();
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    await customization.flushCustomizedSave();
-    const gen = applyGenerationRef.current;
-    router.push({
-      pathname: '/design-final',
-      params: {
-        sessionId: gen?.sessionId || '',
-        projectId: gen?.projectId || activeProjectId || '',
-      },
-    });
-  }, [activeProjectId, customization, router]);
+    try {
+      unityRef.current?.getCurrentLayout();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await customization.flushCustomizedSave();
+      const gen = applyGenerationRef.current;
+      router.push({
+        pathname: '/design-final',
+        params: {
+          sessionId: gen?.sessionId || '',
+          projectId: gen?.projectId || activeProjectId || '',
+        },
+      });
+    } catch {
+      showToast('Could not save your edits. Please try again.', 4000);
+    }
+  }, [activeProjectId, customization, router, showToast]);
 
   const furnitureUiReady =
     unityReady &&

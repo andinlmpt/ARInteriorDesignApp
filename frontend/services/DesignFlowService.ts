@@ -116,7 +116,7 @@ export class DesignFlowService {
       measurementId: extras?.measurementId,
       projectId: extras?.projectId,
       notes: preferences.notes,
-      variationCount: 3,
+      variationCount: 2,
     };
 
     const response = await callApi<GenerateDesignResponse>('/designs/generate', {

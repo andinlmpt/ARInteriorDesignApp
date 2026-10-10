@@ -48,6 +48,8 @@ public class ARDesignSpatialMappingController : MonoBehaviour
     bool openingIsDoor = true;
     string openingSwing = "left";
     int obstacleTypeIndex;
+    bool lastFurnitureScanning;
+    int lastSuggestionRevision;
 
     public Phase CurrentPhase { get; private set; } = Phase.Outline;
     public bool CanConfirmRoom => CurrentPhase == Phase.ConfirmReview;
@@ -56,6 +58,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
     public bool HasPendingOpeningEdge { get; private set; }
     public int ObstacleCount => obstacles.Count;
     public int PendingSuggestionCount => pendingSuggestions.Count;
+    public bool IsFurnitureScanning => autoSuggest != null && autoSuggest.IsScanning;
     public IReadOnlyList<FurnitureAutoSuggestion> PendingSuggestions => pendingSuggestions;
     public bool OpeningIsDoor => openingIsDoor;
     public string OpeningSwing => openingSwing;
@@ -76,6 +79,10 @@ public class ARDesignSpatialMappingController : MonoBehaviour
             visualizer = GetComponent<ARDesignSpatialMappingVisualizer>();
         if (autoSuggest == null)
             autoSuggest = GetComponent<ARFurnitureAutoSuggestService>();
+        // Older measurement scenes already contain this controller, so the HUD's
+        // runtime setup does not run. Ensure those scenes start the detector too.
+        if (autoSuggest == null)
+            autoSuggest = gameObject.AddComponent<ARFurnitureAutoSuggestService>();
     }
 
     void Start()
@@ -101,7 +108,18 @@ public class ARDesignSpatialMappingController : MonoBehaviour
     void Update()
     {
         if (CurrentPhase == Phase.ExistingFurniture && autoSuggest != null)
+        {
+            var previousCount = pendingSuggestions.Count;
             autoSuggest.TickAutoScan(CurrentPhase, obstacles, pendingSuggestions);
+            if (pendingSuggestions.Count != previousCount || lastFurnitureScanning != IsFurnitureScanning
+                || lastSuggestionRevision != autoSuggest.Revision)
+            {
+                RebuildVisuals();
+                DataChanged?.Invoke();
+            }
+            lastFurnitureScanning = IsFurnitureScanning;
+            lastSuggestionRevision = autoSuggest.Revision;
+        }
 
         if (CurrentPhase != Phase.Openings && CurrentPhase != Phase.ExistingFurniture) return;
         if (Touch.activeTouches.Count != 1) return;
@@ -139,6 +157,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
 
     public void ResetToOutline()
     {
+        autoSuggest?.DiscardResults();
         openings.Clear();
         obstacles.Clear();
         pendingSuggestions.Clear();
@@ -183,6 +202,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
                 RunFurnitureAutoScan();
                 return true;
             case Phase.ExistingFurniture:
+                if (IsFurnitureScanning) return false;
                 AcceptAllSuggestions(minConfidence: 0.6f);
                 SetPhase(Phase.ConfirmReview);
                 return true;
@@ -233,6 +253,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
     {
         if (CurrentPhase == phase) return;
         CurrentPhase = phase;
+        if (phase != Phase.ExistingFurniture) autoSuggest?.DiscardResults();
         if (phase != Phase.Openings) ClearPendingEdge();
         RebuildVisuals();
         PhaseChanged?.Invoke();

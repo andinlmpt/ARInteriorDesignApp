@@ -24,13 +24,12 @@ public static class FurnitureDetectorSetup
             "Without a model:\n" +
             "• During \"Mark existing furniture\", the app scans AR horizontal planes " +
             "and shows orange suggestion boxes. Tap an orange box to save it.\n\n" +
-            "Optional COCO model (better accuracy):\n" +
-            "1. Export or download a MobileNet-SSD (COCO) ONNX model.\n" +
-            "2. Copy it to:\n" +
+            "COCO model (better accuracy):\n" +
+            "The project ships YOLO11n pretrained on COCO, from huggingface.co/unity/inference-engine-yolo " +
+            "(models/yolo11n.onnx, GPL-3.0), at:\n" +
             $"   {dest}\n" +
-            "3. Select the .onnx in Unity — Inference settings should create a ModelAsset.\n" +
-            "4. Ensure the imported asset name is FurnitureDetector (Resources/ML/FurnitureDetector).\n\n" +
-            "See Unity Sentis object-detection samples for compatible ONNX layouts.",
+            "To swap it, copy another YOLOv8/YOLO11 (COCO, 640x640) ONNX model to the same path. " +
+            "Delete the file to fall back to plane suggestions only.",
             "OK");
 
         if (File.Exists(dest))

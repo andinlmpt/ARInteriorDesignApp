@@ -69,7 +69,7 @@ import { getConfidencePercentage, getArrayValue } from '@/utils/themeRecommendHe
 // Theme
 import { useTheme } from '@/contexts/ThemeContext';
 import { getHorizontalPadding } from '@/utils/responsive';
-import { styles } from './theme-recommend.styles';
+import { styles } from '@/components/theme-recommend/styles';
 import { ThemeRecommendResults } from '@/components/theme-recommend/ThemeRecommendResults';
 import { ThemeRecommendSteps } from '@/components/theme-recommend/ThemeRecommendSteps';
 

@@ -34,6 +34,13 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
         type: 'empty',
       };
     }
+
+    // Unity AR is native-only; its codegen spec imports RN internals web can't bundle
+    if (moduleName === '@azesmway/react-native-unity') {
+      return {
+        type: 'empty',
+      };
+    }
   }
 
   // Use default resolver for everything else

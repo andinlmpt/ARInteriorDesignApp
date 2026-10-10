@@ -29,6 +29,7 @@ import {
   saveFinalizedDesign,
 } from '@/utils/designFlowStorage';
 import { firstParam, formatPhp } from '@/utils/designFlowFormat';
+import { exportFloorPlanPdf } from '@/utils/floorPlanExport';
 import { resolveAvailableColorHex } from '@/utils/furnitureCatalogHelpers';
 import type {
   CustomizedDesignLayout,
@@ -58,7 +59,11 @@ function resolveDraftLayout(
   customized: CustomizedDesignLayout | null,
   proposalIdParam?: string,
 ): { layout: CustomizedDesignLayout; proposalTitle: string } | null {
-  if (customized?.items?.length) {
+  if (customized?.items?.length
+      && customized.sessionId === generation.sessionId
+      && customized.measurementId === generation.measurementId
+      && customized.projectId === generation.projectId
+      && generation.proposals.some((entry) => entry.id === customized.proposalId)) {
     const proposal =
       generation.proposals.find((entry) => entry.id === customized.proposalId)
       ?? generation.proposals[0];
@@ -90,6 +95,7 @@ export default function DesignFinalScreen() {
   const [title, setTitle] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [savedSessionId, setSavedSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -108,6 +114,17 @@ export default function DesignFinalScreen() {
           setSavedSessionId(sessionIdParam);
           return;
         }
+        const customized = await loadCustomizedLayout();
+        const draft = resolveDraftLayout(remote, customized, proposalIdParam);
+        if (!draft) {
+          setError('No furniture in this layout.');
+          return;
+        }
+        setGeneration(remote);
+        setLayout(draft.layout);
+        setTitle(draft.proposalTitle);
+        setSavedSessionId(null);
+        return;
       }
 
       const localFinal = await loadFinalizedDesign();
@@ -193,6 +210,27 @@ export default function DesignFinalScreen() {
       setSaving(false);
     }
   }, [generation?.preferences, layout, router, saving, title]);
+
+  const handleExportPdf = useCallback(async () => {
+    if (!layout || exporting) return;
+    setExporting(true);
+    try {
+      const result = await exportFloorPlanPdf({
+        title: title.trim() || 'My design',
+        room: layout.room,
+        items: layout.items,
+        totalPhp: layout.totalPhp,
+        budgetPhp,
+        roomType: generation?.preferences.roomType,
+        style: generation?.preferences.style,
+      });
+      if (result.saved) Alert.alert('Floor plan saved', 'Your floor plan PDF is ready to open or share.');
+    } catch (err) {
+      Alert.alert('Export failed', err instanceof Error ? err.message : 'Could not create the floor plan PDF.');
+    } finally {
+      setExporting(false);
+    }
+  }, [budgetPhp, exporting, generation?.preferences, layout, title]);
 
   const renderLine = (line: CustomizedLayoutItem) => {
     const tint = line.tintHex ? resolveAvailableColorHex(line.tintHex, line.tintHex) : null;
@@ -336,6 +374,25 @@ export default function DesignFinalScreen() {
             </TouchableOpacity>
 
             <TouchableOpacity
+              onPress={() => void handleExportPdf()}
+              disabled={exporting}
+              style={[styles.secondaryBtn, styles.exportBtn, { borderColor: colors.border, opacity: exporting ? 0.7 : 1 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Export floor plan as PDF"
+            >
+              {exporting ? (
+                <ActivityIndicator color={colors.accent} />
+              ) : (
+                <>
+                  <Ionicons name="document-text-outline" size={20} color={colors.textPrimary} />
+                  <AppText variant="body" style={{ color: colors.textPrimary }}>
+                    Export floor plan (PDF)
+                  </AppText>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
               onPress={() => router.replace('/(tabs)')}
               style={[styles.secondaryBtn, { borderColor: colors.border }]}
               accessibilityRole="button"
@@ -437,5 +494,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: spacing.sm,
+  },
+  exportBtn: {
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
 });

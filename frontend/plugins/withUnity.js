@@ -57,11 +57,29 @@ function patchUnityExportGradle(projectRoot) {
         `$1
         // ${IL2CPP_MARKER}
         def prebuiltIl2Cpp = file("\${projectDir}/src/main/jniLibs/arm64-v8a/libil2cpp.so")
-        if (prebuiltIl2Cpp.exists() && prebuiltIl2Cpp.length() > 100000) {
-            println("Using prebuilt libil2cpp.so — skipping IL2CPP compile (required for EAS cloud builds).")
+        if (project.findProperty("unity.usePrebuiltIl2Cpp")?.toString() == "true") {
+            if (!prebuiltIl2Cpp.exists() || prebuiltIl2Cpp.length() <= 100000)
+                throw new GradleException("Prebuilt IL2CPP is missing. Build the current Unity export locally before submitting to EAS.")
+            println("Using explicitly requested prebuilt libil2cpp.so.")
             return
         }`
       );
+    }
+
+    // Changing cloud/local mode must invalidate Gradle's previous task result.
+    if (!next.includes('RN_UNITY_IL2CPP_MODE_INPUT')) {
+      next = next.replace(/(tasks\.register\(['"]buildIl2Cpp['"]\)\s*\{)/,
+        `$1\n    // RN_UNITY_IL2CPP_MODE_INPUT\n    inputs.property("usePrebuiltIl2Cpp", project.findProperty("unity.usePrebuiltIl2Cpp") ?: "false")`);
+    }
+
+    // Upgrade exports patched by older versions, which silently reused stale native code.
+    for (const condition of [
+      'prebuiltIl2Cpp.exists() && prebuiltIl2Cpp.length() > 100000',
+      'project.findProperty("unity.usePrebuiltIl2Cpp")?.toString() == "true" && prebuiltIl2Cpp.exists() && prebuiltIl2Cpp.length() > 100000',
+    ]) {
+      next = next.replace(`if (${condition}) {`, `if (project.findProperty("unity.usePrebuiltIl2Cpp")?.toString() == "true") {
+            if (!prebuiltIl2Cpp.exists() || prebuiltIl2Cpp.length() <= 100000)
+                throw new GradleException("Prebuilt IL2CPP is missing. Build the current Unity export locally before submitting to EAS.")`);
     }
 
     return next;
@@ -91,14 +109,37 @@ function patchUnityExportGradle(projectRoot) {
   }
 
   const depthManifest = path.join(unityRoot, 'unityLibrary', 'src', 'main', 'AndroidManifest.xml');
+  stripUnityLauncherIntentFilter(depthManifest);
   if (fs.existsSync(depthManifest)) {
     let manifest = fs.readFileSync(depthManifest, 'utf8');
     manifest = manifest.replace(
       /android:name="com\.google\.ar\.core\.depth"\s+android:required="true"/,
       'android:name="com.google.ar.core.depth" android:required="false"'
     );
+    // Unity 6 turns on predictive back; React Native handles back itself (the app sets false),
+    // and the conflicting values fail the manifest merge.
+    manifest = manifest.replace(/\s+android:enableOnBackInvokedCallback="[^"]*"/, '');
     fs.writeFileSync(depthManifest, manifest);
   }
+  patchGradleFile(path.join(projectRoot, 'android', 'gradle.properties'), contents => {
+    const properties = unityBuildProperties();
+    const keys = Object.keys(properties);
+    if (!keys.length) return contents;
+    return contents.split(/\r?\n/).filter(line => !keys.some(key => line.startsWith(`${key}=`)))
+      .concat(keys.map(key => `${key}=${properties[key]}`)).join('\n');
+  });
+}
+
+function unityBuildProperties() {
+  // The EAS profiles explicitly opt in; workstation builds compile current sources.
+  if (process.env.UNITY_USE_PREBUILT_IL2CPP === 'true')
+    return { 'unity.usePrebuiltIl2Cpp': 'true' };
+  const properties = { 'unity.usePrebuiltIl2Cpp': 'false' };
+  const sdk = process.env.ANDROID_SDK_ROOT || process.env.ANDROID_HOME;
+  const ndk = process.env.UNITY_ANDROID_NDK_PATH || process.env.ANDROID_NDK_HOME;
+  if (sdk && fs.existsSync(sdk)) properties['unity.androidSdkPath'] = sdk.replace(/\\/g, '/');
+  if (ndk && fs.existsSync(ndk)) properties['unity.androidNdkPath'] = ndk.replace(/\\/g, '/');
+  return properties;
 }
 
 const withUnityAndroidGradle = (config) => {
@@ -152,6 +193,22 @@ const withUnityAndroidGradle = (config) => {
       );
     }
 
+    // Unity 6 exports nested Android library modules (e.g. xrmanifest.androidlib for AR/XR)
+    // that unityLibrary/build.gradle depends on as ':unityLibrary:<name>'.
+    const unityLibraryDir = path.join(projectRoot, 'unity', 'builds', 'android', 'unityLibrary');
+    fs.readdirSync(unityLibraryDir)
+      .filter((name) => name.endsWith('.androidlib') && fs.statSync(path.join(unityLibraryDir, name)).isDirectory())
+      .forEach((name) => {
+        const subInclude = `include ':unityLibrary:${name}'`;
+        if (!config.modResults.contents.includes(subInclude)) {
+          config.modResults.contents = config.modResults.contents.replace(
+            unityProjectDir,
+            `${unityProjectDir}\n${subInclude}\n`
+              + `project(':unityLibrary:${name}').projectDir = new File('../unity/builds/android/unityLibrary/${name}')`
+          );
+        }
+      });
+
     return config;
   });
 
@@ -180,6 +237,11 @@ const withUnityAndroidGradle = (config) => {
     }
 
     const props = config.modResults;
+    for (const [key, value] of Object.entries(unityBuildProperties())) {
+      const existing = props.find(item => item.type === 'property' && item.key === key);
+      if (existing) existing.value = value;
+      else props.push({ type: 'property', key, value });
+    }
     const hasStreamingAssets = props.some(
       (item) => item.type === 'property' && item.key === 'unityStreamingAssets'
     );
@@ -249,3 +311,4 @@ function patchAzesmwayUPlayer(projectRoot) {
 const withUnity = (config) => withUnityAndroidGradle(config);
 
 module.exports = createRunOncePlugin(withUnity, 'withUnity');
+module.exports.patchUnityExportGradle = patchUnityExportGradle;

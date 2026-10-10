@@ -17,7 +17,32 @@ import { AnimatedButton, FadeInView, SlideInView, ScaleInView } from '@/componen
 import { AlternativeThemeCard } from '@/components/theme-recommend';
 import { ROOM_EMOJIS, MOOD_EMOJIS, STYLE_EMOJIS, CONFIG, ALTERNATIVE_THEME_ITEM_HEIGHT } from '@/config/themeRecommend.config';
 import { getConfidencePercentage, getArrayValue } from '@/utils/themeRecommendHelpers';
-import { styles } from '@/app/theme-recommend.styles';
+import { styles } from './styles';
+import type { ThemeColors } from '@/contexts/ThemeContext';
+import type { DesignTheme, ThemeRecommendationOutput } from '@/types/theme-recommendation';
+import type { useThemeSelection } from '@/hooks/useThemeSelection';
+import type { useThemeUI } from '@/hooks/useThemeUI';
+import type { useThemeRecommendations } from '@/hooks/useThemeRecommendations';
+import type { useThemeLikes } from '@/hooks/useThemeLikes';
+import type { useThemeCollections } from '@/hooks/useThemeCollections';
+import type { useThemeImageGeneration } from '@/hooks/useThemeImageGeneration';
+
+interface ThemeRecommendResultsProps {
+  selection: ReturnType<typeof useThemeSelection>;
+  uiWithResults: ReturnType<typeof useThemeUI>;
+  recommendations: ReturnType<typeof useThemeRecommendations>;
+  likes: ReturnType<typeof useThemeLikes>;
+  collections: ReturnType<typeof useThemeCollections>;
+  imageGeneration: ReturnType<typeof useThemeImageGeneration>;
+  colors: ThemeColors;
+  statusBarStyle: 'light' | 'dark';
+  handleRefresh: () => Promise<void>;
+  handleApplyTheme: (theme: DesignTheme) => Promise<void>;
+  filteredHistory: ThemeRecommendationOutput[];
+  colorPaletteMemoized: string[];
+  ui: ReturnType<typeof useThemeUI>;
+  router: ReturnType<typeof useRouter>;
+}
 
 export function ThemeRecommendResults({
   selection,
@@ -34,7 +59,8 @@ export function ThemeRecommendResults({
   colorPaletteMemoized,
   ui,
   router
-}: any) {
+}: ThemeRecommendResultsProps) {
+    if (!uiWithResults.resultsData) return null;
   
     const {
       topTheme,

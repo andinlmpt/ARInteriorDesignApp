@@ -1,0 +1,10 @@
+<linker>
+  <!-- Engine code stripping drops the physics module because no scene references a collider,
+       but GameObject.CreatePrimitive adds one at runtime (room scan corner markers). -->
+  <assembly fullname="UnityEngine.PhysicsModule">
+    <type fullname="UnityEngine.SphereCollider" preserve="all" />
+    <type fullname="UnityEngine.BoxCollider" preserve="all" />
+    <type fullname="UnityEngine.CapsuleCollider" preserve="all" />
+    <type fullname="UnityEngine.MeshCollider" preserve="all" />
+  </assembly>
+</linker>

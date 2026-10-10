@@ -43,7 +43,7 @@ export function ARViewUnityDevNotice() {
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.iconWrap}>
-        <Ionicons name="logo-unity" size={40} color={colors.accent} />
+        <Ionicons name="cube-outline" size={40} color={colors.accent} />
       </View>
 
       <Text style={styles.title}>AR runs in Unity for now</Text>

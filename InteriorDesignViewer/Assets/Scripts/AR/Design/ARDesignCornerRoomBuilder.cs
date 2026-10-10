@@ -438,6 +438,21 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         CornersChanged?.Invoke();
     }
 
+    /// <summary>
+    /// Undo past the Finish point: drops the locked height and its seeded first corner so the
+    /// base point can be set again. Only applies while no other corner has been added.
+    /// </summary>
+    public void RestartFromHeight()
+    {
+        if (!heightLocked || corners.Count > 1) return;
+
+        // Corner 0 shares the height base anchor; ResetHeightPhase releases it once.
+        corners.Clear();
+        cornerAnchors.Clear();
+        PrepareForRescan();
+        HeightPhaseChanged?.Invoke();
+    }
+
     public void PrepareForRescan()
     {
         roomLocked = false;

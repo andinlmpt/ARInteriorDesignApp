@@ -179,6 +179,7 @@ export default function DesignLayoutsScreen() {
                   widthM={result.room.width}
                   lengthM={result.room.length}
                   items={proposal.items}
+                  maxHeight={240}
                 />
 
                 <AppText variant="subtitle" style={{ color: colors.textPrimary, marginTop: spacing.md }}>

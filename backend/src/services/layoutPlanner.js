@@ -7,6 +7,9 @@
  * rotation (degrees): 0 faces +z, 90 faces +x, 180 faces -z, 270 faces -x.
  */
 
+import { insidePolygon, pointInPolygon } from '../utils/roomGeometry.js';
+import { optimizeLayout } from './layoutOptimizer.js';
+
 const PAD = 0.05;
 const WALKWAY = 0.6;
 const GRID_CELL = 0.2;
@@ -100,30 +103,6 @@ function rectCenter(r) {
 
 function insideRoom(r, room) {
   return r.x >= -0.001 && r.z >= -0.001 && r.x + r.w <= room.width + 0.001 && r.z + r.d <= room.length + 0.001;
-}
-
-function pointInPolygon(p, polygon) {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
-    const a = polygon[i];
-    const b = polygon[j];
-    if ((a.z > p.z) !== (b.z > p.z) && p.x < ((b.x - a.x) * (p.z - a.z)) / (b.z - a.z) + a.x) inside = !inside;
-  }
-  return inside;
-}
-
-/** Rect lies inside a (possibly concave) outline: all corners inside, no outline corner poking in. */
-function insidePolygon(r, polygon) {
-  if (!polygon) return true;
-  const inset = 0.01;
-  const corners = [
-    { x: r.x + inset, z: r.z + inset },
-    { x: r.x + r.w - inset, z: r.z + inset },
-    { x: r.x + r.w - inset, z: r.z + r.d - inset },
-    { x: r.x + inset, z: r.z + r.d - inset },
-  ];
-  if (!corners.every((c) => pointInPolygon(c, polygon))) return false;
-  return !polygon.some((v) => v.x > r.x + inset && v.x < r.x + r.w - inset && v.z > r.z + inset && v.z < r.z + r.d - inset);
 }
 
 const NO_FEATURES = { polygon: null, doorZones: [], windowZones: [], obstacles: [] };
@@ -848,16 +827,90 @@ function planSingle(groups, rugs, room, preferredWall, variant, seed, features) 
   return { items, dropped, score: scoreLayout(items, room, features), primaryWall: ctx.primaryPlacement?.frame.wall || null };
 }
 
+const ROTATION_WALL = { 0: 'north', 90: 'west', 180: 'south', 270: 'east' };
+
+function optimizationSummary(result, applied) {
+  const shown = applied ? result.after : result.before;
+  return {
+    algorithm: 'guideline-annealing',
+    applied,
+    iterations: result.iterations,
+    costBefore: Math.round(result.before.cost * 1000) / 1000,
+    costAfter: Math.round(shown.cost * 1000) / 1000,
+    rulesPassed: shown.passed,
+    rulesTotal: shown.checks.length,
+    checks: shown.checks,
+    terms: Object.fromEntries(Object.entries(shown.terms).map(([key, value]) => [key, Math.round(value * 1000) / 1000])),
+  };
+}
+
+/**
+ * Refine a planned layout with the guideline optimizer. The refined layout is kept only
+ * when it satisfies the hard constraints and does not lower the planner's own score.
+ */
+function refinePlan(plan, room, features, seed, options) {
+  const solid = plan.items.filter((i) => i.entry.role !== 'rug');
+  if (solid.length === 0) return plan;
+  const result = optimizeLayout({
+    room,
+    features,
+    items: solid.map((placed) => ({
+      id: placed.entry.id,
+      role: placed.entry.role,
+      name: placed.entry.item.name || placed.entry.role,
+      width: placed.entry.item.width,
+      length: placed.entry.item.length,
+      height: placed.entry.item.height,
+      groupKey: placed.groupKey,
+    })),
+    poses: solid.map((placed) => ({ x: placed.rect.x, z: placed.rect.z, rot: placed.rotation })),
+    rng: mulberry32(seed ^ 0x5bd1e995),
+    iterations: options.iterations,
+    timeBudgetMs: options.timeBudgetMs,
+  });
+  if (!result.improved) return { ...plan, optimization: optimizationSummary(result, false) };
+
+  const items = solid.map((placed, k) => {
+    const pose = result.poses[k];
+    const fp = footprint(placed.entry.item, pose.rot);
+    return { ...placed, rect: { x: pose.x, z: pose.z, w: fp.w, d: fp.d }, rotation: pose.rot };
+  });
+  const primary = items.find((i) => PRIMARY_ROLES.includes(i.entry.role)) || items[0];
+  const rugs = placeRugs(
+    plan.items.filter((i) => i.entry.role === 'rug').map((i) => i.entry),
+    items,
+    room,
+    { items: [primary], frame: { rot: primary.rotation } },
+  );
+  const refinedItems = [...rugs, ...items];
+  const score = scoreLayout(refinedItems, room, features);
+  if (score.fit < plan.score.fit || score.overall < plan.score.overall) {
+    return { ...plan, optimization: optimizationSummary(result, false) };
+  }
+  return {
+    items: refinedItems,
+    dropped: plan.dropped,
+    score,
+    primaryWall: ROTATION_WALL[primary.rotation] || null,
+    optimization: optimizationSummary(result, true),
+  };
+}
+
 /**
  * Plan `count` distinct layouts for a room.
  * @param {{width:number,length:number,height:number}} room
  * @param {Array<{id:string,name:string,type?:string,category?:string,width:number,length:number,height:number}>} furniture
- * @param {{count?:number, seed?:number, features?:{polygon?:Array<{x:number,z:number}>, doorZones?:Array, windowZones?:Array, obstacles?:Array}}} [options]
+ * @param {{count?:number, firstVariant?:number, seed?:number, optimize?:boolean, iterations?:number, timeBudgetMs?:number,
+ *   features?:{polygon?:Array<{x:number,z:number}>, doorZones?:Array, windowZones?:Array, obstacles?:Array}}} [options]
  *   features are room-local: doorZones are kept fully clear, windowZones reject furniture taller
  *   than zone.maxHeight, obstacles are existing furniture footprints.
+ *   firstVariant (default 0) picks the anchor wall of the first layout, so separate calls can
+ *   produce layouts anchored on different walls.
+ *   optimize (default true) refines each layout with guideline-based simulated annealing.
  */
 export function planLayouts(room, furniture, options = {}) {
   const count = Math.max(1, options.count || 3);
+  const firstVariant = Math.max(0, Math.floor(options.firstVariant || 0));
   const baseSeed = options.seed ?? Date.now();
   const features = normalizeFeatures(options.features);
 
@@ -870,7 +923,7 @@ export function planLayouts(room, furniture, options = {}) {
   );
 
   const results = [];
-  for (let variant = 0; variant < count; variant += 1) {
+  for (let variant = firstVariant; variant < firstVariant + count; variant += 1) {
     const preferredWall = WALL_ORDER[variant % WALL_ORDER.length];
     let best = null;
     for (let attempt = 0; attempt < ATTEMPTS_PER_LAYOUT; attempt += 1) {
@@ -878,10 +931,11 @@ export function planLayouts(room, furniture, options = {}) {
       const plan = planSingle(groups, rugs, room, preferredWall, variant, baseSeed + variant * 1000 + attempt, features);
       if (!best || plan.score.overall > best.score.overall) best = plan;
     }
-    results.push(best);
+    results.push(options.optimize === false ? best : refinePlan(best, room, features, baseSeed + variant * 1000, options));
   }
 
-  return results.map((plan, variant) => {
+  return results.map((plan, index) => {
+    const variant = firstVariant + index;
     const counters = new Map();
     const placedFurniture = plan.items.map((placedItem) => {
       const { entry, rect, rotation } = placedItem;
@@ -911,6 +965,7 @@ export function planLayouts(room, furniture, options = {}) {
       dropped: plan.dropped,
       primaryWall: plan.primaryWall,
       roomFeatures: featureStats,
+      optimization: plan.optimization || null,
     };
   });
 }
