@@ -10,7 +10,7 @@ import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -22,8 +22,6 @@ import userRoutes from './routes/users.js';
 import themeRoutes from './routes/themes.js';
 import imageRoutes from './routes/images.js';
 import designRoutes from './routes/designs.js';
-import { authenticate } from './middleware/auth.js';
-import aiDesignController from './controllers/aiDesignController.js';
 import ideaRoutes from './routes/ideas.js';
 import trainingRoutes from './routes/training.js';
 import furnitureRoutes from './routes/furniture.js';
@@ -138,9 +136,6 @@ app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/room-measurements', roomMeasurementRoutes);
 app.use('/api/v1/saved-items', savedItemRoutes);
 
-// Strict new route requested by user
-app.post('/api/v1/design/generate', authenticate, aiDesignController.generateLayout);
-
 // Root endpoint - serve web view
 app.get('/', (req, res) => {
   res.sendFile(join(publicPath, 'index.html'));
@@ -180,6 +175,8 @@ app.use(errorHandler);
 const db = initDatabase(); // In-memory database (for backward compatibility)
 
 // Initialize Sentry and start server
+// Importing the app for tests must not open a listener or a database connection.
+if (process.argv[1] && resolve(process.argv[1]) === __filename && NODE_ENV !== 'test') {
 (async () => {
   await initSentry();
 
@@ -195,7 +192,6 @@ const db = initDatabase(); // In-memory database (for backward compatibility)
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📡 Environment: ${NODE_ENV}`);
-    console.log(`🤖 Groq API: ${process.env.GROQ_API_KEY ? 'configured' : 'NOT SET'}`);
     console.log(`🌐 Web View: http://localhost:${PORT}/`);
     console.log(`🔗 Health check: http://localhost:${PORT}/health`);
     console.log(`📚 API base: http://localhost:${PORT}/api/v1`);
@@ -267,6 +263,7 @@ const db = initDatabase(); // In-memory database (for backward compatibility)
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 })();
+}
 
 export default app;
 

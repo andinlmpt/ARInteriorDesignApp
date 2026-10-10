@@ -1,3 +1,4 @@
+// Shared styling lives outside Expo Router's route directory.
 import { StyleSheet } from 'react-native';
 import { getHorizontalPadding } from '@/utils/responsive';
 

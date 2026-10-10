@@ -187,7 +187,7 @@ export const Unity3DViewer: React.FC<Unity3DViewerProps> = ({
         onMessage={handleMessage}
         onError={handleError}
         onHttpError={handleError}
-        onConsoleMessage={(e) => {
+        onConsoleMessage={(e: { nativeEvent: { level: string; message: string } }) => {
           if (e.nativeEvent.level === 'error') {
             console.warn('[Unity WebView]', e.nativeEvent.message);
           }

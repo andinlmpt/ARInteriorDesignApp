@@ -115,10 +115,10 @@ export default function SavedScreen() {
     useCallback(() => {
       const initializeAndLoad = async () => {
         try {
-          const { initializeSavedItems } = await import('@/utils/initializeSavedItems');
-          await initializeSavedItems();
+          const { removeSampleSavedItems } = await import('@/utils/removeSampleSavedItems');
+          await removeSampleSavedItems();
         } catch (error) {
-          console.warn('[SavedScreen] Failed to initialize sample items:', error);
+          console.warn('[SavedScreen] Failed to remove sample items:', error);
         }
         await loadSavedItems();
       };
@@ -312,7 +312,7 @@ export default function SavedScreen() {
                 const isRemoving = removingId === item.id;
 
                 return (
-                  <SlideInView key={item.id} direction="up" delay={Math.min(index * 40, 240)}>
+                  <SlideInView key={item.id} direction="bottom" delay={Math.min(index * 40, 240)}>
                     <Pressable
                       onPress={() => handleItemPress(item)}
                       style={[

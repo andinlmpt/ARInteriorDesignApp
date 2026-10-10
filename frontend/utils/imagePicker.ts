@@ -84,8 +84,8 @@ export async function launchImageLibrary(options: {
         uri: asset.uri,
         width: asset.width,
         height: asset.height,
-        type: asset.type,
-        fileName: asset.fileName,
+        type: asset.type ?? undefined,
+        fileName: asset.fileName ?? undefined,
       })),
     };
   } catch (error) {
@@ -123,8 +123,8 @@ export async function launchCamera(options: {
         uri: asset.uri,
         width: asset.width,
         height: asset.height,
-        type: asset.type,
-        fileName: asset.fileName,
+        type: asset.type ?? undefined,
+        fileName: asset.fileName ?? undefined,
       })),
     };
   } catch (error) {

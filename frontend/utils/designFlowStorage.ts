@@ -1,4 +1,5 @@
-import { getJson, setJson, removeKey } from '@/utils/storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getJson, removeKey } from '@/utils/storage';
 import type {
   CustomizedDesignLayout,
   DesignFlowGenerationResult,
@@ -12,7 +13,9 @@ const FINALIZED_KEY = 'designFlowLastFinalized';
 export async function saveDesignGeneration(
   result: DesignFlowGenerationResult,
 ): Promise<void> {
-  await setJson(STORAGE_KEY, result);
+  // A fresh generation starts a new draft; the previous room's edits/final cannot win.
+  await AsyncStorage.multiRemove([CUSTOMIZED_KEY, FINALIZED_KEY]);
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(result));
 }
 
 export async function loadDesignGeneration(): Promise<DesignFlowGenerationResult | null> {
@@ -30,7 +33,7 @@ export async function clearDesignGeneration(): Promise<void> {
 }
 
 export async function saveCustomizedLayout(layout: CustomizedDesignLayout): Promise<void> {
-  await setJson(CUSTOMIZED_KEY, layout);
+  await AsyncStorage.setItem(CUSTOMIZED_KEY, JSON.stringify(layout));
 }
 
 export async function loadCustomizedLayout(): Promise<CustomizedDesignLayout | null> {
@@ -40,7 +43,7 @@ export async function loadCustomizedLayout(): Promise<CustomizedDesignLayout | n
 }
 
 export async function saveFinalizedDesign(result: SavedFinalDesignResponse): Promise<void> {
-  await setJson(FINALIZED_KEY, result);
+  await AsyncStorage.setItem(FINALIZED_KEY, JSON.stringify(result));
 }
 
 export async function loadFinalizedDesign(): Promise<SavedFinalDesignResponse | null> {

@@ -28,8 +28,6 @@ public static class ARFurniturePlaneAutoScanner
             return results;
 
         var candidates = new List<(ARPlane plane, float area)>();
-        ARPlane largestFloor = null;
-        var largestArea = 0f;
 
         foreach (var plane in planeManager.trackables)
         {
@@ -43,20 +41,12 @@ public static class ARFurniturePlaneAutoScanner
                 continue;
 
             var area = Mathf.Max(0.01f, plane.size.x * plane.size.y);
-            if (area > largestArea)
-            {
-                largestArea = area;
-                largestFloor = plane;
-            }
-
             candidates.Add((plane, area));
         }
 
         var counter = 0;
         foreach (var (plane, area) in candidates)
         {
-            if (plane == largestFloor && area >= largestArea * 0.92f)
-                continue;
             if (area < MinAreaSqm || area > MaxAreaSqm)
                 continue;
 
@@ -72,7 +62,7 @@ public static class ARFurniturePlaneAutoScanner
                 Mathf.Max(MinFootprintSide, plane.size.y));
             center.y = floorY;
 
-            if (OverlapsExisting(center, size, existing, pending))
+            if (ARFurniturePlaneAutoScannerOverlapsHelper.Overlaps(center, size, existing, pending, plane.transform.eulerAngles.y))
                 continue;
 
             counter += 1;
@@ -107,33 +97,4 @@ public static class ARFurniturePlaneAutoScanner
         return "other";
     }
 
-    static bool OverlapsExisting(
-        Vector3 center,
-        Vector3 size,
-        IReadOnlyList<RoomObstaclePayload> existing,
-        IReadOnlyList<FurnitureAutoSuggestion> pending)
-    {
-        const float minSep = 0.55f;
-        if (existing != null)
-        {
-            foreach (var ob in existing)
-            {
-                var d = Vector3.Distance(
-                    new Vector3(center.x, 0f, center.z),
-                    new Vector3(ob.center.x, 0f, ob.center.z));
-                if (d < minSep) return true;
-            }
-        }
-
-        if (pending == null) return false;
-        foreach (var s in pending)
-        {
-            var d = Vector3.Distance(
-                new Vector3(center.x, 0f, center.z),
-                new Vector3(s.center.x, 0f, s.center.z));
-            if (d < minSep) return true;
-        }
-
-        return false;
-    }
 }

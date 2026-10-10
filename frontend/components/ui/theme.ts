@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Platform, type ViewStyle } from 'react-native';
 import { lightPalette, darkPalette } from '@/theme/palette';
 
 // Default light colors (for static imports - prefer useTheme() hook for dynamic theming)
@@ -111,7 +111,7 @@ const createShadow = (
   blur: number,
   opacity: number,
   elevation: number
-) => {
+): Pick<ViewStyle, 'shadowColor' | 'shadowOffset' | 'shadowOpacity' | 'shadowRadius' | 'elevation'> & { boxShadow?: string } => {
   if (Platform.OS === 'web') {
     return {
       boxShadow: `0px ${offsetY}px ${blur}px rgba(0, 0, 0, ${opacity})`,

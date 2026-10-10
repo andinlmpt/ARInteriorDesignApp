@@ -12,27 +12,14 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-producti
 const isDev = () =>
   process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production';
 
-// Simple JWT verification (fallback if jsonwebtoken not available)
+// Never decode a failed verification as an authenticated identity.
 async function verifyToken(token) {
   try {
-    // Try to use jsonwebtoken if available
+    if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) return null;
     const jwt = await import('jsonwebtoken');
-    return jwt.default.verify(token, JWT_SECRET);
-  } catch (error) {
-    // Fallback: simple token verification
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-
-    try {
-      const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
-      // Basic expiration check (7 days)
-      if (payload.exp && payload.exp < Date.now() / 1000) {
-        return null;
-      }
-      return payload;
-    } catch {
-      return null;
-    }
+    return jwt.default.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+  } catch {
+    return null;
   }
 }
 
@@ -168,12 +155,6 @@ export async function authenticate(req, res, next) {
     });
   } catch (error) {
     console.error('[Auth] Token verification failed (exception):', error.message);
-
-    if (isDev()) {
-      console.warn('[Auth] Authentication error, allowing in development:', error.message);
-      req.user = { userId: 'dev-user', id: 'dev-user', role: 'user' };
-      return next();
-    }
 
     return res.status(401).json({
       error: 'Unauthorized',

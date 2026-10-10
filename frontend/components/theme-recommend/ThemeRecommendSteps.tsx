@@ -11,7 +11,23 @@ import { useRouter } from 'expo-router';
 import { AnimatedButton, FadeInView, SlideInView } from '@/components/interactive';
 import { OptionCard, BudgetSelector } from '@/components/theme-recommend';
 import { ROOM_TYPES, ROOM_EMOJIS, DESIGN_MOODS, MOOD_EMOJIS, DESIGN_STYLES, STYLE_EMOJIS } from '@/config/themeRecommend.config';
-import { styles } from '@/app/theme-recommend.styles';
+import { styles } from './styles';
+import type { ThemeColors } from '@/contexts/ThemeContext';
+import type { useThemeSelection } from '@/hooks/useThemeSelection';
+import type { useThemeUI } from '@/hooks/useThemeUI';
+import type { useThemeRecommendations } from '@/hooks/useThemeRecommendations';
+import type { BudgetValue } from '@/config/themeRecommend.config';
+
+interface ThemeRecommendStepsProps {
+  selection: ReturnType<typeof useThemeSelection>;
+  uiWithResults: ReturnType<typeof useThemeUI>;
+  recommendations: ReturnType<typeof useThemeRecommendations>;
+  ui: ReturnType<typeof useThemeUI>;
+  colors: ThemeColors;
+  statusBarStyle: 'light' | 'dark';
+  handleBudgetSelect: (budget: BudgetValue | null) => Promise<void>;
+  router: ReturnType<typeof useRouter>;
+}
 
 export function ThemeRecommendSteps({
   selection,
@@ -22,7 +38,7 @@ export function ThemeRecommendSteps({
   statusBarStyle,
   handleBudgetSelect,
   router
-}: any) {
+}: ThemeRecommendStepsProps) {
   // =========================================================================
   // SELECTION STEPS (Room, Mood, Style, Budget)
   // =========================================================================

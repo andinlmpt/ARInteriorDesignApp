@@ -254,7 +254,7 @@ export default function RoomMeasurementsScreen() {
           try {
             const project = await projectService.getProjectById(item.projectId);
             const exportMeta = project?.unityExport;
-            if (exportMeta?.path) {
+            if (project && exportMeta?.path) {
               uri = toFileUri(exportMeta.path);
               title = exportMeta.fileName || title;
               furnitureCount = exportMeta.furnitureCount;

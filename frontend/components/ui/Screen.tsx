@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing } from './theme';
 
-interface ScreenProps extends ViewProps {
+interface ScreenProps extends ScrollViewProps {
   scrollable?: boolean;
   contentContainerStyle?: ViewProps['style'];
   footer?: React.ReactNode;
