@@ -5,12 +5,15 @@
   "build": {
     "development": {
       "developmentClient": true,
+      "env": { "UNITY_USE_PREBUILT_IL2CPP": "true" },
       "distribution": "internal"
     },
     "preview": {
+      "env": { "UNITY_USE_PREBUILT_IL2CPP": "true" },
       "distribution": "internal"
     },
     "production": {
+      "env": { "UNITY_USE_PREBUILT_IL2CPP": "true" },
       "autoIncrement": true
     }
   }

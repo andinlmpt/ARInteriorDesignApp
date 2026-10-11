@@ -1,13 +1,20 @@
 # Builds and installs the Expo dev client with embedded Unity on Android.
 # Uses Unity JDK/NDK and a writable copy of Unity Android SDK (Program Files SDK is read-only).
 $ErrorActionPreference = "Stop"
+$BuildOnly = $args -contains '--build-only'
+$ExpoArgs = @($args | Where-Object { $_ -ne '--build-only' })
 
 $UnityEditor = "C:\Program Files\Unity\Hub\Editor\6000.5.1f1\Editor"
 $JavaHome = Join-Path $UnityEditor "Data\PlaybackEngines\AndroidPlayer\OpenJDK"
 $UnitySdk = Join-Path $UnityEditor "Data\PlaybackEngines\AndroidPlayer\SDK"
 $NdkHome = Join-Path $UnityEditor "Data\PlaybackEngines\AndroidPlayer\NDK"
 $FrontendRoot = Split-Path -Parent $PSScriptRoot
+# The NDK cannot build from paths with spaces (e.g. C:\Users\First Last\...), which shows up
+# as undefined libc++ symbols when linking; sdkmanager.bat also breaks on them.
 $WritableSdk = Join-Path $env:LOCALAPPDATA "ARAndroidSdk"
+if ($WritableSdk -match '\s') {
+    $WritableSdk = "C:\ARAndroidSdk"
+}
 
 function Ensure-WritableAndroidSdk {
     param(
@@ -89,6 +96,8 @@ $env:JAVA_HOME = $JavaHome
 $env:ANDROID_HOME = $AndroidSdk
 $env:ANDROID_SDK_ROOT = $AndroidSdk
 $env:ANDROID_NDK_HOME = $NdkHome
+$env:UNITY_ANDROID_NDK_PATH = $NdkHome
+$env:UNITY_USE_PREBUILT_IL2CPP = 'false'
 $env:NDK_ROOT = $NdkHome
 $pathParts = @(
     (Join-Path $AndroidSdk 'platform-tools')
@@ -120,16 +129,9 @@ function Write-LocalProperties($dir) {
 Write-LocalProperties (Join-Path $FrontendRoot "android")
 Write-LocalProperties (Join-Path $FrontendRoot "unity\builds\android")
 
-$unityLibraryGradle = Join-Path $FrontendRoot "unity\builds\android\unityLibrary\build.gradle"
-if (Test-Path $unityLibraryGradle) {
-    $gradle = Get-Content $unityLibraryGradle -Raw
-    $ndkPathPattern = '\s*ndkPath\s+"[^"]+"\s*(\r?\n)'
-    $patched = $gradle -replace $ndkPathPattern, [Environment]::NewLine
-    if ($patched -ne $gradle) {
-        Set-Content -Path $unityLibraryGradle -Value $patched -NoNewline
-        Write-Host "Patched unityLibrary/build.gradle (removed ndkPath)."
-    }
-}
+# Reapply export compatibility patches after every Unity export, even without Expo prebuild.
+& node (Join-Path $PSScriptRoot 'patch-unity-export.js') $FrontendRoot
+if ($LASTEXITCODE -ne 0) { throw "Unity export compatibility patch failed." }
 
 $azesmwayGradle = Join-Path $FrontendRoot "node_modules\@azesmway\react-native-unity\android\build.gradle"
 if (Test-Path $azesmwayGradle) {
@@ -160,7 +162,15 @@ if ((Test-Path $azesmwayJavaSrc) -and (Test-Path $azesmwayPatches)) {
 
 Push-Location $FrontendRoot
 try {
-    npx expo run:android @args
+    if ($BuildOnly) {
+        if (-not $env:NODE_ENV) { $env:NODE_ENV = 'development' }
+        # The same local toolchain/patching path, without requiring an attached phone.
+        Push-Location (Join-Path $FrontendRoot 'android')
+        try { & .\gradlew.bat :app:assembleDebug '-PreactNativeArchitectures=arm64-v8a' --console=plain }
+        finally { Pop-Location }
+    } else {
+        npx expo run:android @ExpoArgs
+    }
     exit $LASTEXITCODE
 }
 finally {

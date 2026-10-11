@@ -74,6 +74,7 @@ export function useLayoutCustomization({
   onLayoutSent,
 }: UseLayoutCustomizationProps): UseLayoutCustomizationReturn {
   const [pieces, setPieces] = useState<PlacedFurniturePayload[]>([]);
+  const piecesRef = useRef<PlacedFurniturePayload[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   /** Planner room the current Unity layout was mapped with (a regenerate may resize it). */
@@ -155,6 +156,7 @@ export function useLayoutCustomization({
     (payload: LayoutPayload) => {
       if (!enabled) return;
       const furniture = payload.furniture ?? [];
+      piecesRef.current = furniture;
       setPieces(furniture);
       const selected = furniture.find((piece) => piece.selected);
       setSelectedId(selected?.instanceId ?? null);
@@ -251,6 +253,10 @@ export function useLayoutCustomization({
     if (!generation || regenerating) return;
 
     setRegenerating(true);
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
     onStatus?.('Generating a new layout…');
     try {
       const result = await DesignFlowService.generateLayouts(generation.preferences, generation.room, {
@@ -290,11 +296,11 @@ export function useLayoutCustomization({
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
-    const layout = buildCustomizedLayout(pieces);
+    const layout = buildCustomizedLayout(piecesRef.current);
     if (layout) {
       await saveCustomizedLayout(layout);
     }
-  }, [buildCustomizedLayout, pieces]);
+  }, [buildCustomizedLayout]);
 
   return {
     selectedPiece,

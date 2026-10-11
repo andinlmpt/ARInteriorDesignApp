@@ -5,6 +5,7 @@ using UnityEngine.XR.ARFoundation;
 /// <summary>
 /// Merges AR plane + optional COCO detections into pending furniture suggestions.
 /// </summary>
+[DisallowMultipleComponent]
 public class ARFurnitureAutoSuggestService : MonoBehaviour
 {
     [SerializeField] private ARPlaneManager planeManager;
@@ -15,15 +16,17 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
     [SerializeField] private int maxSuggestions = 8;
 
     float nextAutoScan;
+    public bool IsScanning => cocoDetector != null && cocoDetector.IsScanning;
+    public int Revision { get; private set; }
+
+    public void DiscardResults() => cocoDetector?.DiscardResults();
 
     void Awake()
     {
         if (planeManager == null) planeManager = FindFirstObjectByType<ARPlaneManager>();
         if (raycastManager == null) raycastManager = FindFirstObjectByType<ARRaycastManager>();
         if (cornerBuilder == null) cornerBuilder = FindFirstObjectByType<ARDesignCornerRoomBuilder>();
-        if (cocoDetector == null) cocoDetector = GetComponent<ARFurnitureCocoDetector>();
-        if (cocoDetector == null)
-            cocoDetector = gameObject.AddComponent<ARFurnitureCocoDetector>();
+        cocoDetector = ARFurnitureCocoDetector.EnsureOn(gameObject);
     }
 
     public void TickAutoScan(
@@ -33,7 +36,7 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
     {
         if (phase != ARDesignSpatialMappingController.Phase.ExistingFurniture)
             return;
-        if (Time.unscaledTime < nextAutoScan)
+        if (Time.unscaledTime < nextAutoScan && (cocoDetector == null || !cocoDetector.HasResults))
             return;
         nextAutoScan = Time.unscaledTime + autoScanIntervalSeconds;
         RunScan(obstacles, pending);
@@ -48,10 +51,12 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
         var floorY = EstimateFloorY(corners);
 
         var found = new List<FurnitureAutoSuggestion>();
-        found.AddRange(ARFurniturePlaneAutoScanner.Scan(planeManager, corners, floorY, obstacles, pending));
-
+        cocoDetector = ARFurnitureCocoDetector.EnsureOn(gameObject);
         if (cocoDetector != null)
-            found.AddRange(cocoDetector.TryDetect(corners, floorY, raycastManager, obstacles, pending));
+            found.AddRange(cocoDetector.TryDetect(corners, floorY, raycastManager, obstacles,
+                pending.FindAll(s => s.source != "plane")));
+
+        found.AddRange(ARFurniturePlaneAutoScanner.Scan(planeManager, corners, floorY, obstacles, pending));
 
         MergeIntoPending(found, pending);
     }
@@ -60,12 +65,17 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
     {
         foreach (var suggestion in found)
         {
+            // Replace a heuristic surface with its recognized furniture label.
+            if (suggestion.source == "coco")
+                pending.RemoveAll(s => s.source == "plane" && ARFurniturePlaneAutoScannerOverlapsHelper.FootprintsOverlap(
+                    suggestion.center, suggestion.size, suggestion.yaw, s.center, s.size, s.yaw));
             if (pending.Count >= maxSuggestions)
                 break;
             if (ARFurniturePlaneAutoScannerOverlapsHelper.Overlaps(
-                    suggestion.center, suggestion.size, null, pending))
+                    suggestion.center, suggestion.size, null, pending, suggestion.yaw))
                 continue;
             pending.Add(suggestion);
+            Revision++;
         }
     }
 

@@ -8,7 +8,6 @@
  */
 
 import dotenv from 'dotenv';
-import groqService from '../services/groqService.js';
 import { filterInteriorPhotos } from '../utils/interiorImageFilter.js';
 dotenv.config();
 
@@ -150,40 +149,6 @@ export async function generateDesignImage(req, res, next) {
     const searchQuery = buildSearchQuery(proposal, preferences);
     console.log(`[ImageGeneration] Request for: ${proposal.title || 'Untitled'}`);
 
-    // Track if we successfully used Groq+HF image flow
-    let resultImage = null;
-
-    // 1. Attempt Groq+HF image generation if configured (skip for Pexels stock photo search)
-    if (process.env.GROQ_API_KEY && !preferences.forcePexels && proposal.id !== 'explore-search') {
-      try {
-        console.log('[ImageGeneration] Attempting Groq+HF image flow...');
-        const groqResult = await groqService.generateImage(proposal, preferences);
-
-        if (groqResult && groqResult.type === 'generated') {
-          console.log('[ImageGeneration] ✅ Hugging Face generated image successfully');
-          return res.json({
-            success: true,
-            imageUrl: groqResult.data,
-            thumbnailUrl: groqResult.data,
-            prompt: groqResult.prompt,
-            generatedAt: Date.now(),
-            attribution: {
-              source: 'Hugging Face (FLUX.1-schnell)',
-            },
-          });
-        }
-
-        if (groqResult && groqResult.type === 'prompt-only') {
-          console.log('[ImageGeneration] 🔄 Using Groq-enhanced prompt for search fallback');
-          const enhancedSearchQuery = groqResult.prompt.substring(0, 150);
-          return await performPexelsSearch(enhancedSearchQuery, proposal, res);
-        }
-      } catch (groqError) {
-        console.warn('[ImageGeneration] Groq flow failed, falling back to Pexels:', groqError.message);
-      }
-    }
-
-    // 2. Fallback to standard Pexels Search
     return await performPexelsSearch(searchQuery, proposal, res);
   } catch (error) {
     console.error('[ImageGeneration] Error:', error);
@@ -310,8 +275,8 @@ async function performPexelsSearch(query, proposal, res) {
  */
 export async function checkServiceStatus(req, res) {
   res.json({
-    available: !!apiKey || !!process.env.GROQ_API_KEY,
-    model: process.env.HF_API_KEY ? 'huggingface-flux' : (process.env.GROQ_API_KEY ? 'groq-enhanced-pexels' : 'pexels-search'),
+    available: Boolean(getPexelsApiKey()),
+    model: 'pexels-search',
     maxPromptLength: 1000,
     supportedSizes: ['1024x1024', 'large', 'medium'],
     supportedQualities: ['hd', 'standard', 'original'],

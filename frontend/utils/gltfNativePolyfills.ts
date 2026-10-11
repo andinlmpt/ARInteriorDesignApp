@@ -50,7 +50,7 @@ async function resolveAssetUri(input: string | number): Promise<string> {
     if (input.startsWith('blob:') || (blobScheme && input.startsWith(blobScheme))) {
       const blob = await new Promise<Blob>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('GET', input);
+        xhr.open('GET', String(input));
         xhr.responseType = 'blob';
         xhr.onload = () => resolve(xhr.response as Blob);
         xhr.onerror = reject;

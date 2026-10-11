@@ -8,7 +8,7 @@ export const THEME_STORAGE_KEY = 'settings_darkMode';
 export const lightColors = lightPalette;
 export const darkColors = darkPalette;
 
-export type ThemeColors = typeof lightColors;
+export type ThemeColors = { [Key in keyof typeof lightColors]: string };
 
 interface ThemeContextType {
   isDark: boolean;

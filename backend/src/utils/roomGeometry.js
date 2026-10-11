@@ -197,6 +197,30 @@ export function sanitizeObstacles(obstacles) {
     .filter((o) => o.size.x > 0 && o.size.z > 0);
 }
 
+export function pointInPolygon(p, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const a = polygon[i];
+    const b = polygon[j];
+    if ((a.z > p.z) !== (b.z > p.z) && p.x < ((b.x - a.x) * (p.z - a.z)) / (b.z - a.z) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+/** Rect {x, z, w, d} lies inside a (possibly concave) outline: all corners inside, no outline corner poking in. */
+export function insidePolygon(r, polygon) {
+  if (!polygon) return true;
+  const inset = 0.01;
+  const corners = [
+    { x: r.x + inset, z: r.z + inset },
+    { x: r.x + r.w - inset, z: r.z + inset },
+    { x: r.x + r.w - inset, z: r.z + r.d - inset },
+    { x: r.x + inset, z: r.z + r.d - inset },
+  ];
+  if (!corners.every((c) => pointInPolygon(c, polygon))) return false;
+  return !polygon.some((v) => v.x > r.x + inset && v.x < r.x + r.w - inset && v.z > r.z + inset && v.z < r.z + r.d - inset);
+}
+
 export default {
   computeRoomGeometry,
   validatePolygon,
@@ -208,4 +232,6 @@ export default {
   orientedRoomSize,
   sanitizeOpenings,
   sanitizeObstacles,
+  pointInPolygon,
+  insidePolygon,
 };

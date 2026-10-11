@@ -8,7 +8,6 @@
  */
 
 import '../loadEnv.js';
-import groqService from '../services/groqService.js';
 
 // ============================================================================
 // CONFIGURATION
@@ -280,21 +279,9 @@ export async function analyzePrompt(req, res, next) {
 
     console.log('[IdeaAssistant] Analyzing prompt:', prompt.substring(0, 50) + '...');
 
-    // Try Groq AI analysis first
     let suggestions = null;
-    if (process.env.GROQ_API_KEY) {
-      try {
-        suggestions = await groqService.analyzeDesignPrompt(prompt, userPreferences);
-        if (suggestions) {
-          console.log('[IdeaAssistant] Used Groq for analysis');
-        }
-      } catch (error) {
-        console.warn('[IdeaAssistant] Groq analysis failed:', error.message);
-      }
-    }
 
-    // Fall back to OpenAI if Groq fails
-    if (!suggestions && OPENAI_API_KEY) {
+    if (OPENAI_API_KEY) {
       suggestions = await analyzePromptWithAI(prompt, userPreferences);
       if (suggestions) {
         console.log('[IdeaAssistant] Used OpenAI for analysis');
@@ -351,23 +338,9 @@ export async function generateIdeas(req, res, next) {
 
     console.log('[IdeaAssistant] Generating ideas for:', roomType, designStyle);
 
-    // Try Groq AI generation first
     let ideas = null;
-    if (process.env.GROQ_API_KEY) {
-      try {
-        ideas = await groqService.generateDesignIdeas(input);
-        if (ideas && Array.isArray(ideas) && ideas.length > 0) {
-          console.log('[IdeaAssistant] Used Groq for idea generation');
-        } else {
-          ideas = null;
-        }
-      } catch (error) {
-        console.warn('[IdeaAssistant] Groq idea generation failed:', error.message);
-      }
-    }
 
-    // Fall back to OpenAI if Groq fails
-    if ((!ideas || ideas.length === 0) && OPENAI_API_KEY) {
+    if (OPENAI_API_KEY) {
       ideas = await generateIdeasWithAI(input);
       if (ideas && ideas.length > 0) {
         console.log('[IdeaAssistant] Used OpenAI for idea generation');

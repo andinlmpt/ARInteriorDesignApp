@@ -44,14 +44,17 @@ public class ARDesignScanHUD : MonoBehaviour
     Image auxSwingImage;
     Button startButton;
     Button finishButton;
+    Button heightUndoButton;
     Text confirmLabel;
     Text undoLabel;
     Text startLabel;
     Text finishLabel;
+    Text heightUndoLabel;
     Image confirmImage;
     Image undoImage;
     Image startImage;
     Image finishImage;
+    Image heightUndoImage;
     Image[] stepDots = System.Array.Empty<Image>();
     bool active;
 
@@ -349,6 +352,9 @@ public class ARDesignScanHUD : MonoBehaviour
             }
         }
 
+        if (heightUndoButton != null)
+            heightUndoButton.gameObject.SetActive(useStartFinish && cornerBuilder.HasHeightBase);
+
         if (confirmButton != null)
         {
             if (useStartFinish)
@@ -371,7 +377,7 @@ public class ARDesignScanHUD : MonoBehaviour
                     else
                     {
                         if (canConfirmWidth)
-                            confirmLabel.text = measurementOnlyMode ? "Generate Layout" : "Done";
+                            confirmLabel.text = measurementOnlyMode ? "Continue" : "Done";
                         else if (canCloseWidth)
                             confirmLabel.text = "Close room";
                         else if (outlineCrosses)
@@ -398,6 +404,7 @@ public class ARDesignScanHUD : MonoBehaviour
         if (bottomShadow != null) bottomShadow.gameObject.SetActive(true);
         if (startButton != null) startButton.gameObject.SetActive(false);
         if (finishButton != null) finishButton.gameObject.SetActive(false);
+        if (heightUndoButton != null) heightUndoButton.gameObject.SetActive(false);
 
         var phase = spatialMapping.CurrentPhase;
         if (topHintLabel != null)
@@ -420,6 +427,7 @@ public class ARDesignScanHUD : MonoBehaviour
                     ? $"Now tap the other edge of the {(spatialMapping.OpeningIsDoor ? "door" : "window")} on the same wall"
                     : $"Tap the floor at one edge of a {(spatialMapping.OpeningIsDoor ? "door" : "window")} · {spatialMapping.OpeningCount} marked",
                 ARDesignSpatialMappingController.Phase.ExistingFurniture =>
+                    (spatialMapping.IsFurnitureScanning ? "Scanning furniture… · " : "") +
                     $"{spatialMapping.PendingSuggestionCount} auto · tap orange to add · " +
                     $"{spatialMapping.ObstacleCount} saved · manual: {spatialMapping.SelectedObstacleType}",
                 _ => $"{spatialMapping.OpeningCount} openings · {spatialMapping.ObstacleCount} existing pieces",
@@ -453,7 +461,7 @@ public class ARDesignScanHUD : MonoBehaviour
             if (auxSwingLabel != null)
             {
                 if (showScan)
-                    auxSwingLabel.text = "Scan";
+                    auxSwingLabel.text = spatialMapping.IsFurnitureScanning ? "Scanning…" : "Scan";
                 else if (showSwing)
                     auxSwingLabel.text = $"Swing {spatialMapping.OpeningSwing}";
             }
@@ -470,12 +478,13 @@ public class ARDesignScanHUD : MonoBehaviour
         if (confirmButton != null)
         {
             confirmButton.gameObject.SetActive(true);
-            confirmButton.interactable = true;
+            confirmButton.interactable = phase != ARDesignSpatialMappingController.Phase.ExistingFurniture
+                || !spatialMapping.IsFurnitureScanning;
             confirmLabel.text = phase switch
             {
                 ARDesignSpatialMappingController.Phase.Openings => "Next: Furniture",
                 ARDesignSpatialMappingController.Phase.ExistingFurniture => "Next: Review",
-                _ => measurementOnlyMode ? "Generate Layout" : "Confirm map",
+                _ => measurementOnlyMode ? "Continue" : "Confirm map",
             };
             confirmLabel.color = Color.white;
             if (confirmImage != null)
@@ -512,7 +521,7 @@ public class ARDesignScanHUD : MonoBehaviour
             "closeOutline" => "Tap Close room when every corner is marked",
             "outlineCrosses" => "Walls cross — undo the last corner",
             "readyToConfirm" => measurementOnlyMode
-                ? "Looking good — tap Generate Layout"
+                ? "Looking good — tap Continue"
                 : "Looking good — tap Done",
             "findFloor" => "Point at the floor",
             "confirmed" => "Room locked",
@@ -548,6 +557,8 @@ public class ARDesignScanHUD : MonoBehaviour
         }
         else if (IsRetryMode())
             cornerBuilder.ResetCorners();
+        else if (cornerBuilder != null && cornerBuilder.IsHeightLocked && cornerBuilder.CornerCount <= 1)
+            cornerBuilder.RestartFromHeight();
         else
             cornerBuilder?.UndoLastCorner();
         RefreshCornerUi();
@@ -727,6 +738,20 @@ public class ARDesignScanHUD : MonoBehaviour
             out finishImage,
             out finishLabel);
         finishButton.gameObject.SetActive(false);
+
+        // Undo beside Finish, so a misplaced base point can be set again.
+        heightUndoButton = CreateCenterActionButton(
+            root.transform,
+            "Undo",
+            new Vector2(0.5f, 0f),
+            new Vector2(-220f, 160f),
+            112f,
+            Frost,
+            OnUndoClicked,
+            out heightUndoImage,
+            out heightUndoLabel);
+        heightUndoLabel.color = Ink;
+        heightUndoButton.gameObject.SetActive(false);
 
         // Bottom dock (hidden during Start / Finish height phase)
         bottomShadow = CreateShadowChip(root.transform, new Vector2(0.5f, 0f), new Vector2(0f, 162f), new Vector2(760f, 200f));
