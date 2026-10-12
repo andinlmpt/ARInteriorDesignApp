@@ -14,9 +14,9 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
     [SerializeField] private ARRaycastManager raycastManager;
     [SerializeField] private ARDesignCornerRoomBuilder cornerBuilder;
     [SerializeField] private ARFurnitureCocoDetector cocoDetector;
-    [SerializeField] private float autoScanIntervalSeconds = 3f;
-    [Tooltip("Slower than the furniture step so outlining stays smooth.")]
-    [SerializeField] private float earlyScanIntervalSeconds = 4f;
+    [SerializeField] private float autoScanIntervalSeconds = 1.5f;
+    [Tooltip("How often the detector looks while the room is being outlined.")]
+    [SerializeField] private float earlyScanIntervalSeconds = 1.5f;
     [SerializeField] private int maxSuggestions = 8;
     [SerializeField] private int maxEarlySightings = 12;
 
@@ -46,16 +46,37 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
         cocoDetector = ARFurnitureCocoDetector.EnsureOn(gameObject);
         if (cocoDetector == null) return;
 
-        var found = cocoDetector.TryDetect(null, floorY, raycastManager, null, earlySightings, requireInsideRoom: false);
+        var found = cocoDetector.TryDetect(null, floorY, raycastManager, null, requireInsideRoom: false);
         foreach (var sighting in found)
         {
-            if (earlySightings.Count >= maxEarlySightings) break;
-            if (ARFurniturePlaneAutoScannerOverlapsHelper.Overlaps(
-                    sighting.center, sighting.size, null, earlySightings, sighting.yaw))
-                continue;
-            earlySightings.Add(sighting);
-            Revision++;
+            if (AddOrRefine(earlySightings, sighting, maxEarlySightings))
+                Revision++;
         }
+    }
+
+    /// <summary>
+    /// Adds a detected object, or refines the one already listed where it stands: a more confident
+    /// sighting of the same type replaces it (keeping its id, so the app sees the same object).
+    /// Returns true when the list changed.
+    /// </summary>
+    static bool AddOrRefine(List<FurnitureAutoSuggestion> list, FurnitureAutoSuggestion sighting, int max)
+    {
+        for (var i = 0; i < list.Count; i++)
+        {
+            var known = list[i];
+            if (!ARFurniturePlaneAutoScannerOverlapsHelper.FootprintsOverlap(
+                    sighting.center, sighting.size, sighting.yaw, known.center, known.size, known.yaw))
+                continue;
+            if (known.source != sighting.source || known.type != sighting.type || sighting.confidence <= known.confidence)
+                return false;
+            sighting.id = known.id;
+            list[i] = sighting;
+            return true;
+        }
+
+        if (list.Count >= max) return false;
+        list.Add(sighting);
+        return true;
     }
 
     /// <summary>Moves early sightings that fall inside the closed room into the suggestions.</summary>
@@ -104,8 +125,7 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
         var found = new List<FurnitureAutoSuggestion>();
         cocoDetector = ARFurnitureCocoDetector.EnsureOn(gameObject);
         if (cocoDetector != null)
-            found.AddRange(cocoDetector.TryDetect(corners, floorY, raycastManager, obstacles,
-                pending.FindAll(s => s.source != "plane")));
+            found.AddRange(cocoDetector.TryDetect(corners, floorY, raycastManager, obstacles));
 
         found.AddRange(ARFurniturePlaneAutoScanner.Scan(planeManager, corners, floorY, obstacles, pending));
 
@@ -120,13 +140,8 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
             if (suggestion.source == "coco")
                 pending.RemoveAll(s => s.source == "plane" && ARFurniturePlaneAutoScannerOverlapsHelper.FootprintsOverlap(
                     suggestion.center, suggestion.size, suggestion.yaw, s.center, s.size, s.yaw));
-            if (pending.Count >= maxSuggestions)
-                break;
-            if (ARFurniturePlaneAutoScannerOverlapsHelper.Overlaps(
-                    suggestion.center, suggestion.size, null, pending, suggestion.yaw))
-                continue;
-            pending.Add(suggestion);
-            Revision++;
+            if (AddOrRefine(pending, suggestion, maxSuggestions))
+                Revision++;
         }
     }
 

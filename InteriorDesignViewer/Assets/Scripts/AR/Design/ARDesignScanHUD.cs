@@ -808,6 +808,7 @@ public class ARDesignScanHUD : MonoBehaviour
         var topPill = CreateFrostChip(root.transform, new Vector2(0.5f, 1f), new Vector2(0f, -118f), new Vector2(660f, 96f), 36);
         topHintLabel = ARDesignUiUtil.CreateText(topPill, "Outline your room", 30, FontStyle.Bold, TextAnchor.MiddleCenter);
         topHintLabel.color = Ink;
+        ShrinkToFit(topHintLabel, 18);
         var hintRt = topHintLabel.rectTransform;
         hintRt.anchorMin = new Vector2(0.06f, 0.42f);
         hintRt.anchorMax = new Vector2(0.94f, 0.92f);

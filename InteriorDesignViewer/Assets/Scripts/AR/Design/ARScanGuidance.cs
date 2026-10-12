@@ -22,17 +22,23 @@ public class ARScanGuidance : MonoBehaviour
     }
 
     [Tooltip("Turning faster than this (degrees per second) shows \"Move slowly\".")]
-    [SerializeField] private float fastTurnDegreesPerSecond = 80f;
+    [SerializeField] private float fastTurnDegreesPerSecond = 50f;
     [Tooltip("Moving faster than this (metres per second) shows \"Move slowly\".")]
-    [SerializeField] private float fastMoveMetresPerSecond = 0.9f;
+    [SerializeField] private float fastMoveMetresPerSecond = 0.6f;
     [Tooltip("Seconds a problem must last before it is shown.")]
-    [SerializeField] private float showAfterSeconds = 0.4f;
+    [SerializeField] private float showAfterSeconds = 0.25f;
     [Tooltip("Seconds a message stays up after the problem clears.")]
     [SerializeField] private float holdSeconds = 1.5f;
     [Tooltip("Seconds without a floor aim before \"Point at the floor\" is shown.")]
     [SerializeField] private float noFloorAfterSeconds = 2.5f;
 
     public Issue Current { get; private set; }
+
+    /// <summary>Smoothed camera turn speed (degrees per second), for diagnostics.</summary>
+    public float TurnSpeed => turnSpeed;
+
+    /// <summary>Smoothed camera movement speed (metres per second), for diagnostics.</summary>
+    public float MoveSpeed => moveSpeed;
 
     public string Title => Current switch
     {
