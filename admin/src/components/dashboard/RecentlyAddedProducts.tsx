@@ -54,7 +54,7 @@ export function RecentlyAddedProducts({ section, onRetry }: RecentlyAddedProduct
             )}
             <strong title={item.displayName}>{item.displayName}</strong>
             <span>
-              {formatCategoryLabel(item.category)}
+              {item.storeName || formatCategoryLabel(item.category)}
               {item.createdAt ? ` · ${formatRelativeTime(item.createdAt)}` : ''}
             </span>
           </li>

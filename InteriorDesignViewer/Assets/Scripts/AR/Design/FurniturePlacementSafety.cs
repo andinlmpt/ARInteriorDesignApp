@@ -16,6 +16,10 @@ public static class FurniturePlacementSafety
         public bool hasFurnitureCollision;
         public bool hasWallCollision;
         public bool isTooCloseToWall;
+        /// <summary>Set by the placement controller while a drag is held back by another piece.</summary>
+        public bool isBlocked;
+        /// <summary>Model id of the first piece overlapped (or in the way when blocked).</summary>
+        public string otherModelId;
         public float nearestFurnitureDistance;
         public float nearestWallDistance;
         public string reason;
@@ -71,7 +75,11 @@ public static class FurniturePlacementSafety
                 nearestFurniture = Mathf.Min(nearestFurniture, separation);
 
                 if (RectsOverlapXZ(targetRect, otherRect, MinFurnitureClearanceMetres))
+                {
+                    if (!result.hasFurnitureCollision)
+                        result.otherModelId = other.ModelId;
                     result.hasFurnitureCollision = true;
+                }
             }
         }
 

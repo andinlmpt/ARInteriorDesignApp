@@ -1,5 +1,5 @@
 /**
- * File upload service — local disk storage with optional GCS support.
+ * File upload service — Cloudinary when configured, otherwise optional GCS, otherwise local disk.
  */
 
 import { mkdir, writeFile } from 'fs/promises';
@@ -8,6 +8,7 @@ import { join, extname } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { randomUUID } from 'crypto';
+import { cloudinaryFolder, isCloudinaryConfigured, uploadToCloudinary } from './cloudinaryStorage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -83,6 +84,22 @@ async function uploadToGcsIfConfigured(buffer, destination, contentType) {
   }
 }
 
+/**
+ * Uploads to Cloudinary when it is configured; returns null otherwise. Errors (e.g. a file over
+ * the plan's size limit) are thrown so the uploader sees them instead of a LAN-only fallback.
+ */
+async function uploadToCloudinaryIfConfigured(buffer, { subdir, filename, contentType, raw }) {
+  if (!isCloudinaryConfigured()) return null;
+  const name = raw ? filename : filename.replace(/\.[^.]+$/, '');
+  const { url } = await uploadToCloudinary(buffer, {
+    resourceType: raw ? 'raw' : 'image',
+    publicId: `${cloudinaryFolder()}/${subdir}/${name}`,
+    filename,
+    contentType,
+  });
+  return url;
+}
+
 async function saveLocally(buffer, subdir, filename) {
   await ensureDirs();
   const dir =
@@ -101,6 +118,13 @@ export async function uploadGlb(file) {
   const ext = validateExtension(file.originalname, ALLOWED_GLB);
   const safeName = `${randomUUID()}-${sanitizeFilename(file.originalname.replace(ext, ''))}${ext}`;
   const gcsPath = `furniture/glb/${safeName}`;
+
+  const cloudUrl = await uploadToCloudinaryIfConfigured(file.buffer, {
+    subdir: 'glb', filename: safeName, contentType: 'model/gltf-binary', raw: true,
+  });
+  if (cloudUrl) {
+    return { url: cloudUrl, filename: safeName, storage: 'cloudinary' };
+  }
 
   const gcsUrl = await uploadToGcsIfConfigured(file.buffer, gcsPath, 'model/gltf-binary');
   if (gcsUrl) {
@@ -121,6 +145,11 @@ export async function uploadThumbnail(file) {
   const gcsPath = `furniture/thumbnails/${safeName}`;
 
   const contentType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+  const cloudUrl = await uploadToCloudinaryIfConfigured(file.buffer, { subdir: 'thumbnails', filename: safeName, contentType });
+  if (cloudUrl) {
+    return { url: cloudUrl, filename: safeName, storage: 'cloudinary' };
+  }
+
   const gcsUrl = await uploadToGcsIfConfigured(file.buffer, gcsPath, contentType);
   if (gcsUrl) {
     return { url: gcsUrl, filename: safeName, storage: 'gcs' };
@@ -140,6 +169,11 @@ export async function uploadAvatar(file) {
   const gcsPath = `admin/avatars/${safeName}`;
 
   const contentType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+  const cloudUrl = await uploadToCloudinaryIfConfigured(file.buffer, { subdir: 'avatars', filename: safeName, contentType });
+  if (cloudUrl) {
+    return { url: cloudUrl, filename: safeName, storage: 'cloudinary' };
+  }
+
   const gcsUrl = await uploadToGcsIfConfigured(file.buffer, gcsPath, contentType);
   if (gcsUrl) {
     return { url: gcsUrl, filename: safeName, storage: 'gcs' };

@@ -6,6 +6,7 @@
 import Furniture from '../models/Furniture.js';
 import { classifyFurniture } from './layoutPlanner.js';
 import { mockPricePhp, mockStyles, suitableRooms } from '../utils/furnitureMockPricing.js';
+import { withPublicVisibility } from './catalogVisibility.js';
 
 const ROOM_ROLE_SLOTS = {
   'Living Room': ['sofa', 'coffee-table', 'tv-stand', 'rug', 'lamp', 'bookshelf'],
@@ -250,7 +251,7 @@ export function selectCheapestValidSet(pool, options) {
 
 export async function loadEligibleCatalogPool(roomType, { requireStock = true } = {}) {
   const normalizedRoom = normalizeRoomType(roomType);
-  const docs = await Furniture.find({ active: { $ne: false } }).lean();
+  const docs = await Furniture.find(await withPublicVisibility({ active: { $ne: false } })).lean();
   const mapped = docs.map(mapDocToPlannerItem);
   let eligible = docs
     .map((doc, index) => ({ doc, item: mapped[index] }))
@@ -271,7 +272,7 @@ async function ensureRequiredInPool(pool, requiredItemIds = []) {
   const ids = [...new Set(requiredItemIds.map((id) => String(id).trim().toLowerCase()).filter(Boolean))];
   const missing = ids.filter((id) => !pool.some((item) => item.catalogId === id));
   if (missing.length === 0) return pool;
-  const docs = await Furniture.find({ id: { $in: missing } }).lean();
+  const docs = await Furniture.find(await withPublicVisibility({ id: { $in: missing } })).lean();
   const extra = docs.map(mapDocToPlannerItem);
   return [...pool, ...extra.filter((item) => !pool.some((p) => p.catalogId === item.catalogId))];
 }

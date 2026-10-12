@@ -861,23 +861,7 @@ public class ARSceneBridge : MonoBehaviour
 
     void OnPlacementSafetyChanged(FurniturePlacementSafety.Result result, PlacedFurniture furniture)
     {
-        var payload = new PlacementSafetyPayload
-        {
-            instanceId = furniture != null ? furniture.InstanceId : string.Empty,
-            modelId = furniture != null ? furniture.ModelId : string.Empty,
-            isSafe = result.isSafe,
-            hasFurnitureCollision = result.hasFurnitureCollision,
-            hasWallCollision = result.hasWallCollision,
-            isTooCloseToWall = result.isTooCloseToWall,
-            nearestFurnitureDistance = float.IsFinite(result.nearestFurnitureDistance)
-                ? result.nearestFurnitureDistance
-                : -1f,
-            nearestWallDistance = float.IsFinite(result.nearestWallDistance)
-                ? result.nearestWallDistance
-                : -1f,
-            reason = result.reason ?? string.Empty,
-        };
-
+        var payload = PlacementSafetyPayload.From(result, furniture);
         UnityMessageBridge.SendToApp(EventPlacementSafety, JsonUtility.ToJson(payload));
     }
 

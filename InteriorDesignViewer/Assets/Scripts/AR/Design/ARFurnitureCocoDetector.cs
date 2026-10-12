@@ -211,19 +211,23 @@ public class ARFurnitureCocoDetector : MonoBehaviour
         return results;
     }
 
-    /// <summary>Run detection if model is loaded and interval elapsed.</summary>
+    /// <summary>
+    /// Run detection if model is loaded and interval elapsed. With <paramref name="requireInsideRoom"/>
+    /// false (while the outline is still open) detections are kept wherever they land on the floor.
+    /// </summary>
     public List<FurnitureAutoSuggestion> TryDetect(
         IReadOnlyList<Vector3> corners,
         float floorY,
         ARRaycastManager raycast,
         IReadOnlyList<RoomObstaclePayload> existing,
-        IReadOnlyList<FurnitureAutoSuggestion> pending)
+        IReadOnlyList<FurnitureAutoSuggestion> pending,
+        bool requireInsideRoom = true)
     {
         var empty = new List<FurnitureAutoSuggestion>();
         if (instance != null && instance != this) return empty;
         if (!ready) TryLoadModel();
         if (arCamera == null) arCamera = Camera.main;
-        if (!ready || arCamera == null || corners == null || corners.Count < 3)
+        if (!ready || arCamera == null || (requireInsideRoom && (corners == null || corners.Count < 3)))
         {
             if (!ready && !loggedMissingModel)
             {
@@ -261,7 +265,7 @@ public class ARFurnitureCocoDetector : MonoBehaviour
                 + (captureTopLeft - captureBottomLeft) * viewportY;
             var floorRay = new Ray(captureOrigin, contact - captureOrigin);
             if (!TryProjectToFloor(floorRay, floorY, out var world)) continue;
-            if (!RoomPolygonUtil.PointInsidePolygonXZ(world, corners)) continue;
+            if (requireInsideRoom && !RoomPolygonUtil.PointInsidePolygonXZ(world, corners)) continue;
 
             var size = CocoFurnitureLabelMap.DefaultSize(mapped);
             world.y = floorY;

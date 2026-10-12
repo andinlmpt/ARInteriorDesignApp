@@ -128,7 +128,8 @@ public class PlannerRnInputRouter : MonoBehaviour
                 SendManipulator("end", payload.x, payload.y);
 
             var mid = (a + b) * 0.5f;
-            if (TryPickForRotate(a, b, mid, out var target))
+            // Locked pieces can't rotate, so a twist over one orbits the room instead.
+            if (TryPickForRotate(a, b, mid, out var target) && !target.IsLocked)
             {
                 placement.Select(target);
                 mode = Mode.Rotate;

@@ -10,6 +10,7 @@ import {
 } from '../utils/publicAssetUrl.js';
 import { inferFurnitureCategory } from '../utils/furnitureCategory.js';
 import { mockPricePhp, mockStyles, suitableRooms } from '../utils/furnitureMockPricing.js';
+import { withPublicVisibility } from '../services/catalogVisibility.js';
 
 const inferCategory = (doc) =>
   inferFurnitureCategory(doc.id, doc.displayName, doc.glbUrl) || 'other';
@@ -72,7 +73,7 @@ const furnitureController = {
         filter.category = String(category).trim().toLowerCase();
       }
 
-      const items = await Furniture.find(filter)
+      const items = await Furniture.find(await withPublicVisibility(filter))
         .sort({ sortOrder: 1, displayName: 1 })
         .lean();
 
@@ -96,7 +97,7 @@ const furnitureController = {
       }
 
       const id = String(req.params.id || '').trim().toLowerCase();
-      const item = await Furniture.findOne({ id, active: true }).lean();
+      const item = await Furniture.findOne(await withPublicVisibility({ id, active: true })).lean();
 
       if (!item) {
         return res.status(404).json({

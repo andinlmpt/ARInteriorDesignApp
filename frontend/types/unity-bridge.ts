@@ -22,6 +22,7 @@ export type UnityToRNEvent =
   | 'photoCaptured'
   | 'historyChanged'
   | 'placementSafety'
+  | 'furnitureLockBlocked'
   | 'measurementPlanReady'
   | 'measurementPlanClosed'
   | 'requestRnExport3d'
@@ -45,6 +46,7 @@ export type RNToUnityMethod =
   | 'removeSelectedFurniture'
   | 'replaceSelectedFurniture'
   | 'setFurnitureColor'
+  | 'setFurnitureLocked'
   | 'clearScene'
   | 'getCurrentLayout'
   | 'exportLayout'
@@ -137,6 +139,12 @@ export interface FurnitureColorRequest {
   instanceId?: string;
   /** "#RRGGBB", or empty to restore the model's own colours. */
   colorHex: string;
+}
+
+/** Payload for `setFurnitureLocked`. Empty `instanceId` targets the selected piece. */
+export interface FurnitureLockRequest {
+  instanceId?: string;
+  locked: boolean;
 }
 
 export type LayoutAlignmentState = 'idle' | 'aligning' | 'aligned';
@@ -242,6 +250,8 @@ export interface PlacedFurniturePayload {
   selected: boolean;
   /** "#RRGGBB" tint chosen by the user; empty keeps the model's own colours. */
   colorHex?: string;
+  /** True while the user has locked this piece in place (no drag, twist, delete or replace). */
+  locked?: boolean;
   /**
    * True when `sourcePosition` is valid: the pose in the frame sent with `applyLayout`
    * (room-centred metres), with the two-corner wall alignment undone.
@@ -275,6 +285,10 @@ export interface PlacementSafetyPayload {
   hasFurnitureCollision: boolean;
   hasWallCollision: boolean;
   isTooCloseToWall: boolean;
+  /** True while a drag is being held back by another piece. */
+  isBlocked?: boolean;
+  /** Model id of the piece overlapped or in the way; empty when none. */
+  otherModelId?: string;
   nearestFurnitureDistance: number;
   nearestWallDistance: number;
   reason: string;

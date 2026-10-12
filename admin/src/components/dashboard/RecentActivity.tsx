@@ -1,15 +1,15 @@
 import type { ComponentType } from 'react';
-import type { ActivityEntry, ActivityKind, AsyncSection } from '../../types/dashboard';
+import type { ActivityEntry } from '../../api/client';
+import type { AsyncSection } from '../../types/dashboard';
 import { formatRelativeTime } from '../../utils/dashboard';
-import { IconAdmins, IconProducts, IconUsers } from '../NavIcons';
+import { IconFaqs, IconProducts, IconStores, IconUsers } from '../NavIcons';
 import { DashboardPanel, SkeletonRows } from './DashboardPanel';
 
-const ICONS: Record<ActivityKind, ComponentType<{ className?: string }>> = {
-  'product-added': IconProducts,
-  'product-updated': IconProducts,
-  'product-deactivated': IconProducts,
-  'user-registered': IconUsers,
-  'admin-created': IconAdmins,
+const ICONS: Record<ActivityEntry['targetType'], ComponentType<{ className?: string }>> = {
+  store: IconStores,
+  product: IconProducts,
+  user: IconUsers,
+  content: IconFaqs,
 };
 
 interface RecentActivityProps {
@@ -33,16 +33,16 @@ export function RecentActivity({ section, onRetry }: RecentActivityProps) {
     >
       <ul className="activity-list">
         {entries.map((entry) => {
-          const Icon = ICONS[entry.kind];
+          const Icon = ICONS[entry.targetType] ?? IconProducts;
           return (
             <li key={entry.id} className="activity-row">
               <span className="quick-link-icon activity-icon" aria-hidden="true">
                 <Icon className="nav-icon" />
               </span>
               <div className="activity-copy">
-                <p>{entry.description}</p>
-                <time dateTime={entry.timestamp} title={new Date(entry.timestamp).toLocaleString()}>
-                  {formatRelativeTime(entry.timestamp)}
+                <p>{entry.summary}</p>
+                <time dateTime={entry.createdAt} title={new Date(entry.createdAt).toLocaleString()}>
+                  {formatRelativeTime(entry.createdAt)}
                 </time>
               </div>
             </li>

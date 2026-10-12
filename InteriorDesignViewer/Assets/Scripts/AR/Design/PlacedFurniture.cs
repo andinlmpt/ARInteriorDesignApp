@@ -39,6 +39,9 @@ public class PlacedFurniture : MonoBehaviour
 
     public bool IsSelected { get; private set; }
 
+    /// <summary>Locked pieces ignore drag/twist and cannot be removed or replaced until unlocked.</summary>
+    public bool IsLocked { get; private set; }
+
     /// <summary>"#RRGGBB" tint chosen by the user; empty keeps the model's own colours.</summary>
     public string ColorHex { get; private set; } = string.Empty;
 
@@ -73,6 +76,7 @@ public class PlacedFurniture : MonoBehaviour
     }
 
     ARDragOutline outline;
+    bool placementSafe = true;
 
     public void Initialize(
         string instanceId,
@@ -134,13 +138,14 @@ public class PlacedFurniture : MonoBehaviour
     public void SetSelected(bool selected)
     {
         IsSelected = selected;
+        placementSafe = true;
 
         if (!selected)
         {
             if (outline != null)
             {
                 outline.SetVisible(false);
-                outline.SetPlacementSafe(true);
+                RefreshOutlineColor();
             }
             return;
         }
@@ -154,7 +159,13 @@ public class PlacedFurniture : MonoBehaviour
 
         ConfigureOutlineGeometry();
         outline.SetVisible(true);
-        outline.SetPlacementSafe(true);
+        RefreshOutlineColor();
+    }
+
+    public void SetLocked(bool locked)
+    {
+        IsLocked = locked;
+        RefreshOutlineColor();
     }
 
     void ConfigureOutlineGeometry()
@@ -169,10 +180,16 @@ public class PlacedFurniture : MonoBehaviour
     /// <summary>Updates the floor outline color for placement safety feedback.</summary>
     public void ApplyPlacementSafety(bool isSafe)
     {
+        placementSafe = isSafe;
+        RefreshOutlineColor();
+    }
+
+    void RefreshOutlineColor()
+    {
         if (outline == null)
             outline = GetComponent<ARDragOutline>();
         if (outline == null) return;
-        outline.SetPlacementSafe(isSafe);
+        outline.SetPlacementState(placementSafe, IsLocked);
     }
 
     /// <summary>
@@ -216,6 +233,7 @@ public class PlacedFurniture : MonoBehaviour
             dimensions = new ARDesignVec3(CurrentDimensions),
             selected = IsSelected,
             colorHex = ColorHex,
+            locked = IsLocked,
         };
     }
 

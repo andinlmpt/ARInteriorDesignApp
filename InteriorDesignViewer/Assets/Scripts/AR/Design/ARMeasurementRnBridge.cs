@@ -115,8 +115,12 @@ public class ARMeasurementRnBridge : MonoBehaviour
                 EnsureFurnitureBootstrap()?.SetFurnitureColor(message.data);
                 break;
 
+            case "setFurnitureLocked":
+                EnsureFurnitureBootstrap()?.SetFurnitureLocked(message.data);
+                break;
+
             case "removeSelectedFurniture":
-                EnsureFurnitureBootstrap()?.Placement?.RemoveSelectedFurniture();
+                EnsureFurnitureBootstrap()?.RemoveSelectedFurniture();
                 break;
 
             case "clearScene":

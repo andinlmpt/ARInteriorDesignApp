@@ -34,6 +34,9 @@ public class FurnitureManipulator : MonoBehaviour
     public event Action<PlacedFurniture> GestureBegan;
     public event Action<PlacedFurniture> GestureEnded;
 
+    /// <summary>Fired once per gesture when the user tries to drag or twist a locked piece.</summary>
+    public event Action<PlacedFurniture> LockedGestureBlocked;
+
     /// <summary>True while a drag or twist owns the touches.</summary>
     public bool IsGestureActive => gestureActive;
 
@@ -52,6 +55,13 @@ public class FurnitureManipulator : MonoBehaviour
 
     /// <summary>RN planner sends gestures via bridge; EnhancedTouch stays empty under UaaL.</summary>
     bool rnGestureStream;
+
+    /// <summary>The current touch started on a locked piece (drags only raise a notice).</summary>
+    bool lockedTouch;
+    bool lockedNoticeSent;
+
+    /// <summary>A drag counts as held back when overlap resolution moved it more than 1 cm.</summary>
+    const float BlockedSlopSqr = 0.01f * 0.01f;
 
     void Awake()
     {
@@ -105,6 +115,8 @@ public class FurnitureManipulator : MonoBehaviour
             return;
         }
 
+        lockedTouch = false;
+        lockedNoticeSent = false;
         EndGesture();
     }
 
@@ -123,9 +135,11 @@ public class FurnitureManipulator : MonoBehaviour
         switch (touch.phase)
         {
             case TouchPhase.Began:
-                dragEligible = !requireTouchOnSelection
-                               || IsTouchOnFurniture(touch.screenPosition, furniture)
-                               || IsTouchNearFurniture(touch.screenPosition, furniture);
+                var onPiece = !requireTouchOnSelection
+                              || IsTouchOnFurniture(touch.screenPosition, furniture)
+                              || IsTouchNearFurniture(touch.screenPosition, furniture);
+                lockedTouch = onPiece && furniture.IsLocked;
+                dragEligible = onPiece && !furniture.IsLocked;
                 dragStartScreen = touch.screenPosition;
                 isDragging = false;
 
@@ -140,7 +154,13 @@ public class FurnitureManipulator : MonoBehaviour
 
             case TouchPhase.Moved:
             case TouchPhase.Stationary:
-                if (!dragEligible) break;
+                if (!dragEligible)
+                {
+                    if (lockedTouch
+                        && Vector2.Distance(touch.screenPosition, dragStartScreen) >= dragStartThreshold)
+                        NotifyLocked(furniture);
+                    break;
+                }
 
                 if (!isDragging)
                 {
@@ -152,9 +172,9 @@ public class FurnitureManipulator : MonoBehaviour
                     BeginGesture(furniture);
                 }
 
-                DragTo(furniture, touch.screenPosition, touch.delta);
+                var blockedAt = DragTo(furniture, touch.screenPosition, touch.delta);
                 RememberSafePose(furniture);
-                placementController.RefreshPlacementSafety(furniture);
+                placementController.RefreshPlacementSafety(furniture, blockedAt);
                 break;
 
             case TouchPhase.Ended:
@@ -164,15 +184,18 @@ public class FurnitureManipulator : MonoBehaviour
         }
     }
 
-    void DragTo(PlacedFurniture furniture, Vector2 screenPosition, Vector2 screenDelta)
+    /// <returns>
+    /// The pivot the finger asked for when another piece held the drag back; otherwise null.
+    /// </returns>
+    Vector3? DragTo(PlacedFurniture furniture, Vector2 screenPosition, Vector2 screenDelta)
     {
         if (placementController.TryGetDragFloorPositionFor(furniture, screenPosition, out var floorPoint))
         {
             var target = floorPoint + dragGrabOffset;
-            target = placementController.ResolveCollisionFreePivot(furniture, target, lastSafePosition);
-            furniture.transform.position = new Vector3(target.x, furniture.transform.position.y, target.z);
+            var resolved = placementController.ResolveCollisionFreePivot(furniture, target, lastSafePosition);
+            furniture.transform.position = new Vector3(resolved.x, furniture.transform.position.y, resolved.z);
             placementController.GroundInstance(furniture);
-            return;
+            return HeldBack(target, resolved);
         }
 
         if (arCamera != null)
@@ -189,15 +212,38 @@ public class FurnitureManipulator : MonoBehaviour
                 forward * (screenDelta.y * fallbackMoveSpeed) + right * (screenDelta.x * fallbackMoveSpeed),
                 Space.World);
 
-            var resolved = placementController.ResolveCollisionFreePivot(
-                furniture, furniture.transform.position, lastSafePosition);
+            var desired = furniture.transform.position;
+            var resolved = placementController.ResolveCollisionFreePivot(furniture, desired, lastSafePosition);
             furniture.transform.position = new Vector3(resolved.x, furniture.transform.position.y, resolved.z);
             placementController.GroundInstance(furniture);
+            return HeldBack(desired, resolved);
         }
+
+        return null;
+    }
+
+    static Vector3? HeldBack(Vector3 desired, Vector3 resolved)
+    {
+        var dx = desired.x - resolved.x;
+        var dz = desired.z - resolved.z;
+        return dx * dx + dz * dz > BlockedSlopSqr ? desired : (Vector3?)null;
+    }
+
+    void NotifyLocked(PlacedFurniture furniture)
+    {
+        if (lockedNoticeSent) return;
+        lockedNoticeSent = true;
+        LockedGestureBlocked?.Invoke(furniture);
     }
 
     void HandleTwoFinger(PlacedFurniture furniture)
     {
+        if (furniture.IsLocked)
+        {
+            NotifyLocked(furniture);
+            return;
+        }
+
         var p0 = Touch.activeTouches[0].screenPosition;
         var p1 = Touch.activeTouches[1].screenPosition;
         var angle = Mathf.Atan2(p1.y - p0.y, p1.x - p0.x) * Mathf.Rad2Deg;
@@ -345,7 +391,9 @@ public class FurnitureManipulator : MonoBehaviour
         {
             case "begin":
                 rnGestureStream = true;
-                dragEligible = true;
+                lockedTouch = furniture.IsLocked;
+                lockedNoticeSent = false;
+                dragEligible = !furniture.IsLocked;
                 isDragging = false;
                 isTwoFinger = false;
                 dragStartScreen = screen;
@@ -359,7 +407,14 @@ public class FurnitureManipulator : MonoBehaviour
                 break;
 
             case "move":
-                if (!dragEligible) break;
+                if (!dragEligible)
+                {
+                    if (lockedTouch
+                        && (Mathf.Abs(payload.twistDelta) > 0.01f
+                            || Vector2.Distance(screen, dragStartScreen) >= dragStartThreshold))
+                        NotifyLocked(furniture);
+                    break;
+                }
 
                 if (Mathf.Abs(payload.twistDelta) > 0.01f)
                 {
@@ -390,9 +445,9 @@ public class FurnitureManipulator : MonoBehaviour
                     BeginGesture(furniture);
                 }
 
-                DragTo(furniture, screen, delta);
+                var blockedAt = DragTo(furniture, screen, delta);
                 RememberSafePose(furniture);
-                placementController.RefreshPlacementSafety(furniture);
+                placementController.RefreshPlacementSafety(furniture, blockedAt);
                 break;
 
             case "end":

@@ -87,7 +87,7 @@ export function ProfileMenu() {
                 )}
               </span>
               <div>
-                <strong>{user?.name || 'Admin'}</strong>
+                <strong>{user?.name || (user?.role === 'store' ? 'Store owner' : 'Admin')}</strong>
                 <p>{user?.email}</p>
               </div>
             </div>

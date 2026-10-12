@@ -441,3 +441,24 @@
     font-size: 1.5rem;
   }
 }
+
+/* Store registration reuses this layout with a wider form that can scroll. */
+
+.login-page-scroll {
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.register-form {
+  max-width: 560px;
+}
+
+.register-form .field {
+  margin-bottom: 12px;
+}
+
+.login-link {
+  color: var(--login-navy);
+  font-weight: 600;
+  text-decoration: underline;
+}

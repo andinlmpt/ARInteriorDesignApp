@@ -104,6 +104,9 @@ public class FurniturePlacementController : MonoBehaviour
     /// <summary>Fired when selected furniture placement safety changes.</summary>
     public event Action<FurniturePlacementSafety.Result, PlacedFurniture> PlacementSafetyChanged;
 
+    /// <summary>Fired after a piece is locked or unlocked.</summary>
+    public event Action<PlacedFurniture> FurnitureLockChanged;
+
     public IReadOnlyList<PlacedFurniture> Instances => instances;
     public PlacedFurniture Selected { get; private set; }
 
@@ -363,11 +366,11 @@ public class FurniturePlacementController : MonoBehaviour
 
     /// <summary>
     /// Swaps the selected piece for another catalog item at the same floor spot and facing.
-    /// Returns false when nothing is selected.
+    /// Returns false when nothing is selected or the selection is locked.
     /// </summary>
     public bool ReplaceSelected(SpawnFurnitureRequest request)
     {
-        if (request == null || Selected == null) return false;
+        if (request == null || Selected == null || Selected.IsLocked) return false;
 
         var old = Selected;
         var position = old.transform.position;
@@ -392,13 +395,27 @@ public class FurniturePlacementController : MonoBehaviour
         return true;
     }
 
+    /// <summary>Locks or unlocks one piece (empty id = selected). Returns false when the piece is not found.</summary>
+    public bool SetFurnitureLocked(string instanceId, bool locked)
+    {
+        var target = string.IsNullOrEmpty(instanceId)
+            ? Selected
+            : instances.Find(item => item != null && item.InstanceId == instanceId);
+        if (target == null) return false;
+        if (target.IsLocked == locked) return true;
+
+        target.SetLocked(locked);
+        FurnitureLockChanged?.Invoke(target);
+        return true;
+    }
+
     /// <summary>Last furniture removed — read by <see cref="FurnitureLayoutHistory"/> for undo.</summary>
     public TransformSnapshot LastRemovedSnapshot { get; private set; }
 
-    /// <summary>Destroys the selected instance. Returns the id that was removed, or null.</summary>
+    /// <summary>Destroys the selected instance. Returns the id that was removed, or null (also when locked).</summary>
     public string RemoveSelectedFurniture()
     {
-        if (Selected == null) return null;
+        if (Selected == null || Selected.IsLocked) return null;
         return RemoveFurniture(Selected.InstanceId) ? LastRemovedSnapshot?.instanceId : null;
     }
 
@@ -718,8 +735,12 @@ public class FurniturePlacementController : MonoBehaviour
     /// <summary>
     /// Evaluates furniture/wall collisions for the selected (or given) piece and
     /// turns the floor outline red when placement is unsafe.
+    /// <paramref name="blockedPivot"/> is where a drag wanted to go before overlap resolution
+    /// held it back; when that spot overlaps another piece the result is flagged as blocked.
     /// </summary>
-    public FurniturePlacementSafety.Result RefreshPlacementSafety(PlacedFurniture furniture = null)
+    public FurniturePlacementSafety.Result RefreshPlacementSafety(
+        PlacedFurniture furniture = null,
+        Vector3? blockedPivot = null)
     {
         var target = furniture != null ? furniture : Selected;
         if (target == null)
@@ -729,10 +750,23 @@ public class FurniturePlacementController : MonoBehaviour
         var plannerActive = layoutMode != null && layoutMode.IsPlannerOrbitActive;
         var result = FurniturePlacementSafety.Evaluate(
             target, instances, plannerActive ? null : scanController);
+
+        if (blockedPivot.HasValue && !result.hasFurnitureCollision)
+        {
+            var attempted = FurniturePlacementSafety.EvaluateAtPivot(target, blockedPivot.Value, instances, null);
+            if (attempted.hasFurnitureCollision)
+            {
+                result.isSafe = false;
+                result.isBlocked = true;
+                result.otherModelId = attempted.otherModelId;
+                result.reason = "Blocked by another furniture piece";
+            }
+        }
+
         target.ApplyPlacementSafety(result.isSafe);
 
         var key =
-            $"{target.InstanceId}|{result.isSafe}|{result.hasFurnitureCollision}|{result.hasWallCollision}|{result.isTooCloseToWall}|{result.reason}";
+            $"{target.InstanceId}|{result.isSafe}|{result.hasFurnitureCollision}|{result.hasWallCollision}|{result.isTooCloseToWall}|{result.isBlocked}|{result.otherModelId}|{result.reason}";
         if (key != lastSafetyKey)
         {
             lastSafetyKey = key;

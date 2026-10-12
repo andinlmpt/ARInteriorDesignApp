@@ -50,7 +50,6 @@ export function notFoundHandler(req, res) {
       layouts: '/api/v1/layouts/generate',
       projects: '/api/v1/projects',
       users: '/api/v1/users',
-      themes: '/api/v1/themes',
     },
   });
 }

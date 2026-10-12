@@ -87,3 +87,14 @@ export function IconSettings({ className }: IconProps) {
     </svg>
   );
 }
+
+export function IconStores({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 9l1.5-5h13L20 9" />
+      <path d="M4 9a2.7 2.7 0 0 0 5.3 0 2.7 2.7 0 0 0 5.4 0 2.7 2.7 0 0 0 5.3 0" />
+      <path d="M5.5 11.5V20h13v-8.5" />
+      <path d="M10 20v-4.5h4V20" />
+    </svg>
+  );
+}

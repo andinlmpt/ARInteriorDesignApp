@@ -1,39 +1,64 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, getToken, setToken, type AuthUser } from '../api/client';
+import {
+  api,
+  getToken,
+  setToken,
+  storeApi,
+  type AuthUser,
+  type Store,
+  type StoreRegistrationInput,
+} from '../api/client';
 
 interface AuthContextValue {
   user: AuthUser | null;
+  /** The signed-in store's details (store accounts only). */
+  store: Store | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  registerStore: (input: StoreRegistrationInput) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
   setUser: (user: AuthUser | null) => void;
+  setStore: (store: Store | null) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+const CONSOLE_ROLES = ['admin', 'store'];
+
+/** Loads the account and, for store owners, their store. */
+async function loadSession(): Promise<{ user: AuthUser; store: Store | null }> {
+  const { user } = await api.getMe();
+  const store = user.role === 'store' ? (await storeApi.getMyStore()).store : null;
+  return { user, store };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [store, setStore] = useState<Store | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function refreshUser() {
-    const res = await api.getMe();
-    setUser(res.user);
+    const session = await loadSession();
+    setUser(session.user);
+    setStore(session.store);
   }
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) {
+    if (!getToken()) {
       setLoading(false);
       return;
     }
 
-    api
-      .getMe()
-      .then((res) => setUser(res.user))
+    loadSession()
+      .then((session) => {
+        setUser(session.user);
+        setStore(session.store);
+      })
       .catch(() => {
         setToken(null);
         setUser(null);
+        setStore(null);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -41,24 +66,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
+      store,
       loading,
       setUser,
+      setStore,
       refreshUser,
       async login(email: string, password: string) {
         const res = await api.login(email, password);
-        if (res.user.role !== 'admin') {
-          throw new Error('This account is not an admin.');
+        if (!CONSOLE_ROLES.includes(res.user.role)) {
+          throw new Error('This is a customer account. Customers sign in on the mobile app.');
         }
         setToken(res.token);
-        const me = await api.getMe();
-        setUser(me.user);
+        try {
+          await refreshUser();
+        } catch (err) {
+          setToken(null);
+          throw err;
+        }
+      },
+      async registerStore(input: StoreRegistrationInput) {
+        const res = await api.registerStore(input);
+        setToken(res.token);
+        await refreshUser();
       },
       logout() {
         setToken(null);
         setUser(null);
+        setStore(null);
       },
     }),
-    [user, loading]
+    [user, store, loading]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

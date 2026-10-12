@@ -6,6 +6,7 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { UPLOAD_ROOT, getPublicBaseUrl } from '../services/uploadService.js';
+import { cloudinaryResized } from '../services/cloudinaryStorage.js';
 
 const LOCALHOST_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i;
 const PRIVATE_LAN_RE =
@@ -93,8 +94,9 @@ export function resolveFurnitureGlbUrl(doc, req) {
   return '';
 }
 
+/** Cloudinary thumbnails are served resized (same format) so catalog lists load faster. */
 export function resolveFurnitureThumbnailUrl(doc, req) {
-  return rewriteLocalhostUrl(doc?.thumbnailUrl || '', req);
+  return cloudinaryResized(rewriteLocalhostUrl(doc?.thumbnailUrl || '', req));
 }
 
 export { getPublicBaseUrl };

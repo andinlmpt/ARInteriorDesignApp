@@ -54,6 +54,7 @@ import { isUnityViewAvailable } from '@/utils/unityAvailability';
 import { buildModelPreviewExportHref } from '@/utils/modelPreviewExport';
 import { persistRoomExportGlb } from '@/utils/roomExportStorage';
 import { canPlaceMore, getRemainingPlacements } from '@/utils/furnitureCatalogHelpers';
+import { describePlacementIssue } from '@/utils/placementWarning';
 import { isUnityPlayerWarm, markUnityPlayerWarm } from '@/utils/unitySession';
 
 const UNITY_READY_TIMEOUT_MS = 15000;
@@ -825,7 +826,11 @@ export function ARViewUnityScreen() {
     onStatus: setStatusMessage,
     onLayoutSent: handleCustomizeLayoutSent,
   });
-  const { handleLayout: handleCustomizeLayout, handleSelection: handleCustomizeSelection } = customization;
+  const {
+    handleLayout: handleCustomizeLayout,
+    handleSelection: handleCustomizeSelection,
+    handlePlacementSafety: handleCustomizeSafety,
+  } = customization;
 
   const handleFinishDesign = useCallback(async () => {
     try {
@@ -1389,7 +1394,7 @@ export function ARViewUnityScreen() {
       applyAwaitingPlacementRef.current = false;
       setFurnitureLoading(false);
       setStatusMessage(
-        `Layout placed — ${furniture.length} pieces. Tap a piece to move, recolour or replace it.`
+        `Layout placed — ${furniture.length} pieces. Tap a piece to move, recolour, replace or lock it.`
       );
     }
     handleCustomizeLayout(payload);
@@ -1408,30 +1413,25 @@ export function ARViewUnityScreen() {
   }, [arMode, handleCustomizeSelection]);
 
   const handlePlacementSafety = useCallback((payload: PlacementSafetyPayload) => {
-    if (payload.isSafe) {
+    handleCustomizeSafety(payload);
+    const issue = describePlacementIssue(
+      payload,
+      (modelId) => catalogItems.find((item) => item.id === modelId)?.name,
+    );
+    if (!issue) {
       setStatusMessage(
         arMode === 'measure'
           ? 'Placed — 1 finger move · 2 fingers on piece to twist-rotate'
-          : 'Placed — drag to move, pinch to scale, twist to rotate'
+          : 'Placed — drag to move, twist to rotate'
       );
       return;
     }
-    if (payload.hasFurnitureCollision) {
-      setStatusMessage('Unsafe — overlaps another furniture piece');
-      return;
-    }
-    if (payload.hasWallCollision) {
-      setStatusMessage('Unsafe — collides with the wall');
-      return;
-    }
-    if (payload.isTooCloseToWall) {
-      setStatusMessage('Unsafe — too close to the wall');
-      return;
-    }
-    if (payload.reason) {
-      setStatusMessage(`Unsafe — ${payload.reason}`);
-    }
-  }, [arMode]);
+    setStatusMessage(`Unsafe — ${issue}`);
+  }, [arMode, catalogItems, handleCustomizeSafety]);
+
+  const handleFurnitureLockBlocked = useCallback(() => {
+    showToast('This piece is locked. Tap Locked to move it again.');
+  }, [showToast]);
 
   const handleHistoryChanged = useCallback((payload: HistoryStatePayload) => {
     setCanUndo(Boolean(payload.canUndo));
@@ -1692,6 +1692,7 @@ export function ARViewUnityScreen() {
           onLayoutChanged={handleLayoutChanged}
           onFurnitureSelected={handleFurnitureSelected}
           onPlacementSafety={handlePlacementSafety}
+          onFurnitureLockBlocked={handleFurnitureLockBlocked}
           onHistoryChanged={handleHistoryChanged}
           onFurnitureInstancePlaced={(payload) => {
             if (furnitureLoadTimeoutRef.current) {
@@ -1927,6 +1928,7 @@ export function ARViewUnityScreen() {
           selectedCategory={selectedCategory}
           selectedLibraryItem={selectedLibraryItem}
           selectedPlacedModelId={selectedPlacedModelId}
+          selectedLocked={Boolean(customization.selectedPiece?.locked)}
           placedModelIds={placedModelIds}
           canUndo={canUndo}
           canRedo={canRedo}
@@ -1993,8 +1995,11 @@ export function ARViewUnityScreen() {
             activeColorHex={customization.selectedPiece.colorHex ?? ''}
             colorOptions={customization.colorOptions}
             replacementOptions={customization.replacementOptions}
+            locked={Boolean(customization.selectedPiece.locked)}
+            warning={customization.selectedWarning}
             onSelectColor={customization.setColor}
             onReplace={customization.replaceWith}
+            onToggleLock={customization.toggleLock}
             bottomOffset={140}
           />
         )}
