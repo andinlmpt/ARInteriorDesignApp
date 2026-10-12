@@ -7,8 +7,10 @@ using UnityEngine.XR.ARSubsystems;
 /// can be turned into world points after the phone has moved on (e.g. once object detection
 /// on that frame finishes).
 ///
-/// Screen → depth pixel uses the camera frame's display matrix, the same transform the ARCore
-/// background shader applies to the camera and depth textures (row vector × matrix).
+/// Screen → depth pixel uses the camera frame's display matrix, the transform the ARCore
+/// background shader applies to the camera and depth textures. Which entries of the 4×4 hold
+/// that 2D transform isn't something to guess at: the layout is chosen as the one that keeps
+/// the screen's corners inside the depth image (the screen always shows part of the image).
 /// ARCore depth is distance along the camera's forward axis, in millimetres; 0 = no estimate.
 /// </summary>
 public sealed class ARDepthSnapshot
@@ -23,7 +25,16 @@ public sealed class ARDepthSnapshot
     Matrix4x4 displayMatrix;
     Vector3 origin, forward, nearBottomLeft, nearBottomRight, nearTopLeft;
 
+    /// <summary>How the display matrix is read: (u, v) as a row or column vector, translation in the third or fourth slot.</summary>
+    public enum MatrixLayout { None, RowVector, RowVectorW, ColumnVector, ColumnVectorW }
+
+    static readonly MatrixLayout[] Layouts =
+        { MatrixLayout.RowVector, MatrixLayout.ColumnVector, MatrixLayout.RowVectorW, MatrixLayout.ColumnVectorW };
+    static readonly Vector2[] ViewportCorners = { new(0f, 0f), new(1f, 0f), new(0f, 1f), new(1f, 1f) };
+
     public bool IsValid { get; private set; }
+    public MatrixLayout Layout { get; private set; }
+    public Matrix4x4 DisplayMatrix => displayMatrix;
     public int Width => width;
     public int Height => height;
 
@@ -76,6 +87,9 @@ public sealed class ARDepthSnapshot
         }
 
         displayMatrix = frameDisplayMatrix.Value;
+        Layout = PickLayout();
+        if (Layout == MatrixLayout.None)
+            return false;
         var pose = camera.transform;
         origin = pose.position;
         forward = pose.forward;
@@ -87,12 +101,34 @@ public sealed class ARDepthSnapshot
     }
 
     /// <summary>Depth image coordinates (0–1, row 0 first) for a viewport point (0–1, y up).</summary>
-    public Vector2 ViewportToImage(Vector2 viewport)
+    public Vector2 ViewportToImage(Vector2 viewport) => Apply(Layout, viewport);
+
+    Vector2 Apply(MatrixLayout layout, Vector2 p)
     {
         var m = displayMatrix;
-        return new Vector2(
-            viewport.x * m[0, 0] + viewport.y * m[1, 0] + m[2, 0],
-            viewport.x * m[0, 1] + viewport.y * m[1, 1] + m[2, 1]);
+        return layout switch
+        {
+            MatrixLayout.RowVector => new Vector2(p.x * m[0, 0] + p.y * m[1, 0] + m[2, 0], p.x * m[0, 1] + p.y * m[1, 1] + m[2, 1]),
+            MatrixLayout.RowVectorW => new Vector2(p.x * m[0, 0] + p.y * m[1, 0] + m[3, 0], p.x * m[0, 1] + p.y * m[1, 1] + m[3, 1]),
+            MatrixLayout.ColumnVector => new Vector2(m[0, 0] * p.x + m[0, 1] * p.y + m[0, 2], m[1, 0] * p.x + m[1, 1] * p.y + m[1, 2]),
+            MatrixLayout.ColumnVectorW => new Vector2(m[0, 0] * p.x + m[0, 1] * p.y + m[0, 3], m[1, 0] * p.x + m[1, 1] * p.y + m[1, 3]),
+            _ => new Vector2(-1f, -1f),
+        };
+    }
+
+    MatrixLayout PickLayout()
+    {
+        foreach (var layout in Layouts)
+        {
+            var inside = true;
+            foreach (var corner in ViewportCorners)
+            {
+                var uv = Apply(layout, corner);
+                if (!(uv.x >= -0.02f && uv.x <= 1.02f && uv.y >= -0.02f && uv.y <= 1.02f)) inside = false;
+            }
+            if (inside) return layout;
+        }
+        return MatrixLayout.None;
     }
 
     /// <summary>Median of the valid depths in a 3×3 patch around a viewport point.</summary>

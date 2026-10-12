@@ -37,6 +37,7 @@ public class ARScanDiagnostics : MonoBehaviour
     readonly List<ARRaycastHit> hits = new List<ARRaycastHit>();
     float startTime;
     float nextLogTime;
+    bool loggedMatrix;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     static void Install()
@@ -171,12 +172,23 @@ public class ARScanDiagnostics : MonoBehaviour
             ? occlusionManager.descriptor.environmentDepthImageSupported
             : Supported.Unknown;
         line.Append(" | depth=").Append(support).Append(" mode=").Append(occlusionManager.currentEnvironmentDepthMode);
-        if (!snapshot.TryCapture(occlusionManager, latestDisplayMatrix, arCamera))
+        var captured = snapshot.TryCapture(occlusionManager, latestDisplayMatrix, arCamera);
+        if (!loggedMatrix && latestDisplayMatrix.HasValue)
         {
-            line.Append(" image=none");
+            // Once per scene: the raw display matrix and the layout chosen for it.
+            loggedMatrix = true;
+            var m = latestDisplayMatrix.Value;
+            Debug.Log($"[ScanDiag] display matrix rows: [{m[0, 0]:0.###} {m[0, 1]:0.###} {m[0, 2]:0.###} {m[0, 3]:0.###}] " +
+                $"[{m[1, 0]:0.###} {m[1, 1]:0.###} {m[1, 2]:0.###} {m[1, 3]:0.###}] " +
+                $"[{m[2, 0]:0.###} {m[2, 1]:0.###} {m[2, 2]:0.###} {m[2, 3]:0.###}] " +
+                $"[{m[3, 0]:0.###} {m[3, 1]:0.###} {m[3, 2]:0.###} {m[3, 3]:0.###}] -> layout {snapshot.Layout}");
+        }
+        if (!captured)
+        {
+            line.Append(" image=none layout=").Append(snapshot.Layout);
             return;
         }
-        line.Append($" image={snapshot.Width}x{snapshot.Height}");
+        line.Append($" image={snapshot.Width}x{snapshot.Height} layout={snapshot.Layout}");
         if (snapshot.TrySampleMetres(new Vector2(0.5f, 0.5f), out var centre))
             line.Append($" centre={centre:0.00}m");
     }
