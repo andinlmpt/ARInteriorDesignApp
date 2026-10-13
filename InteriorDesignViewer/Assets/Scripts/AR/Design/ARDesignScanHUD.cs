@@ -2,7 +2,8 @@ using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// Corner-to-corner scan chrome — ARPlan-inspired frosted pills, step dots, rounded controls.
+/// Corner-to-corner scan chrome — ARPlan-inspired frosted pills, step dots, rounded controls,
+/// live coaching ("Move slowly", "Point at the floor"), Rescan, and a final "Scan complete".
 /// </summary>
 [DefaultExecutionOrder(-90)]
 public class ARDesignScanHUD : MonoBehaviour
@@ -27,7 +28,11 @@ public class ARDesignScanHUD : MonoBehaviour
     static readonly Color MeasurePurpleDisabled = new(0.55f, 0.56f, 0.58f, 0.85f);
     static readonly Color DotIdle = new(0.78f, 0.79f, 0.82f, 1f);
     static readonly Color DotActive = new(0.12f, 0.12f, 0.14f, 1f);
+    static readonly Color CoachBg = new(1f, 0.95f, 0.85f, 0.97f);
+    static readonly Color CoachInk = new(0.47f, 0.26f, 0.03f, 1f);
+    static readonly Color RescanArmed = new(0.86f, 0.24f, 0.22f, 1f);
     const int RetryCornerCount = 4;
+    const float RescanConfirmSeconds = 3f;
 
     Canvas canvas;
     Text topHintLabel;
@@ -56,6 +61,14 @@ public class ARDesignScanHUD : MonoBehaviour
     Image finishImage;
     Image heightUndoImage;
     Image[] stepDots = System.Array.Empty<Image>();
+    RectTransform coachChip;
+    Text coachTitle;
+    Text coachDetail;
+    Button rescanButton;
+    Image rescanImage;
+    Text rescanLabel;
+    float rescanArmedUntil = -1f;
+    ARScanGuidance guidance;
     bool active;
 
     bool ShouldShowNativeHud()
@@ -90,6 +103,8 @@ public class ARDesignScanHUD : MonoBehaviour
                 ARMainMenuBackButton.EnsureOn(gameObject);
             ARMeasurementRnBridge.EnsureOn(gameObject);
         }
+
+        guidance = ARScanGuidance.EnsureOn(gameObject);
 
         try
         {
@@ -157,12 +172,16 @@ public class ARDesignScanHUD : MonoBehaviour
         // Live height / width readouts change every frame while aiming.
         if (cornerBuilder.IsInHeightPhase || cornerBuilder.CornerCount > 0)
             RefreshCornerUi();
+        RefreshCoaching();
+        RefreshRescanButton();
     }
 
     void OnPhase(RoomScanController.ScanPhase phase)
     {
         if (canvas != null)
             canvas.gameObject.SetActive(phase != RoomScanController.ScanPhase.Confirmed);
+        if (guidance != null)
+            guidance.enabled = IsScanning(phase);
 
         ApplyReticle(phase);
         RefreshCornerUi();
@@ -242,6 +261,8 @@ public class ARDesignScanHUD : MonoBehaviour
 
         if (subtitleLabel != null)
         {
+            var spotted = spatialMapping != null ? spatialMapping.EarlySightingCount : 0;
+            var spottedSuffix = spotted > 0 ? $" · {spotted} furniture spotted" : string.Empty;
             if (inHeightPhase)
             {
                 if (!cornerBuilder.HasHeightBase)
@@ -279,15 +300,15 @@ public class ARDesignScanHUD : MonoBehaviour
             }
             else if (liveWidthCm > 0)
             {
-                subtitleLabel.text = canCloseWidth
+                subtitleLabel.text = (canCloseWidth
                     ? $"{count} corners · live {liveWidthCm} cm · ready to close"
-                    : $"{count} corners · live {liveWidthCm} cm";
+                    : $"{count} corners · live {liveWidthCm} cm") + spottedSuffix;
             }
             else
             {
-                subtitleLabel.text = canCloseWidth
+                subtitleLabel.text = (canCloseWidth
                     ? $"{count} corners · ready to close"
-                    : $"{count} corners · keep outlining";
+                    : $"{count} corners · keep outlining") + spottedSuffix;
             }
         }
 
@@ -415,7 +436,7 @@ public class ARDesignScanHUD : MonoBehaviour
                     "Mark doors & windows",
                 ARDesignSpatialMappingController.Phase.ExistingFurniture =>
                     "Mark existing furniture",
-                _ => "Review your room map",
+                _ => "Review your room, then tap Scan complete",
             };
         }
 
@@ -430,7 +451,7 @@ public class ARDesignScanHUD : MonoBehaviour
                     (spatialMapping.IsFurnitureScanning ? "Scanning furniture… · " : "") +
                     $"{spatialMapping.PendingSuggestionCount} auto · tap orange to add · " +
                     $"{spatialMapping.ObstacleCount} saved · manual: {spatialMapping.SelectedObstacleType}",
-                _ => $"{spatialMapping.OpeningCount} openings · {spatialMapping.ObstacleCount} existing pieces",
+                _ => BuildReviewSummary(),
             };
         }
 
@@ -484,7 +505,7 @@ public class ARDesignScanHUD : MonoBehaviour
             {
                 ARDesignSpatialMappingController.Phase.Openings => "Next: Furniture",
                 ARDesignSpatialMappingController.Phase.ExistingFurniture => "Next: Review",
-                _ => measurementOnlyMode ? "Continue" : "Confirm map",
+                _ => "Scan complete",
             };
             confirmLabel.color = Color.white;
             if (confirmImage != null)
@@ -504,6 +525,92 @@ public class ARDesignScanHUD : MonoBehaviour
             stepDots[i].color = filled ? DotActive : DotIdle;
             stepDots[i].rectTransform.sizeDelta = filled ? new Vector2(14f, 14f) : new Vector2(10f, 10f);
         }
+    }
+
+    static bool IsScanning(RoomScanController.ScanPhase phase) =>
+        phase == RoomScanController.ScanPhase.Scanning || phase == RoomScanController.ScanPhase.ReadyToConfirm;
+
+    /// <summary>"L 4.2m × W 3.1m × H 2.5m · 2 doors/windows · 3 furniture" for the review step.</summary>
+    string BuildReviewSummary()
+    {
+        var parts = new System.Collections.Generic.List<string>();
+        if (cornerBuilder != null && cornerBuilder.CornerCount >= 3)
+        {
+            RoomMeasurementUtil.ComputePolygonExtents(cornerBuilder.Corners, out var width, out var depth);
+            var size = RoomMeasurementUtil.FormatDimensionLabel(width, depth, cornerBuilder.WallHeight);
+            if (!string.IsNullOrEmpty(size)) parts.Add(size);
+        }
+        parts.Add($"{spatialMapping.OpeningCount} doors/windows");
+        parts.Add($"{spatialMapping.ObstacleCount} furniture");
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// Whether the current step needs the camera on the floor, and whether it is.
+    /// Null when the step doesn't use the floor (aiming at the ceiling, closed outline, review).
+    /// </summary>
+    bool? FloorAimForCurrentStep()
+    {
+        if (scanController == null || cornerBuilder == null || !IsScanning(scanController.Phase)) return null;
+        if (spatialMapping != null && spatialMapping.CurrentPhase != ARDesignSpatialMappingController.Phase.Outline)
+            return null;
+
+        var indicatorOnFloor = placementIndicator != null && placementIndicator.IsLockedOnFloor;
+        if (cornerBuilder.IsInHeightPhase)
+            return cornerBuilder.HasHeightBase ? null : indicatorOnFloor;
+        if (cornerBuilder.IsLoopClosed) return null;
+        return cornerBuilder.CornerCount > 0 ? cornerBuilder.IsAimOnFloor : indicatorOnFloor;
+    }
+
+    void RefreshCoaching()
+    {
+        if (coachChip == null || guidance == null) return;
+
+        guidance.FloorAim = FloorAimForCurrentStep();
+        var show = guidance.isActiveAndEnabled && guidance.Current != ARScanGuidance.Issue.None;
+        if (coachChip.gameObject.activeSelf != show)
+            coachChip.gameObject.SetActive(show);
+        if (!show) return;
+
+        coachTitle.text = guidance.Title;
+        coachDetail.text = guidance.Detail;
+    }
+
+    /// <summary>Rescan appears once there is something to lose, and asks for a second tap.</summary>
+    void RefreshRescanButton()
+    {
+        if (rescanButton == null || cornerBuilder == null) return;
+
+        var hasProgress = cornerBuilder.HasHeightBase
+                          || cornerBuilder.CornerCount > 0
+                          || (spatialMapping != null
+                              && spatialMapping.CurrentPhase != ARDesignSpatialMappingController.Phase.Outline);
+        if (rescanButton.gameObject.activeSelf != hasProgress)
+            rescanButton.gameObject.SetActive(hasProgress);
+
+        var armed = Time.unscaledTime <= rescanArmedUntil;
+        rescanLabel.text = armed ? "Tap again" : "Rescan";
+        rescanLabel.color = armed ? Color.white : Ink;
+        if (rescanImage != null)
+            rescanImage.color = armed ? RescanArmed : Frost;
+    }
+
+    void OnRescanClicked()
+    {
+        if (Time.unscaledTime > rescanArmedUntil)
+        {
+            rescanArmedUntil = Time.unscaledTime + RescanConfirmSeconds;
+            RefreshRescanButton();
+            return;
+        }
+
+        rescanArmedUntil = -1f;
+        if (scanController == null) return;
+        scanController.StartRoomScan();
+        OnStatus(scanController.GetScanStatus());
+        ApplyReticle(scanController.Phase);
+        RefreshCornerUi();
+        RefreshRescanButton();
     }
 
     string BuildHintText(ScanStatusPayload status)
@@ -696,11 +803,12 @@ public class ARDesignScanHUD : MonoBehaviour
 
         ARDesignUiUtil.EnsureEventSystem();
 
-        // Top instruction chip
-        CreateShadowChip(root.transform, new Vector2(0.5f, 1f), new Vector2(0f, -124f), new Vector2(720f, 108f));
-        var topPill = CreateFrostChip(root.transform, new Vector2(0.5f, 1f), new Vector2(0f, -118f), new Vector2(700f, 96f), 36);
+        // Top instruction chip (narrow enough to leave room for Rescan on the right)
+        CreateShadowChip(root.transform, new Vector2(0.5f, 1f), new Vector2(0f, -124f), new Vector2(680f, 108f));
+        var topPill = CreateFrostChip(root.transform, new Vector2(0.5f, 1f), new Vector2(0f, -118f), new Vector2(660f, 96f), 36);
         topHintLabel = ARDesignUiUtil.CreateText(topPill, "Outline your room", 30, FontStyle.Bold, TextAnchor.MiddleCenter);
         topHintLabel.color = Ink;
+        ShrinkToFit(topHintLabel, 18);
         var hintRt = topHintLabel.rectTransform;
         hintRt.anchorMin = new Vector2(0.06f, 0.42f);
         hintRt.anchorMax = new Vector2(0.94f, 0.92f);
@@ -709,11 +817,62 @@ public class ARDesignScanHUD : MonoBehaviour
 
         subtitleLabel = ARDesignUiUtil.CreateText(topPill, "Walk the room · tap each floor corner", 20, FontStyle.Normal, TextAnchor.MiddleCenter);
         subtitleLabel.color = InkMuted;
+        ShrinkToFit(subtitleLabel, 14);
         var subRt = subtitleLabel.rectTransform;
         subRt.anchorMin = new Vector2(0.08f, 0.08f);
         subRt.anchorMax = new Vector2(0.92f, 0.48f);
         subRt.offsetMin = Vector2.zero;
         subRt.offsetMax = Vector2.zero;
+
+        // Coaching chip under the instruction ("Move slowly", "Point at the floor", …)
+        coachChip = CreateFrostChip(root.transform, new Vector2(0.5f, 1f), new Vector2(0f, -222f), new Vector2(660f, 84f), 30);
+        var coachImage = coachChip.GetComponent<Image>();
+        if (coachImage != null)
+        {
+            coachImage.color = CoachBg;
+            coachImage.raycastTarget = false;
+        }
+        coachTitle = ARDesignUiUtil.CreateText(coachChip, string.Empty, 24, FontStyle.Bold, TextAnchor.MiddleCenter);
+        coachTitle.color = CoachInk;
+        coachTitle.raycastTarget = false;
+        ShrinkToFit(coachTitle, 18);
+        var coachTitleRt = coachTitle.rectTransform;
+        coachTitleRt.anchorMin = new Vector2(0.05f, 0.48f);
+        coachTitleRt.anchorMax = new Vector2(0.95f, 0.94f);
+        coachTitleRt.offsetMin = Vector2.zero;
+        coachTitleRt.offsetMax = Vector2.zero;
+        coachDetail = ARDesignUiUtil.CreateText(coachChip, string.Empty, 18, FontStyle.Normal, TextAnchor.MiddleCenter);
+        coachDetail.color = CoachInk;
+        coachDetail.raycastTarget = false;
+        ShrinkToFit(coachDetail, 13);
+        var coachDetailRt = coachDetail.rectTransform;
+        coachDetailRt.anchorMin = new Vector2(0.05f, 0.08f);
+        coachDetailRt.anchorMax = new Vector2(0.95f, 0.50f);
+        coachDetailRt.offsetMin = Vector2.zero;
+        coachDetailRt.offsetMax = Vector2.zero;
+        coachChip.gameObject.SetActive(false);
+
+        // Rescan, top-right beside the instruction pill (the app's back button sits top-left).
+        var rescanHolder = new GameObject("RescanHolder", typeof(RectTransform));
+        rescanHolder.transform.SetParent(root.transform, false);
+        var rescanRt = (RectTransform)rescanHolder.transform;
+        rescanRt.anchorMin = new Vector2(1f, 1f);
+        rescanRt.anchorMax = new Vector2(1f, 1f);
+        rescanRt.pivot = new Vector2(0.5f, 0.5f);
+        rescanRt.anchoredPosition = new Vector2(-100f, -118f);
+        rescanRt.sizeDelta = new Vector2(160f, 80f);
+        rescanButton = CreatePillButton(
+            rescanHolder.transform,
+            "Rescan",
+            Vector2.zero,
+            Vector2.one,
+            Frost,
+            Ink,
+            OnRescanClicked,
+            out rescanImage,
+            out rescanLabel);
+        rescanLabel.fontSize = 24;
+        rescanButton.gameObject.SetActive(false);
 
         startButton = CreateCenterActionButton(
             root.transform,
@@ -844,6 +1003,14 @@ public class ARDesignScanHUD : MonoBehaviour
         if (host.GetComponent<ARFurnitureAutoSuggestService>() == null)
             host.AddComponent<ARFurnitureAutoSuggestService>();
         return spatial;
+    }
+
+    /// <summary>Long text (room size summary, coaching detail) shrinks instead of being cut off.</summary>
+    static void ShrinkToFit(Text text, int minSize)
+    {
+        text.resizeTextForBestFit = true;
+        text.resizeTextMinSize = minSize;
+        text.resizeTextMaxSize = text.fontSize;
     }
 
     static RectTransform CreateShadowChip(Transform parent, Vector2 anchor, Vector2 anchoredPos, Vector2 size)

@@ -1,5 +1,5 @@
 /**
- * Admin-only route protection — always requires a valid JWT with role admin.
+ * Console route protection — requires a valid JWT; role guards for admin and store accounts.
  */
 
 import User from '../models/User.js';
@@ -68,6 +68,19 @@ export async function authenticateStrict(req, res, next) {
       message: 'Invalid or expired token',
     });
   }
+}
+
+/** Allows any of the given roles, e.g. requireRole('admin', 'store'). */
+export function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!roles.includes(req.user?.role)) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You do not have access to this page',
+      });
+    }
+    next();
+  };
 }
 
 export function requireAdmin(req, res, next) {

@@ -5,18 +5,17 @@ import { SearchBar } from '../components/SearchBar';
 import { ProductOverview } from '../components/dashboard/ProductOverview';
 import { RecentActivity } from '../components/dashboard/RecentActivity';
 import { RecentlyAddedProducts } from '../components/dashboard/RecentlyAddedProducts';
+import type { AdminStats } from '../api/client';
 import {
   IconActivity,
   IconAdmins,
   IconFaqs,
   IconLegal,
-  IconPlus,
   IconProducts,
-  IconSettings,
+  IconStores,
   IconUsers,
 } from '../components/NavIcons';
 import { useDashboardData } from '../hooks/useDashboardData';
-import type { DashboardStats } from '../types/dashboard';
 import './Dashboard.css';
 
 interface QuickLink {
@@ -30,20 +29,21 @@ interface QuickLink {
 }
 
 const QUICK_LINKS: QuickLink[] = [
-  { to: '/products?new=1', label: 'Add product', icon: IconPlus, keywords: 'new create furniture', primary: true },
-  { to: '/products', label: 'Manage products', icon: IconProducts, keywords: 'furniture catalog inventory' },
+  { to: '/stores', label: 'Review stores', icon: IconStores, keywords: 'approve accept registrations sellers', primary: true },
+  { to: '/products', label: 'All products', icon: IconProducts, keywords: 'furniture catalog moderation take down' },
   { to: '/users', label: 'View users', icon: IconUsers, keywords: 'customers accounts' },
   { to: '/admins', label: 'Admin accounts', icon: IconAdmins, keywords: 'administrators roles' },
-  { to: '/faqs', label: 'Edit FAQs', icon: IconFaqs, keywords: 'questions help' },
-  { to: '/legal', label: 'Legal pages', icon: IconLegal, keywords: 'terms privacy policy' },
-  { to: '/settings', label: 'Settings', icon: IconSettings, keywords: 'store information' },
-  { to: '/activity-logs', label: 'Activity logs', icon: IconActivity, keywords: 'history events', searchOnly: true },
+  { to: '/activity-logs', label: 'Activity logs', icon: IconActivity, keywords: 'history events audit' },
+  { to: '/faqs', label: 'Edit FAQs', icon: IconFaqs, keywords: 'questions help', searchOnly: true },
+  { to: '/legal', label: 'Legal pages', icon: IconLegal, keywords: 'terms privacy policy', searchOnly: true },
 ];
 
-const STAT_CARDS: { key: keyof DashboardStats; label: string }[] = [
-  { key: 'users', label: 'Total users' },
-  { key: 'furniture', label: 'Total products' },
-  { key: 'newUsersThisWeek', label: 'New users this week' },
+const STAT_CARDS: { key: keyof AdminStats; label: string }[] = [
+  { key: 'users', label: 'Customers' },
+  { key: 'newUsersThisWeek', label: 'New customers this week' },
+  { key: 'stores', label: 'Stores' },
+  { key: 'pendingStores', label: 'Waiting for review' },
+  { key: 'furniture', label: 'Products' },
 ];
 
 export function DashboardPage() {
@@ -68,7 +68,7 @@ export function DashboardPage() {
     <div className="dashboard">
       <PageHeader
         title="Dashboard"
-        subtitle="Overview of your Maharlika Furniture admin console."
+        subtitle="Overview of customers, stores, and products on the platform."
         actions={
           <SearchBar
             placeholder="Search dashboard…"

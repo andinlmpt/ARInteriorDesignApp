@@ -9,6 +9,7 @@ using UnityEngine;
 public class ARMeasurementFurnitureBootstrap : MonoBehaviour
 {
     FurniturePlacementController placement;
+    FurnitureManipulator manipulator;
     FurnitureLayoutHistory history;
     bool wired;
 
@@ -40,8 +41,8 @@ public class ARMeasurementFurnitureBootstrap : MonoBehaviour
         placement = managers.GetComponent<FurniturePlacementController>()
                     ?? managers.AddComponent<FurniturePlacementController>();
 
-        if (managers.GetComponent<FurnitureManipulator>() == null)
-            managers.AddComponent<FurnitureManipulator>();
+        manipulator = managers.GetComponent<FurnitureManipulator>()
+                      ?? managers.AddComponent<FurnitureManipulator>();
 
         history = managers.GetComponent<FurnitureLayoutHistory>()
                   ?? managers.AddComponent<FurnitureLayoutHistory>();
@@ -85,6 +86,10 @@ public class ARMeasurementFurnitureBootstrap : MonoBehaviour
         placement.FurnitureRemoved += OnFurnitureRemoved;
         placement.SelectionChanged += OnSelectionChanged;
         placement.SpawnFailed += OnSpawnFailed;
+        placement.PlacementSafetyChanged += OnPlacementSafetyChanged;
+
+        if (manipulator != null)
+            manipulator.LockedGestureBlocked += OnLockedGestureBlocked;
 
         if (history != null)
             history.HistoryChanged += OnHistoryChanged;
@@ -99,7 +104,11 @@ public class ARMeasurementFurnitureBootstrap : MonoBehaviour
             placement.FurnitureRemoved -= OnFurnitureRemoved;
             placement.SelectionChanged -= OnSelectionChanged;
             placement.SpawnFailed -= OnSpawnFailed;
+            placement.PlacementSafetyChanged -= OnPlacementSafetyChanged;
         }
+
+        if (manipulator != null)
+            manipulator.LockedGestureBlocked -= OnLockedGestureBlocked;
 
         if (history != null)
             history.HistoryChanged -= OnHistoryChanged;
@@ -146,6 +155,18 @@ public class ARMeasurementFurnitureBootstrap : MonoBehaviour
             }));
     }
 
+    void OnPlacementSafetyChanged(FurniturePlacementSafety.Result result, PlacedFurniture furniture)
+    {
+        UnityMessageBridge.SendToApp(
+            "placementSafety",
+            JsonUtility.ToJson(PlacementSafetyPayload.From(result, furniture)));
+    }
+
+    void OnLockedGestureBlocked(PlacedFurniture furniture)
+    {
+        UnityMessageBridge.SendToApp("furnitureLockBlocked", furniture != null ? furniture.InstanceId : string.Empty);
+    }
+
     void OnHistoryChanged()
     {
         if (history == null) return;
@@ -181,8 +202,51 @@ public class ARMeasurementFurnitureBootstrap : MonoBehaviour
             return;
         }
 
+        if (placement.Selected != null && placement.Selected.IsLocked)
+        {
+            OnSpawnFailed("furnitureLocked", "Unlock this piece before replacing it.");
+            return;
+        }
+
         if (!placement.ReplaceSelected(request))
             OnSpawnFailed("nothingSelected", "Select a piece of furniture to replace.");
+    }
+
+    public void RemoveSelectedFurniture()
+    {
+        if (placement == null) return;
+
+        if (placement.Selected != null && placement.Selected.IsLocked)
+        {
+            OnSpawnFailed("furnitureLocked", "Unlock this piece before deleting it.");
+            return;
+        }
+
+        placement.RemoveSelectedFurniture();
+    }
+
+    public void SetFurnitureLocked(string data)
+    {
+        if (placement == null) return;
+
+        FurnitureLockRequest request;
+        try
+        {
+            request = JsonUtility.FromJson<FurnitureLockRequest>(data ?? string.Empty);
+        }
+        catch (Exception e)
+        {
+            OnSpawnFailed("badRequest", e.Message);
+            return;
+        }
+
+        if (request == null || !placement.SetFurnitureLocked(request.instanceId, request.locked))
+        {
+            OnSpawnFailed("nothingSelected", "Select a piece of furniture to lock.");
+            return;
+        }
+
+        SendLayout();
     }
 
     public void SetFurnitureColor(string data)

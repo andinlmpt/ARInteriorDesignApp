@@ -14,6 +14,7 @@ public class ARDragOutline : MonoBehaviour
 
     static readonly Color SafeColor = Color.white;
     static readonly Color DangerColor = new Color(0.92f, 0.18f, 0.2f, 1f);
+    static readonly Color LockedColor = new Color(0.36f, 0.55f, 0.94f, 1f);
 
     [Header("Outline Configuration")]
     [SerializeField] private float lineWidth = 0.028f;
@@ -114,7 +115,13 @@ public class ARDragOutline : MonoBehaviour
     /// <summary>White when safe, red when overlapping furniture or colliding with walls.</summary>
     public void SetPlacementSafe(bool safe)
     {
-        ApplyColor(safe ? SafeColor : DangerColor);
+        SetPlacementState(safe, locked: false);
+    }
+
+    /// <summary>Red when unsafe (wins over locked), blue when locked, otherwise white.</summary>
+    public void SetPlacementState(bool safe, bool locked)
+    {
+        ApplyColor(!safe ? DangerColor : locked ? LockedColor : SafeColor);
     }
 
     public void SetLineColor(Color color)

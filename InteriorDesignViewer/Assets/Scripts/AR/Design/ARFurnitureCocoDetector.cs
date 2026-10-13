@@ -50,19 +50,29 @@ public class ARFurnitureCocoDetector : MonoBehaviour
     [SerializeField] private Camera arCamera;
     [SerializeField] private ARCameraManager cameraManager;
     [SerializeField] private float minConfidence = 0.45f;
-    [SerializeField] private float scanIntervalSeconds = 2.5f;
+    [SerializeField] private float scanIntervalSeconds = 1.5f;
+
+    // Padding colour around the letterboxed frame, as in YOLO training (114/255 grey).
+    static readonly Color LetterboxGrey = new Color(0.447f, 0.447f, 0.447f, 1f);
 
     float nextScanTime;
     bool loggedMissingModel;
+    int nextSuggestionId;
 
     ModelAsset modelAsset;
     Worker worker;
     Tensor<float> inputTensor;
     RenderTexture frameRt;
+    RenderTexture contentRt;
     RenderTexture inputRt;
-    // Part of the screen (normalized, centred) that the square model input covers.
-    Vector2 cropScale = Vector2.one;
-    Vector2 cropOffset = Vector2.zero;
+    // Where the frame sits inside the square model input (normalized): the whole frame,
+    // scaled to fit, centred between grey bars.
+    Vector2 contentScale = Vector2.one;
+    Vector2 contentOffset = Vector2.zero;
+    // Depth taken with the captured frame, to place detections at their real position and size.
+    AROcclusionManager occlusion;
+    Matrix4x4? latestDisplayMatrix;
+    readonly ARDepthSnapshot captureDepth = new ARDepthSnapshot();
     bool ready;
     bool loadAttempted;
     IEnumerator schedule;
@@ -90,6 +100,21 @@ public class ARFurnitureCocoDetector : MonoBehaviour
         if (arCamera == null) arCamera = Camera.main;
         if (cameraManager == null) cameraManager = FindFirstObjectByType<ARCameraManager>();
         // Allocate the worker only when furniture scanning is requested.
+    }
+
+    void OnEnable()
+    {
+        if (cameraManager != null) cameraManager.frameReceived += OnCameraFrame;
+    }
+
+    void OnDisable()
+    {
+        if (cameraManager != null) cameraManager.frameReceived -= OnCameraFrame;
+    }
+
+    void OnCameraFrame(ARCameraFrameEventArgs args)
+    {
+        if (args.displayMatrix.HasValue) latestDisplayMatrix = args.displayMatrix;
     }
 
     // Explicit ADB opt-in for a bounded device smoke test, independent of room mapping.
@@ -181,6 +206,8 @@ public class ARFurnitureCocoDetector : MonoBehaviour
         inputTensor = null;
         ReleaseTexture(frameRt);
         frameRt = null;
+        ReleaseTexture(contentRt);
+        contentRt = null;
         ReleaseTexture(inputRt);
         inputRt = null;
         ready = false;
@@ -211,19 +238,24 @@ public class ARFurnitureCocoDetector : MonoBehaviour
         return results;
     }
 
-    /// <summary>Run detection if model is loaded and interval elapsed.</summary>
+    /// <summary>
+    /// Run detection if model is loaded and interval elapsed. With <paramref name="requireInsideRoom"/>
+    /// false (while the outline is still open) detections are kept wherever they land on the floor.
+    /// Objects already in <paramref name="existing"/> are skipped; merging repeat sightings of the
+    /// same object is up to the caller.
+    /// </summary>
     public List<FurnitureAutoSuggestion> TryDetect(
         IReadOnlyList<Vector3> corners,
         float floorY,
         ARRaycastManager raycast,
         IReadOnlyList<RoomObstaclePayload> existing,
-        IReadOnlyList<FurnitureAutoSuggestion> pending)
+        bool requireInsideRoom = true)
     {
         var empty = new List<FurnitureAutoSuggestion>();
         if (instance != null && instance != this) return empty;
         if (!ready) TryLoadModel();
         if (arCamera == null) arCamera = Camera.main;
-        if (!ready || arCamera == null || corners == null || corners.Count < 3)
+        if (!ready || arCamera == null || (requireInsideRoom && (corners == null || corners.Count < 3)))
         {
             if (!ready && !loggedMissingModel)
             {
@@ -245,44 +277,174 @@ public class ARFurnitureCocoDetector : MonoBehaviour
         completedDetections = null;
 
         var results = new List<FurnitureAutoSuggestion>();
-        var id = 0;
+        // One note per detection saying what happened to it, so a scan log explains itself.
+        var notes = new List<string>();
         foreach (var det in detections)
         {
-            if (det.confidence < minConfidence) continue;
+            var what = $"{det.label} {det.confidence:F2}";
             var mapped = CocoFurnitureLabelMap.Map(det.label);
-            if (mapped == null) continue;
-
-            // Locate the object's floor contact using the camera pose from the captured
-            // frame. A current screen ray would drift if the phone moved during inference.
-            var viewportX = Mathf.Clamp01(det.normalizedBox.center.x);
-            var viewportY = 1f - Mathf.Clamp01(det.normalizedBox.yMax);
-            var contact = captureBottomLeft
-                + (captureBottomRight - captureBottomLeft) * viewportX
-                + (captureTopLeft - captureBottomLeft) * viewportY;
-            var floorRay = new Ray(captureOrigin, contact - captureOrigin);
-            if (!TryProjectToFloor(floorRay, floorY, out var world)) continue;
-            if (!RoomPolygonUtil.PointInsidePolygonXZ(world, corners)) continue;
-
-            var size = CocoFurnitureLabelMap.DefaultSize(mapped);
-            world.y = floorY;
-            if (ARFurniturePlaneAutoScannerOverlapsHelper.Overlaps(world, size, existing, pending)
-                || ARFurniturePlaneAutoScannerOverlapsHelper.Overlaps(world, size, null, results))
+            if (mapped == null)
+            {
+                notes.Add($"{what} ignored (not furniture)");
                 continue;
+            }
+            if (det.confidence < minConfidence)
+            {
+                notes.Add($"{what} ignored (low confidence)");
+                continue;
+            }
 
-            id += 1;
+            var defaultSize = CocoFurnitureLabelMap.DefaultSize(mapped);
+            Vector3 center, size;
+            float yaw;
+            string method;
+            if (TryPlaceWithDepth(det.normalizedBox, floorY, defaultSize, out center, out size, out yaw))
+            {
+                method = "depth";
+            }
+            else if (TryPlaceOnFloor(det.normalizedBox, floorY, out center))
+            {
+                size = defaultSize;
+                yaw = FacingYaw(CaptureFlatForward());
+                method = "floor ray, default size";
+            }
+            else
+            {
+                notes.Add($"{what} dropped (couldn't find where it stands)");
+                continue;
+            }
+
+            if (requireInsideRoom && !RoomPolygonUtil.PointInsidePolygonXZ(center, corners))
+            {
+                notes.Add($"{what} dropped (outside the room)");
+                continue;
+            }
+            if (ARFurniturePlaneAutoScannerOverlapsHelper.Overlaps(center, size, existing, null, yaw))
+            {
+                notes.Add($"{what} dropped (already marked)");
+                continue;
+            }
+            if (ARFurniturePlaneAutoScannerOverlapsHelper.Overlaps(center, size, null, results, yaw))
+            {
+                notes.Add($"{what} dropped (same object twice in this frame)");
+                continue;
+            }
+
+            nextSuggestionId += 1;
             results.Add(new FurnitureAutoSuggestion
             {
-                id = $"coco-{id}-{det.label}",
+                id = $"coco-{nextSuggestionId}-{det.label}",
                 type = mapped,
-                center = world,
+                center = center,
                 size = size,
+                yaw = yaw,
                 confidence = det.confidence,
                 source = "coco",
             });
+            notes.Add($"{what} kept as {mapped} at ({center.x:F2}, {center.z:F2}), " +
+                $"{size.x:F2} x {size.z:F2} x {size.y:F2} m, via {method}");
         }
 
-        Debug.Log($"[ARFurnitureCocoDetector] AR scan: {detections.Count} detections, {results.Count} furniture suggestions.");
+        Debug.Log($"[ARFurnitureCocoDetector] AR scan: {detections.Count} detections, {results.Count} furniture suggestions" +
+            (notes.Count > 0 ? ": " + string.Join("; ", notes) : "."));
         return results;
+    }
+
+    /// <summary>
+    /// Locates the object from the depth captured with its frame: samples points inside the box,
+    /// keeps those at the object's distance (not the wall or floor around it), and measures its
+    /// width and height. Only the front is visible, so depth front-to-back is at least the usual size.
+    /// </summary>
+    bool TryPlaceWithDepth(Rect box, float floorY, Vector3 defaultSize, out Vector3 center, out Vector3 size, out float yaw)
+    {
+        center = default;
+        size = default;
+        yaw = 0f;
+        if (!captureDepth.IsValid) return false;
+
+        const int Grid = 9;
+        var points = new List<Vector3>(Grid * Grid);
+        for (var gy = 0; gy < Grid; gy++)
+        {
+            for (var gx = 0; gx < Grid; gx++)
+            {
+                var nx = Mathf.Lerp(box.xMin, box.xMax, (gx + 0.5f) / Grid);
+                var ny = Mathf.Lerp(box.yMin, box.yMax, (gy + 0.5f) / Grid);
+                var viewport = new Vector2(Mathf.Clamp01(nx), 1f - Mathf.Clamp01(ny));
+                if (captureDepth.TryWorldPoint(viewport, out var point) && point.y > floorY + 0.05f)
+                    points.Add(point);
+            }
+        }
+        if (points.Count < 15) return false;
+
+        var origin = captureDepth.Origin;
+        var forward = captureDepth.FlatForward;
+        var right = Vector3.Cross(Vector3.up, forward);
+
+        // Keep points near the median distance: the object itself, not what is behind it.
+        var along = points.ConvertAll(p => Vector3.Dot(p - origin, forward));
+        var medianAlong = Percentile(along, 0.5f);
+        var tolerance = Mathf.Max(0.35f, 0.6f * defaultSize.z);
+        var kept = points.FindAll(p => Mathf.Abs(Vector3.Dot(p - origin, forward) - medianAlong) <= tolerance);
+        if (kept.Count < 10) return false;
+
+        var across = kept.ConvertAll(p => Vector3.Dot(p - origin, right));
+        var keptAlong = kept.ConvertAll(p => Vector3.Dot(p - origin, forward));
+        var heights = kept.ConvertAll(p => p.y - floorY);
+
+        var left = Percentile(across, 0.1f);
+        var rightEdge = Percentile(across, 0.9f);
+        var front = Percentile(keptAlong, 0.1f);
+        var back = Percentile(keptAlong, 0.9f);
+        var top = Percentile(heights, 0.9f);
+        // A real piece of furniture rests on the floor and is a plausible height; anything else
+        // means the depth didn't line up with the object, so let the floor ray place it instead.
+        if (top < 0.2f || top > 2.5f) return false;
+
+        var width = Mathf.Clamp(rightEdge - left, 0.5f * defaultSize.x, 1.8f * defaultSize.x);
+        var depth = Mathf.Clamp(Mathf.Max(back - front, defaultSize.z), 0.5f * defaultSize.z, 1.8f * defaultSize.z);
+        var height = Mathf.Clamp(top, 0.4f * defaultSize.y, 1.8f * defaultSize.y);
+
+        center = origin + right * ((left + rightEdge) * 0.5f) + forward * (front + depth * 0.5f);
+        center.y = floorY;
+        size = new Vector3(width, height, depth);
+        yaw = FacingYaw(forward);
+        return true;
+    }
+
+    /// <summary>Where the bottom-centre of the box meets the floor, using the captured camera pose.</summary>
+    bool TryPlaceOnFloor(Rect box, float floorY, out Vector3 center)
+    {
+        // A current screen ray would drift if the phone moved during inference.
+        var viewportX = Mathf.Clamp01(box.center.x);
+        var viewportY = 1f - Mathf.Clamp01(box.yMax);
+        var contact = captureBottomLeft
+            + (captureBottomRight - captureBottomLeft) * viewportX
+            + (captureTopLeft - captureBottomLeft) * viewportY;
+        if (!TryProjectToFloor(new Ray(captureOrigin, contact - captureOrigin), floorY, out center))
+            return false;
+        center.y = floorY;
+        return true;
+    }
+
+    Vector3 CaptureFlatForward()
+    {
+        var middle = captureBottomLeft + (captureBottomRight - captureBottomLeft) * 0.5f
+            + (captureTopLeft - captureBottomLeft) * 0.5f;
+        var flat = middle - captureOrigin;
+        flat.y = 0f;
+        return flat.sqrMagnitude > 1e-6f ? flat.normalized : Vector3.forward;
+    }
+
+    /// <summary>Yaw that lines the footprint's width up across the view (front facing the camera).</summary>
+    static float FacingYaw(Vector3 flatForward) => Mathf.Atan2(flatForward.x, flatForward.z) * Mathf.Rad2Deg;
+
+    static float Percentile(List<float> values, float fraction)
+    {
+        var sorted = new List<float>(values);
+        sorted.Sort();
+        var index = Mathf.Clamp(Mathf.RoundToInt(fraction * (sorted.Count - 1)), 0, sorted.Count - 1);
+        return sorted[index];
     }
 
     struct RawDet
@@ -320,6 +482,11 @@ public class ARFurnitureCocoDetector : MonoBehaviour
             arCamera.targetTexture = frameRt;
             arCamera.Render();
             arCamera.targetTexture = previousTarget;
+
+            // Depth for the same moment, so detections can be placed after the phone has moved on.
+            if (occlusion == null && cameraManager != null)
+                occlusion = ARDepthSnapshot.EnsureDepth(cameraManager.gameObject);
+            captureDepth.TryCapture(occlusion, latestDisplayMatrix, arCamera);
 
             PrepareInput(frameRt);
             return true;
@@ -413,13 +580,44 @@ public class ARFurnitureCocoDetector : MonoBehaviour
         discardInFlight = IsScanning;
     }
 
-    // The model takes the centred square of the frame, resized to the input size.
+    // The model sees the whole frame, scaled to fit its square input with grey bars on the
+    // short sides (letterboxing), so furniture near the screen edges is detected too.
     void PrepareInput(Texture frame)
     {
-        var shortSide = (float)Mathf.Min(frame.width, frame.height);
-        cropScale = new Vector2(shortSide / frame.width, shortSide / frame.height);
-        cropOffset = (Vector2.one - cropScale) * 0.5f;
-        Graphics.Blit(frame, inputRt, cropScale, cropOffset);
+        if (SystemInfo.copyTextureSupport == UnityEngine.Rendering.CopyTextureSupport.None)
+        {
+            // No GPU texture copies: fall back to the centred square of the frame.
+            var shortSide = (float)Mathf.Min(frame.width, frame.height);
+            var cropScale = new Vector2(shortSide / frame.width, shortSide / frame.height);
+            var cropOffset = (Vector2.one - cropScale) * 0.5f;
+            Graphics.Blit(frame, inputRt, cropScale, cropOffset);
+            // Input covers only part of the frame: input = (screen - offset) / scale.
+            contentScale = new Vector2(1f / cropScale.x, 1f / cropScale.y);
+            contentOffset = new Vector2(-cropOffset.x / cropScale.x, -cropOffset.y / cropScale.y);
+            return;
+        }
+
+        var fit = Mathf.Min((float)InputSize / frame.width, (float)InputSize / frame.height);
+        var contentW = Mathf.Clamp(Mathf.RoundToInt(frame.width * fit), 1, InputSize);
+        var contentH = Mathf.Clamp(Mathf.RoundToInt(frame.height * fit), 1, InputSize);
+        if (contentRt == null || contentRt.width != contentW || contentRt.height != contentH)
+        {
+            ReleaseTexture(contentRt);
+            contentRt = new RenderTexture(contentW, contentH, 0, RenderTextureFormat.ARGB32);
+        }
+        Graphics.Blit(frame, contentRt);
+        if (!inputRt.IsCreated()) inputRt.Create();
+
+        var previous = RenderTexture.active;
+        RenderTexture.active = inputRt;
+        GL.Clear(false, true, LetterboxGrey);
+        RenderTexture.active = previous;
+
+        var padX = (InputSize - contentW) / 2;
+        var padY = (InputSize - contentH) / 2;
+        Graphics.CopyTexture(contentRt, 0, 0, 0, 0, contentW, contentH, inputRt, 0, 0, padX, padY);
+        contentScale = new Vector2((float)contentW / InputSize, (float)contentH / InputSize);
+        contentOffset = new Vector2((float)padX / InputSize, (float)padY / InputSize);
     }
 
     List<RawDet> RunModel()
@@ -451,10 +649,11 @@ public class ARFurnitureCocoDetector : MonoBehaviour
             if (label == null) continue;
 
             // Boxes are in input pixels with y down; map them back to the whole screen (normalized, y down).
-            var width = boxes[n, 2] / InputSize * cropScale.x;
-            var height = boxes[n, 3] / InputSize * cropScale.y;
-            var centerX = cropOffset.x + boxes[n, 0] / InputSize * cropScale.x;
-            var centerY = cropOffset.y + boxes[n, 1] / InputSize * cropScale.y;
+            // The padding is symmetric, so it doesn't matter which way up the input was stored.
+            var width = boxes[n, 2] / InputSize / contentScale.x;
+            var height = boxes[n, 3] / InputSize / contentScale.y;
+            var centerX = (boxes[n, 0] / InputSize - contentOffset.x) / contentScale.x;
+            var centerY = (boxes[n, 1] / InputSize - contentOffset.y) / contentScale.y;
             list.Add(new RawDet
             {
                 label = label,

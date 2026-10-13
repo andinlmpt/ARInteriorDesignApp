@@ -19,13 +19,16 @@ const __dirname = dirname(__filename);
 import layoutRoutes from './routes/layouts.js';
 import projectRoutes from './routes/projects.js';
 import userRoutes from './routes/users.js';
-import themeRoutes from './routes/themes.js';
 import imageRoutes from './routes/images.js';
 import designRoutes from './routes/designs.js';
 import ideaRoutes from './routes/ideas.js';
 import trainingRoutes from './routes/training.js';
 import furnitureRoutes from './routes/furniture.js';
 import adminRoutes from './routes/admin.js';
+import accountRoutes from './routes/account.js';
+import storeRoutes from './routes/stores.js';
+import storePortalRoutes from './routes/storePortal.js';
+import contentRoutes from './routes/content.js';
 import roomMeasurementRoutes from './routes/roomMeasurements.js';
 import savedItemRoutes from './routes/savedItems.js';
 import { UPLOAD_ROOT } from './services/uploadService.js';
@@ -94,10 +97,11 @@ if (NODE_ENV === 'development') {
 
 app.use(requestLogger);
 
-// Rate limiting
+// Rate limiting per IP. RATE_LIMIT_MAX / RATE_LIMIT_WINDOW_MINUTES in .env can raise it
+// (e.g. while bulk-uploading products); defaults are 100 requests per 15 minutes.
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  windowMs: (Number(process.env.RATE_LIMIT_WINDOW_MINUTES) || 15) * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_MAX) || 100,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -126,13 +130,16 @@ app.get('/health', (req, res) => {
 app.use('/api/v1/layouts', layoutRoutes);
 app.use('/api/v1/projects', projectRoutes);
 app.use('/api/v1/users', userRoutes);
-app.use('/api/v1/themes', themeRoutes);
 app.use('/api/v1/images', imageRoutes);
 app.use('/api/v1/designs', designRoutes);
 app.use('/api/v1/ideas', ideaRoutes);
 app.use('/api/v1/training', trainingRoutes);
 app.use('/api/v1/furniture', furnitureRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/account', accountRoutes);
+app.use('/api/v1/stores', storeRoutes);
+app.use('/api/v1/store', storePortalRoutes);
+app.use('/api/v1/content', contentRoutes);
 app.use('/api/v1/room-measurements', roomMeasurementRoutes);
 app.use('/api/v1/saved-items', savedItemRoutes);
 
@@ -151,13 +158,16 @@ app.get('/api', (req, res) => {
       layouts: '/api/v1/layouts',
       projects: '/api/v1/projects',
       users: '/api/v1/users',
-      themes: '/api/v1/themes',
       images: '/api/v1/images',
       designs: '/api/v1/designs',
       ideas: '/api/v1/ideas',
       training: '/api/v1/training',
       furniture: '/api/v1/furniture',
       admin: '/api/v1/admin',
+      account: '/api/v1/account',
+      stores: '/api/v1/stores',
+      storePortal: '/api/v1/store',
+      content: '/api/v1/content',
       roomMeasurements: '/api/v1/room-measurements',
       savedItems: '/api/v1/saved-items',
     },

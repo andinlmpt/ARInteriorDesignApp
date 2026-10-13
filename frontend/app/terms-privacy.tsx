@@ -1,13 +1,69 @@
-import { View, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, radii, shadows } from '@/components/ui/theme';
 import { AppText } from '@/components/ui/Text';
 import { Card } from '@/components/ui/Card';
+import { DEFAULT_LEGAL } from '@/constants/defaultContent';
+import { ContentService, type LegalDoc, type LegalKey } from '@/services/ContentService';
+import { parseLegalText } from '@/utils/legalText';
+
+const LEGAL_KEYS: LegalKey[] = ['terms', 'privacy'];
+
+/** Built-in text, used when the server can't be reached. */
+const FALLBACK: Record<LegalKey, LegalDoc> = {
+  terms: { title: 'Terms of Service', body: DEFAULT_LEGAL.terms, isDefault: true, updatedAt: null },
+  privacy: { title: 'Privacy Policy', body: DEFAULT_LEGAL.privacy, isDefault: true, updatedAt: null },
+};
+
+function LegalBody({ body }: { body: string }) {
+  return (
+    <>
+      {parseLegalText(body).map((block, index) => {
+        if (block.type === 'heading') {
+          return (
+            <AppText key={index} variant="subtitle" weight="700" style={styles.subsectionTitle}>
+              {block.text}
+            </AppText>
+          );
+        }
+        if (block.type === 'bullets') {
+          return (
+            <AppText key={index} variant="body" color="textMuted" style={[styles.paragraph, styles.section]}>
+              {block.items.map((item) => `• ${item}`).join('\n')}
+            </AppText>
+          );
+        }
+        return (
+          <AppText key={index} variant="body" color="textMuted" style={styles.paragraph}>
+            {block.text}
+          </AppText>
+        );
+      })}
+    </>
+  );
+}
 
 export default function TermsPrivacyScreen() {
   const router = useRouter();
+  /** null while loading. Admins edit this text in the web console. */
+  const [docs, setDocs] = useState<Record<LegalKey, LegalDoc> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    ContentService.getLegal()
+      .then((res) => {
+        if (!cancelled) setDocs({ terms: res.terms ?? FALLBACK.terms, privacy: res.privacy ?? FALLBACK.privacy });
+      })
+      .catch(() => {
+        if (!cancelled) setDocs(FALLBACK);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -26,93 +82,23 @@ export default function TermsPrivacyScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
-          <Card tone="elevated" padding="lg" style={styles.card}>
-            <AppText variant="h2" style={styles.sectionTitle}>
-              Terms of Service
-            </AppText>
-            <AppText variant="body" color="textMuted" style={styles.content}>
-              Last updated: {new Date().toLocaleDateString()}
-            </AppText>
-            <View style={styles.section}>
-              <AppText variant="body" color="textMuted" style={styles.paragraph}>
-                By using the AR Interior Design App, you agree to these terms of service. The app provides tools for interior design planning and visualization.
-              </AppText>
-            </View>
-            <View style={styles.section}>
-              <AppText variant="subtitle" weight="700" style={styles.subsectionTitle}>
-                User Responsibilities
-              </AppText>
-              <AppText variant="body" color="textMuted" style={styles.paragraph}>
-                • You are responsible for the accuracy of measurements and project data{'\n'}
-                • You must not use the app for illegal purposes{'\n'}
-                • You must respect intellectual property rights
-              </AppText>
-            </View>
-            <View style={styles.section}>
-              <AppText variant="subtitle" weight="700" style={styles.subsectionTitle}>
-                Service Availability
-              </AppText>
-              <AppText variant="body" color="textMuted" style={styles.paragraph}>
-                We strive to maintain service availability but do not guarantee uninterrupted access. The service may be temporarily unavailable for maintenance or updates.
-              </AppText>
-            </View>
-          </Card>
-
-          <Card tone="elevated" padding="lg" style={styles.card}>
-            <AppText variant="h2" style={styles.sectionTitle}>
-              Privacy Policy
-            </AppText>
-            <AppText variant="body" color="textMuted" style={styles.content}>
-              Last updated: {new Date().toLocaleDateString()}
-            </AppText>
-            <View style={styles.section}>
-              <AppText variant="subtitle" weight="700" style={styles.subsectionTitle}>
-                Data Collection
-              </AppText>
-              <AppText variant="body" color="textMuted" style={styles.paragraph}>
-                We collect information necessary to provide our services, including:
-              </AppText>
-              <AppText variant="body" color="textMuted" style={styles.paragraph}>
-                • Account information (name, email){'\n'}
-                • Project data and designs{'\n'}
-                • Usage analytics (anonymous)
-              </AppText>
-            </View>
-            <View style={styles.section}>
-              <AppText variant="subtitle" weight="700" style={styles.subsectionTitle}>
-                Data Usage
-              </AppText>
-              <AppText variant="body" color="textMuted" style={styles.paragraph}>
-                Your data is used to:
-              </AppText>
-              <AppText variant="body" color="textMuted" style={styles.paragraph}>
-                • Provide and improve our services{'\n'}
-                • Personalize your experience{'\n'}
-                • Analyze app performance (anonymously)
-              </AppText>
-            </View>
-            <View style={styles.section}>
-              <AppText variant="subtitle" weight="700" style={styles.subsectionTitle}>
-                Data Security
-              </AppText>
-              <AppText variant="body" color="textMuted" style={styles.paragraph}>
-                We implement industry-standard security measures to protect your data. However, no method of transmission over the internet is 100% secure.
-              </AppText>
-            </View>
-            <View style={styles.section}>
-              <AppText variant="subtitle" weight="700" style={styles.subsectionTitle}>
-                Your Rights
-              </AppText>
-              <AppText variant="body" color="textMuted" style={styles.paragraph}>
-                You have the right to:
-              </AppText>
-              <AppText variant="body" color="textMuted" style={styles.paragraph}>
-                • Access your personal data{'\n'}
-                • Request data deletion{'\n'}
-                • Opt-out of analytics
-              </AppText>
-            </View>
-          </Card>
+          {docs === null ? (
+            <ActivityIndicator color={colors.accent} />
+          ) : (
+            LEGAL_KEYS.map((key) => (
+              <Card key={key} tone="elevated" padding="lg" style={styles.card}>
+                <AppText variant="h2" style={styles.sectionTitle}>
+                  {docs[key].title}
+                </AppText>
+                {docs[key].updatedAt ? (
+                  <AppText variant="body" color="textMuted" style={styles.content}>
+                    Last updated: {new Date(docs[key].updatedAt as string).toLocaleDateString()}
+                  </AppText>
+                ) : null}
+                <LegalBody body={docs[key].body} />
+              </Card>
+            ))
+          )}
 
           <Card tone="elevated" padding="lg" style={styles.card}>
             <AppText variant="body" color="textMuted" style={styles.contactInfo}>

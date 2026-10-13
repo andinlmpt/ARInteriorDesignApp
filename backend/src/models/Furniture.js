@@ -4,6 +4,13 @@
 
 import mongoose from 'mongoose';
 
+/** Size of the 3D model itself in metres (AR shows the model at this size). */
+const modelSizeSchema = new mongoose.Schema({
+  width: { type: Number, required: true },
+  height: { type: Number, required: true },
+  depth: { type: Number, required: true },
+}, { _id: false });
+
 const furnitureSchema = new mongoose.Schema({
   id: {
     type: String,
@@ -63,8 +70,16 @@ const furnitureSchema = new mongoose.Schema({
   rooms: { type: [String], default: [] },
   /** Alias used by admin + design API (same data as rooms when unset). */
   roomTypes: { type: [String], default: [] },
+  /** Store-controlled visibility (the store can hide its own product). */
   active: { type: Boolean, default: true },
   sortOrder: { type: Number, default: 0 },
+  /** Furniture store that sells this product. Null for legacy products not yet assigned. */
+  store: { type: mongoose.Schema.Types.ObjectId, ref: 'Store', default: null },
+  /** Admin moderation: taken-down products are hidden from the app regardless of `active`. */
+  takenDown: { type: Boolean, default: false },
+  takenDownReason: { type: String, trim: true, default: '' },
+  /** Measured from the GLB when it is saved; compared with width/height/depth to warn the store. */
+  modelSize: { type: modelSizeSchema, default: null },
 }, {
   timestamps: true,
   collection: 'furniture',
@@ -72,6 +87,7 @@ const furnitureSchema = new mongoose.Schema({
 
 furnitureSchema.index({ category: 1, sortOrder: 1 });
 furnitureSchema.index({ active: 1 });
+furnitureSchema.index({ store: 1 });
 
 const Furniture = mongoose.models.Furniture || mongoose.model('Furniture', furnitureSchema);
 

@@ -13,8 +13,13 @@ interface FurnitureCustomizePanelProps {
   activeColorHex: string;
   colorOptions: FurnitureColorOption[];
   replacementOptions: FurnitureLibraryItem[];
+  /** Locked pieces can't be moved, rotated, deleted or replaced. */
+  locked: boolean;
+  /** Collision warning for this piece, e.g. "Abu Dhabi Sofa is in the way". */
+  warning?: string | null;
   onSelectColor: (hex: string) => void;
   onReplace: (item: FurnitureLibraryItem) => void;
+  onToggleLock: () => void;
   /** Distance from the screen bottom, above the planner toolbar and size chip. */
   bottomOffset: number;
 }
@@ -24,8 +29,11 @@ export function FurnitureCustomizePanel({
   activeColorHex,
   colorOptions,
   replacementOptions,
+  locked,
+  warning,
   onSelectColor,
   onReplace,
+  onToggleLock,
   bottomOffset,
 }: FurnitureCustomizePanelProps) {
   const { colors } = useTheme();
@@ -35,7 +43,7 @@ export function FurnitureCustomizePanel({
 
   useEffect(() => {
     setShowReplace(false);
-  }, [itemName]);
+  }, [itemName, locked]);
 
   return (
     <View
@@ -48,9 +56,31 @@ export function FurnitureCustomizePanel({
         <Text style={[styles.title, { color: colors.textPrimary }]} numberOfLines={1}>
           {itemName}
         </Text>
-        {replacementOptions.length > 0 && (
+        <TouchableOpacity
+          style={[
+            styles.headerButton,
+            locked
+              ? { backgroundColor: colors.accent, borderColor: colors.accent }
+              : { borderColor: colors.outline },
+          ]}
+          onPress={onToggleLock}
+          accessibilityLabel={locked ? 'Unlock this piece' : 'Lock this piece in place'}
+          accessibilityState={{ checked: locked }}
+        >
+          <Ionicons
+            name={locked ? 'lock-closed' : 'lock-open-outline'}
+            size={16}
+            color={locked ? colors.background : colors.accent}
+          />
+          <Text
+            style={[styles.headerButtonText, { color: locked ? colors.background : colors.textPrimary }]}
+          >
+            {locked ? 'Locked' : 'Lock'}
+          </Text>
+        </TouchableOpacity>
+        {!locked && replacementOptions.length > 0 && (
           <TouchableOpacity
-            style={[styles.replaceToggle, { borderColor: colors.outline }]}
+            style={[styles.headerButton, styles.replaceButton, { borderColor: colors.outline }]}
             onPress={() => setShowReplace((open) => !open)}
             accessibilityLabel={showReplace ? 'Hide replacements' : 'Replace this piece'}
           >
@@ -59,12 +89,21 @@ export function FurnitureCustomizePanel({
               size={16}
               color={colors.accent}
             />
-            <Text style={[styles.replaceToggleText, { color: colors.textPrimary }]}>
+            <Text style={[styles.headerButtonText, { color: colors.textPrimary }]}>
               {showReplace ? 'Close' : 'Replace'}
             </Text>
           </TouchableOpacity>
         )}
       </View>
+
+      {warning ? (
+        <View style={[styles.warningRow, { backgroundColor: `${colors.danger}18` }]}>
+          <Ionicons name="warning" size={14} color={colors.danger} />
+          <Text style={[styles.warningText, { color: colors.danger }]} numberOfLines={2}>
+            {warning}
+          </Text>
+        </View>
+      ) : null}
 
       {showReplace ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
@@ -128,7 +167,9 @@ export function FurnitureCustomizePanel({
         </ScrollView>
       ) : (
         <Text style={[styles.hint, { color: colors.textMuted }]}>
-          No colour options for this piece. Drag to move it or tap Replace.
+          {locked
+            ? 'Locked in place. Tap Locked to move it again.'
+            : 'No colour options for this piece. Drag to move it or tap Replace.'}
         </Text>
       )}
     </View>
@@ -157,7 +198,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginRight: spacing.sm,
   },
-  replaceToggle: {
+  headerButton: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
@@ -165,8 +206,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
   },
-  replaceToggleText: {
+  replaceButton: {
+    marginLeft: spacing.xs,
+  },
+  headerButtonText: {
     marginLeft: 4,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  warningRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    marginBottom: spacing.sm,
+  },
+  warningText: {
+    flex: 1,
+    marginLeft: 6,
     fontSize: 12,
     fontWeight: '600',
   },

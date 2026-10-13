@@ -122,6 +122,12 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     /// <summary>True while the rubber-band preview (and live cm readout) is visible.</summary>
     public bool HasLivePreview { get; private set; }
 
+    /// <summary>
+    /// While outlining: true when the aim (finger, reticle or screen centre) lands on the floor.
+    /// Unlike <see cref="HasLivePreview"/> it stays true while aiming right at the last corner.
+    /// </summary>
+    public bool IsAimOnFloor { get; private set; }
+
     /// <summary>Live wall height while extruding upward (metres). 0 when hidden.</summary>
     public float LiveHeightMeters { get; private set; }
 
@@ -944,11 +950,13 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     {
         if (corners.Count == 0 || arCamera == null || raycastManager == null)
         {
+            IsAimOnFloor = false;
             HideLivePreview();
             return;
         }
 
-        if (!TryGetPreviewAimHit(out var hit))
+        IsAimOnFloor = TryGetPreviewAimHit(out var hit);
+        if (!IsAimOnFloor)
         {
             HideLivePreview();
             return;

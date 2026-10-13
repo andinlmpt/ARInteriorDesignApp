@@ -431,7 +431,6 @@ eas build --platform ios
 6. ✅ Test login with provided credentials
 7. ✅ Explore features:
    - AI Design Generation
-   - Theme Recommendations
    - Spatial Mapping
    - AR View
    - 3D Layout Visualization

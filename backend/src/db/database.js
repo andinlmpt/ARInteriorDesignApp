@@ -15,7 +15,6 @@ const storage = {
   users: new Map(),
   projects: new Map(),
   layouts: new Map(),
-  theme_recommendations: new Map(),
 };
 
 // Data directory for persistence (optional)
@@ -35,7 +34,6 @@ export function initDatabase() {
       if (data.users) storage.users = new Map(Object.entries(data.users));
       if (data.projects) storage.projects = new Map(Object.entries(data.projects));
       if (data.layouts) storage.layouts = new Map(Object.entries(data.layouts));
-      if (data.theme_recommendations) storage.theme_recommendations = new Map(Object.entries(data.theme_recommendations));
       console.log('[Database] Loaded existing data from file');
     }
   } catch (error) {
@@ -58,7 +56,6 @@ function saveToFile() {
       users: Object.fromEntries(storage.users),
       projects: Object.fromEntries(storage.projects),
       layouts: Object.fromEntries(storage.layouts),
-      theme_recommendations: Object.fromEntries(storage.theme_recommendations),
     };
     writeFileSync(dataFile, JSON.stringify(data, null, 2));
   } catch (error) {

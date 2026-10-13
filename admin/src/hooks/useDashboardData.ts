@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, type AdminUser, type FurnitureItem } from '../api/client';
-import type { ActivityEntry, AsyncSection, CategoryCount, DashboardStats } from '../types/dashboard';
-import { buildActivityFeed, getCategoryCounts, getRecentlyAdded } from '../utils/dashboard';
+import { adminApi, type ActivityEntry, type AdminStats, type FurnitureItem } from '../api/client';
+import type { AsyncSection, CategoryCount } from '../types/dashboard';
+import { getCategoryCounts, getRecentlyAdded } from '../utils/dashboard';
 
 const RECENT_ACTIVITY_LIMIT = 5;
 const RECENTLY_ADDED_LIMIT = 6;
@@ -34,23 +34,17 @@ function useAsyncSection<T>(load: () => Promise<T>, fallbackError: string) {
   return [state, reload] as const;
 }
 
-const loadStats = () => api.getStats().then((res): DashboardStats => res.stats);
-const loadFurniture = () => api.listFurniture(true).then((res): FurnitureItem[] => res.furniture);
-const loadUsers = () => api.listUsers().then((res): AdminUser[] => res.users);
-
-function combine<A, B, R>(a: AsyncSection<A>, b: AsyncSection<B>, derive: (a: A, b: B) => R): AsyncSection<R> {
-  if (a.loading || b.loading) return { data: null, loading: true, error: '' };
-  if (a.error || b.error) return { data: null, loading: false, error: a.error || b.error };
-  if (a.data === null || b.data === null) return { data: null, loading: false, error: '' };
-  return { data: derive(a.data, b.data), loading: false, error: '' };
-}
+const loadStats = () => adminApi.getStats().then((res): AdminStats => res.stats);
+const loadFurniture = () => adminApi.listFurniture().then((res): FurnitureItem[] => res.furniture);
+const loadActivity = () =>
+  adminApi.listActivity('', RECENT_ACTIVITY_LIMIT).then((res): ActivityEntry[] => res.activity);
 
 function map<A, R>(a: AsyncSection<A>, derive: (a: A) => R): AsyncSection<R> {
   return { data: a.data === null ? null : derive(a.data), loading: a.loading, error: a.error };
 }
 
 export interface DashboardData {
-  stats: AsyncSection<DashboardStats>;
+  stats: AsyncSection<AdminStats>;
   categories: AsyncSection<{ items: CategoryCount[]; total: number }>;
   activity: AsyncSection<ActivityEntry[]>;
   recentlyAdded: AsyncSection<FurnitureItem[]>;
@@ -62,12 +56,12 @@ export interface DashboardData {
 export function useDashboardData(): DashboardData {
   const [stats, reloadStats] = useAsyncSection(loadStats, 'Failed to load stats');
   const [furniture, reloadFurniture] = useAsyncSection(loadFurniture, 'Failed to load products');
-  const [users, reloadUsers] = useAsyncSection(loadUsers, 'Failed to load users');
+  const [activity, reloadActivity] = useAsyncSection(loadActivity, 'Failed to load activity');
 
   const categories = useMemo(
     () =>
       map(furniture, (items) => {
-        const active = items.filter((item) => item.active);
+        const active = items.filter((item) => item.active && !item.takenDown);
         return { items: getCategoryCounts(active), total: active.length };
       }),
     [furniture]
@@ -77,16 +71,6 @@ export function useDashboardData(): DashboardData {
     () => map(furniture, (items) => getRecentlyAdded(items, RECENTLY_ADDED_LIMIT)),
     [furniture]
   );
-
-  const activity = useMemo(
-    () => combine(furniture, users, (items, list) => buildActivityFeed(items, list, RECENT_ACTIVITY_LIMIT)),
-    [furniture, users]
-  );
-
-  const reloadActivity = useCallback(() => {
-    if (furniture.error) reloadFurniture();
-    if (users.error) reloadUsers();
-  }, [furniture.error, users.error, reloadFurniture, reloadUsers]);
 
   return {
     stats,

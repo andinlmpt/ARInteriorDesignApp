@@ -1,73 +1,17 @@
 /**
- * Admin dashboard controller — furniture CRUD and user management.
+ * Admin console controller — runs the platform: reviews furniture stores, oversees and
+ * moderates their products, manages user accounts, and reads the activity log.
+ * Product create/edit/delete belongs to the stores (see storeController).
  */
 
+import mongoose from 'mongoose';
 import Furniture from '../models/Furniture.js';
 import User from '../models/User.js';
-import StoreSettings from '../models/StoreSettings.js';
-import mongoose from 'mongoose';
-import { uploadGlb, uploadThumbnail, uploadAvatar } from '../services/uploadService.js';
-
-const slugify = (value) =>
-  String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-
-const parseAvailableColors = (value) => {
-  if (Array.isArray(value)) {
-    return value.map((color) => String(color).trim()).filter(Boolean);
-  }
-  if (typeof value === 'string') {
-    return value
-      .split(',')
-      .map((color) => color.trim())
-      .filter(Boolean);
-  }
-  return [];
-};
-
-/** Accepts a number or legacy inventory text like "2 sofa pieces + 1 stool". */
-const parseQuantity = (value) => {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return Math.max(0, Math.floor(value));
-  }
-  const asNumber = Number(value);
-  if (Number.isFinite(asNumber) && String(value).trim() !== '') {
-    return Math.max(0, Math.floor(asNumber));
-  }
-  const matches = String(value || '').match(/\d+/g);
-  if (!matches) return 0;
-  return matches.reduce((sum, n) => sum + Number(n), 0);
-};
-
-const toAdminFurniture = (doc) => ({
-  id: doc.id,
-  displayName: doc.displayName,
-  category: doc.category,
-  glbUrl: doc.glbUrl,
-  thumbnailUrl: doc.thumbnailUrl || '',
-  width: doc.width,
-  height: doc.height,
-  depth: doc.depth,
-  dimensionLabel: doc.dimensionLabel || '',
-  lengthIn: doc.lengthIn || 0,
-  widthIn: doc.widthIn || 0,
-  heightIn: doc.heightIn || 0,
-  quantity: parseQuantity(doc.quantity),
-  availableColors: Array.isArray(doc.availableColors) ? doc.availableColors : [],
-  pricePhp: Number(doc.pricePhp) || 0,
-  styles: Array.isArray(doc.styles) ? doc.styles : [],
-  rooms: Array.isArray(doc.rooms) ? doc.rooms : [],
-  roomTypes: Array.isArray(doc.roomTypes) && doc.roomTypes.length > 0
-    ? doc.roomTypes
-    : (Array.isArray(doc.rooms) ? doc.rooms : []),
-  active: doc.active,
-  sortOrder: doc.sortOrder,
-  createdAt: doc.createdAt,
-  updatedAt: doc.updatedAt,
-});
+import Store from '../models/Store.js';
+import ActivityLog from '../models/ActivityLog.js';
+import { logActivity, toActivityEntry } from '../services/activityLog.js';
+import { toFurnitureDto } from '../services/furnitureFields.js';
+import { escapeRegex, toStoreDto } from '../services/storeFields.js';
 
 const toAdminUser = (doc) => ({
   id: doc._id.toString(),
@@ -78,346 +22,253 @@ const toAdminUser = (doc) => ({
   updatedAt: doc.updatedAt,
 });
 
-const toAdminProfile = (doc) => ({
-  id: doc._id.toString(),
-  email: doc.email,
-  name: doc.name || '',
-  role: doc.role || 'user',
-  avatar: doc.avatar || '',
-  profilePicture: doc.profilePicture || null,
-});
-
-const toStoreInfo = (doc) => ({
-  storeName: doc.storeName || '',
-  tagline: doc.tagline || '',
-  description: doc.description || '',
-  email: doc.email || '',
-  phone: doc.phone || '',
-  address: doc.address || '',
-  city: doc.city || '',
-  website: doc.website || '',
-  facebook: doc.facebook || '',
-  instagram: doc.instagram || '',
-  businessHours: doc.businessHours || '',
-  logoUrl: doc.logoUrl || '',
-  updatedAt: doc.updatedAt,
-});
-
-const DEFAULT_STORE = {
-  key: 'default',
-  storeName: 'Maharlika Furniture',
-  tagline: 'Your vision, Our craft',
-  description:
-    'Maharlika Furniture and Home Furnishing creates high-quality, affordable furniture that reflects Filipino pride and craftsmanship.',
-  email: 'admin@gmail.com',
-  phone: '',
-  address: '',
-  city: '',
-  website: '',
-  facebook: '',
-  instagram: '',
-  businessHours: 'Mon–Sat, 9:00 AM – 6:00 PM',
-  logoUrl: '',
+/** Which status changes an admin can make, from each current status. */
+const STATUS_TRANSITIONS = {
+  pending: ['approved', 'rejected'],
+  approved: ['suspended'],
+  suspended: ['approved'],
+  rejected: ['approved'],
 };
 
-async function getOrCreateStore() {
-  let store = await StoreSettings.findOne({ key: 'default' });
-  if (!store) {
-    store = await StoreSettings.create(DEFAULT_STORE);
-  }
-  return store;
+const adminActor = (req) => ({ id: req.user.id, email: req.user.email, role: 'admin' });
+
+async function productCountsByStore(storeIds) {
+  const rows = await Furniture.aggregate([
+    { $match: { store: { $in: storeIds } } },
+    { $group: { _id: '$store', count: { $sum: 1 } } },
+  ]);
+  return new Map(rows.map((row) => [String(row._id), row.count]));
 }
 
 const adminController = {
-  async getMe(req, res, next) {
+  async getStats(req, res, next) {
     try {
-      const dbUser = await User.findById(req.user.id).select('+profilePicture');
-      if (!dbUser) {
-        return res.status(404).json({ success: false, error: 'User not found' });
-      }
+      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const customers = { role: { $nin: ['admin', 'store'] } };
+      const [users, newUsersThisWeek, stores, pendingStores, furniture, unassignedProducts] = await Promise.all([
+        User.countDocuments(customers),
+        User.countDocuments({ ...customers, createdAt: { $gte: weekAgo } }),
+        Store.countDocuments(),
+        Store.countDocuments({ status: 'pending' }),
+        Furniture.countDocuments(),
+        Furniture.countDocuments({ store: null }),
+      ]);
 
       res.json({
         success: true,
-        user: toAdminProfile(dbUser),
+        stats: {
+          users,
+          newUsersThisWeek,
+          stores,
+          pendingStores,
+          furniture,
+          unassignedProducts,
+          mongoConnected: mongoose.connection.readyState === 1,
+        },
       });
     } catch (error) {
       next(error);
     }
   },
 
-  async updateProfile(req, res, next) {
+  // ── Stores ────────────────────────────────────────────────────────────────
+
+  async listStores(req, res, next) {
     try {
-      const dbUser = await User.findById(req.user.id).select('+profilePicture');
-      if (!dbUser) {
-        return res.status(404).json({ success: false, error: 'User not found' });
+      const { status, search } = req.query;
+      const filter = {};
+      if (status && status !== 'all') {
+        filter.status = String(status);
+      }
+      if (search?.trim()) {
+        const term = new RegExp(escapeRegex(search.trim()), 'i');
+        filter.$or = [{ name: term }, { email: term }, { city: term }];
       }
 
-      if (req.body.name !== undefined) {
-        dbUser.name = String(req.body.name).trim().slice(0, 100);
-      }
-
-      if (req.body.avatar !== undefined) {
-        dbUser.avatar = String(req.body.avatar || '').trim();
-      }
-
-      if (req.body.profilePicture !== undefined) {
-        dbUser.profilePicture = req.body.profilePicture || null;
-      }
-
-      await dbUser.save();
+      const stores = await Store.find(filter).populate('owner', 'email name').sort({ createdAt: -1 }).lean();
+      const counts = await productCountsByStore(stores.map((s) => s._id));
 
       res.json({
         success: true,
-        user: toAdminProfile(dbUser),
+        count: stores.length,
+        stores: stores.map((s) => toStoreDto(s, { productCount: counts.get(String(s._id)) || 0 })),
       });
     } catch (error) {
       next(error);
     }
   },
 
-  async uploadAvatar(req, res) {
+  async updateStoreStatus(req, res, next) {
     try {
-      if (!req.file) {
-        return res.status(400).json({ success: false, error: 'No file uploaded' });
+      const { id } = req.params;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ success: false, error: 'Invalid store id' });
       }
-      const result = await uploadAvatar(req.file);
-      res.json({ success: true, ...result });
+
+      const status = String(req.body?.status || '').trim();
+      const note = String(req.body?.note || '').trim();
+      const store = await Store.findById(id).populate('owner', 'email name');
+      if (!store) {
+        return res.status(404).json({ success: false, error: 'Store not found' });
+      }
+
+      const previous = store.status;
+      if (!(STATUS_TRANSITIONS[previous] || []).includes(status)) {
+        return res.status(400).json({ success: false, error: `A ${previous} store cannot be changed to ${status || 'that status'}` });
+      }
+      if ((status === 'rejected' || status === 'suspended') && !note) {
+        return res.status(400).json({ success: false, error: 'Add a reason so the store knows what to fix' });
+      }
+
+      store.status = status;
+      store.statusNote = status === 'approved' ? '' : note;
+      store.reviewedAt = new Date();
+      store.reviewedBy = req.user.id;
+      await store.save();
+
+      const action = previous === 'suspended' && status === 'approved' ? 'store.reinstated' : `store.${status}`;
+      const verb = { 'store.approved': 'accepted', 'store.rejected': 'rejected', 'store.suspended': 'suspended', 'store.reinstated': 'reinstated' }[action];
+      await logActivity(adminActor(req), action, {
+        targetType: 'store',
+        targetId: store._id,
+        store: store._id,
+        summary: `${req.user.email} ${verb} ${store.name}${note ? `: ${note}` : ''}`,
+      });
+
+      const counts = await productCountsByStore([store._id]);
+      res.json({ success: true, store: toStoreDto(store, { productCount: counts.get(String(store._id)) || 0 }) });
     } catch (error) {
-      res.status(400).json({ success: false, error: error.message });
+      next(error);
     }
   },
+
+  // ── Products (oversight + moderation; stores own create/edit/delete) ──────
 
   async listFurniture(req, res, next) {
     try {
-      const { category, includeInactive } = req.query;
       const filter = {};
-
-      if (category && category !== 'all') {
-        filter.category = String(category).trim().toLowerCase();
-      }
-      if (includeInactive !== 'true') {
-        filter.active = true;
+      const { store } = req.query;
+      if (store === 'unassigned') {
+        filter.store = null;
+      } else if (store && mongoose.Types.ObjectId.isValid(store)) {
+        filter.store = store;
       }
 
       const items = await Furniture.find(filter)
+        .populate('store', 'name status')
         .sort({ displayName: 1 })
         .lean();
 
-      res.json({
-        success: true,
-        count: items.length,
-        furniture: items.map(toAdminFurniture),
-      });
+      res.json({ success: true, count: items.length, furniture: items.map(toFurnitureDto) });
     } catch (error) {
       next(error);
     }
   },
 
-  async getFurniture(req, res, next) {
+  /** Take a product down from the app (or restore it). The store keeps the product. */
+  async moderateFurniture(req, res, next) {
     try {
       const id = String(req.params.id || '').trim().toLowerCase();
-      const item = await Furniture.findOne({ id }).lean();
+      const takenDown = req.body?.takenDown === true;
+      const reason = String(req.body?.reason || '').trim();
+      if (takenDown && !reason) {
+        return res.status(400).json({ success: false, error: 'Add a reason so the store knows why it was taken down' });
+      }
 
+      const item = await Furniture.findOne({ id }).populate('store', 'name status');
       if (!item) {
-        return res.status(404).json({ success: false, error: 'Furniture not found' });
+        return res.status(404).json({ success: false, error: 'Product not found' });
       }
 
-      res.json({ success: true, furniture: toAdminFurniture(item) });
-    } catch (error) {
-      next(error);
-    }
-  },
-
-  async createFurniture(req, res, next) {
-    try {
-      const {
-        displayName,
-        category = 'other',
-        glbUrl,
-        thumbnailUrl = '',
-        width = 2.0,
-        height = 0.85,
-        depth = 0.9,
-        dimensionLabel = '',
-        lengthIn = 0,
-        widthIn = 0,
-        heightIn = 0,
-        quantity = 0,
-        availableColors = [],
-        pricePhp = 0,
-        styles = [],
-        rooms = [],
-        roomTypes = [],
-        active = true,
-        sortOrder = 0,
-        id: customId,
-      } = req.body;
-
-      if (!displayName?.trim()) {
-        return res.status(400).json({ success: false, error: 'displayName is required' });
-      }
-      if (!glbUrl?.trim()) {
-        return res.status(400).json({ success: false, error: 'glbUrl is required (upload GLB first)' });
-      }
-
-      const id = customId?.trim() ? slugify(customId) : slugify(displayName);
-      if (!id) {
-        return res.status(400).json({ success: false, error: 'Could not generate furniture id' });
-      }
-
-      const existing = await Furniture.findOne({ id });
-      if (existing) {
-        return res.status(409).json({ success: false, error: `Furniture id '${id}' already exists` });
-      }
-
-      const item = await Furniture.create({
-        id,
-        displayName: displayName.trim(),
-        category: String(category).trim().toLowerCase(),
-        glbUrl: glbUrl.trim(),
-        thumbnailUrl: String(thumbnailUrl).trim(),
-        width: Number(width) || 2.0,
-        height: Number(height) || 0.85,
-        depth: Number(depth) || 0.9,
-        dimensionLabel: String(dimensionLabel).trim(),
-        lengthIn: Number(lengthIn) || 0,
-        widthIn: Number(widthIn) || 0,
-        heightIn: Number(heightIn) || 0,
-        quantity: Math.max(0, Math.floor(Number(quantity) || 0)),
-        availableColors: parseAvailableColors(availableColors),
-        pricePhp: Math.max(0, Math.round(Number(pricePhp) || 0)),
-        styles: Array.isArray(styles) ? styles.map(String) : [],
-        rooms: Array.isArray(rooms) && rooms.length > 0
-          ? rooms.map(String)
-          : (Array.isArray(roomTypes) ? roomTypes.map(String) : []),
-        roomTypes: Array.isArray(roomTypes) && roomTypes.length > 0
-          ? roomTypes.map(String)
-          : (Array.isArray(rooms) ? rooms.map(String) : []),
-        active: active !== false && active !== 'false',
-        sortOrder: Number(sortOrder) || 0,
-      });
-
-      res.status(201).json({ success: true, furniture: toAdminFurniture(item) });
-    } catch (error) {
-      next(error);
-    }
-  },
-
-  async updateFurniture(req, res, next) {
-    try {
-      const id = String(req.params.id || '').trim().toLowerCase();
-      const item = await Furniture.findOne({ id });
-
-      if (!item) {
-        return res.status(404).json({ success: false, error: 'Furniture not found' });
-      }
-
-      const fields = [
-        'displayName', 'category', 'glbUrl', 'thumbnailUrl',
-        'width', 'height', 'depth', 'dimensionLabel',
-        'lengthIn', 'widthIn', 'heightIn', 'quantity', 'availableColors',
-        'pricePhp', 'styles', 'rooms', 'roomTypes',
-        'active', 'sortOrder',
-      ];
-
-      for (const field of fields) {
-        if (req.body[field] !== undefined) {
-          if (field === 'active') {
-            item.active = req.body.active !== false && req.body.active !== 'false';
-          } else if (field === 'availableColors') {
-            item.availableColors = parseAvailableColors(req.body.availableColors);
-          } else if (field === 'styles') {
-            item.styles = Array.isArray(req.body.styles) ? req.body.styles.map(String) : [];
-          } else if (field === 'rooms' || field === 'roomTypes') {
-            const list = Array.isArray(req.body[field]) ? req.body[field].map(String) : [];
-            item[field] = list;
-            if (field === 'roomTypes') item.rooms = list;
-            if (field === 'rooms') item.roomTypes = list;
-          } else if (field === 'pricePhp') {
-            item.pricePhp = Math.max(0, Math.round(Number(req.body.pricePhp) || 0));
-          } else if (['width', 'height', 'depth', 'lengthIn', 'widthIn', 'heightIn', 'sortOrder', 'quantity'].includes(field)) {
-            item[field] = field === 'quantity'
-              ? Math.max(0, Math.floor(Number(req.body[field]) || 0))
-              : Number(req.body[field]) || 0;
-          } else if (field === 'category') {
-            item.category = String(req.body.category).trim().toLowerCase();
-          } else {
-            item[field] = String(req.body[field]).trim();
-          }
-        }
-      }
-
+      item.takenDown = takenDown;
+      item.takenDownReason = takenDown ? reason : '';
       await item.save();
-      res.json({ success: true, furniture: toAdminFurniture(item) });
+
+      await logActivity(adminActor(req), takenDown ? 'product.taken_down' : 'product.restored', {
+        targetType: 'product',
+        targetId: item.id,
+        store: item.store?._id || null,
+        summary: takenDown
+          ? `${req.user.email} took down “${item.displayName}”: ${reason}`
+          : `${req.user.email} restored “${item.displayName}”`,
+      });
+      res.json({ success: true, furniture: toFurnitureDto(item) });
     } catch (error) {
       next(error);
     }
   },
 
-  async deleteFurniture(req, res, next) {
+  /** Assign one product to a store (used for legacy products that predate stores). */
+  async assignFurnitureStore(req, res, next) {
     try {
       const id = String(req.params.id || '').trim().toLowerCase();
-      const hard = req.query.hard === 'true';
-
-      if (hard) {
-        const result = await Furniture.deleteOne({ id });
-        if (result.deletedCount === 0) {
-          return res.status(404).json({ success: false, error: 'Furniture not found' });
-        }
-        return res.json({ success: true, message: 'Furniture permanently deleted' });
+      const { storeId } = req.body || {};
+      if (!mongoose.Types.ObjectId.isValid(storeId)) {
+        return res.status(400).json({ success: false, error: 'Choose a store' });
       }
 
-      const item = await Furniture.findOneAndUpdate(
-        { id },
-        { active: false },
-        { new: true }
-      );
+      const [item, store] = await Promise.all([Furniture.findOne({ id }), Store.findById(storeId)]);
+      if (!item) return res.status(404).json({ success: false, error: 'Product not found' });
+      if (!store) return res.status(404).json({ success: false, error: 'Store not found' });
 
-      if (!item) {
-        return res.status(404).json({ success: false, error: 'Furniture not found' });
-      }
+      item.store = store._id;
+      await item.save();
+      await item.populate('store', 'name status');
 
-      res.json({ success: true, message: 'Furniture deactivated', furniture: toAdminFurniture(item) });
+      await logActivity(adminActor(req), 'product.assigned', {
+        targetType: 'product',
+        targetId: item.id,
+        store: store._id,
+        summary: `${req.user.email} assigned “${item.displayName}” to ${store.name}`,
+      });
+      res.json({ success: true, furniture: toFurnitureDto(item) });
     } catch (error) {
       next(error);
     }
   },
 
-  async uploadGlb(req, res, next) {
+  /** Assign every product without a store to one store. */
+  async assignUnassignedFurniture(req, res, next) {
     try {
-      if (!req.file) {
-        return res.status(400).json({ success: false, error: 'No file uploaded' });
+      const { storeId } = req.body || {};
+      if (!mongoose.Types.ObjectId.isValid(storeId)) {
+        return res.status(400).json({ success: false, error: 'Choose a store' });
       }
-      const result = await uploadGlb(req.file);
-      res.json({ success: true, ...result });
+      const store = await Store.findById(storeId);
+      if (!store) return res.status(404).json({ success: false, error: 'Store not found' });
+
+      const result = await Furniture.updateMany({ store: null }, { $set: { store: store._id } });
+      if (result.modifiedCount > 0) {
+        await logActivity(adminActor(req), 'product.assigned', {
+          targetType: 'store',
+          targetId: store._id,
+          store: store._id,
+          summary: `${req.user.email} assigned ${result.modifiedCount} unassigned products to ${store.name}`,
+        });
+      }
+      res.json({ success: true, assigned: result.modifiedCount });
     } catch (error) {
-      res.status(400).json({ success: false, error: error.message });
+      next(error);
     }
   },
 
-  async uploadThumbnail(req, res, next) {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ success: false, error: 'No file uploaded' });
-      }
-      const result = await uploadThumbnail(req.file);
-      res.json({ success: true, ...result });
-    } catch (error) {
-      res.status(400).json({ success: false, error: error.message });
-    }
-  },
+  // ── Users ─────────────────────────────────────────────────────────────────
 
   async listUsers(req, res, next) {
     try {
-      const { search } = req.query;
+      const { search, role } = req.query;
       const filter = {};
 
       if (search?.trim()) {
-        const term = search.trim();
-        filter.$or = [
-          { email: { $regex: term, $options: 'i' } },
-          { name: { $regex: term, $options: 'i' } },
-        ];
+        const term = new RegExp(escapeRegex(search.trim()), 'i');
+        filter.$or = [{ email: term }, { name: term }];
+      }
+      if (role === 'user') {
+        filter.role = { $nin: ['admin', 'store'] };
+      } else if (role === 'non-admin') {
+        filter.role = { $ne: 'admin' };
+      } else if (role && role !== 'all') {
+        filter.role = String(role);
       }
 
       const users = await User.find(filter)
@@ -425,11 +276,7 @@ const adminController = {
         .sort({ createdAt: -1 })
         .lean();
 
-      res.json({
-        success: true,
-        count: users.length,
-        users: users.map(toAdminUser),
-      });
+      res.json({ success: true, count: users.length, users: users.map(toAdminUser) });
     } catch (error) {
       next(error);
     }
@@ -451,87 +298,52 @@ const adminController = {
         user.name = String(req.body.name).trim();
       }
 
+      let roleChange = null;
       if (req.body.role !== undefined) {
         const role = String(req.body.role).trim().toLowerCase();
         if (!['user', 'admin'].includes(role)) {
           return res.status(400).json({ success: false, error: 'role must be user or admin' });
         }
-
-        if (user._id.toString() === req.user.id && role !== 'admin') {
-          return res.status(400).json({
-            success: false,
-            error: 'You cannot remove your own admin role',
-          });
+        if (user.role === 'store') {
+          return res.status(400).json({ success: false, error: 'Store accounts are managed from the Stores page' });
         }
-
-        user.role = role;
+        if (user._id.toString() === req.user.id && role !== 'admin') {
+          return res.status(400).json({ success: false, error: 'You cannot remove your own admin role' });
+        }
+        if ((user.role || 'user') !== role) {
+          roleChange = role;
+          user.role = role;
+        }
       }
 
       await user.save();
+
+      if (roleChange) {
+        await logActivity(adminActor(req), 'user.role_changed', {
+          targetType: 'user',
+          targetId: user._id,
+          summary: `${req.user.email} made ${user.email} ${roleChange === 'admin' ? 'an admin' : 'a regular user'}`,
+        });
+      }
       res.json({ success: true, user: toAdminUser(user) });
     } catch (error) {
       next(error);
     }
   },
 
-  async getStats(req, res, next) {
+  // ── Activity log ──────────────────────────────────────────────────────────
+
+  async listActivity(req, res, next) {
     try {
-      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      const [userCount, furnitureCount, newUsersThisWeek] = await Promise.all([
-        User.countDocuments(),
-        Furniture.countDocuments(),
-        User.countDocuments({ createdAt: { $gte: weekAgo } }),
-      ]);
-
-      res.json({
-        success: true,
-        stats: {
-          users: userCount,
-          furniture: furnitureCount,
-          newUsersThisWeek,
-          mongoConnected: mongoose.connection.readyState === 1,
-        },
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
-
-  async getStore(req, res, next) {
-    try {
-      const store = await getOrCreateStore();
-      res.json({ success: true, store: toStoreInfo(store) });
-    } catch (error) {
-      next(error);
-    }
-  },
-
-  async updateStore(req, res, next) {
-    try {
-      const store = await getOrCreateStore();
-      const fields = [
-        'storeName',
-        'tagline',
-        'description',
-        'email',
-        'phone',
-        'address',
-        'city',
-        'website',
-        'facebook',
-        'instagram',
-        'businessHours',
-        'logoUrl',
-      ];
-
-      for (const field of fields) {
-        if (req.body[field] !== undefined) {
-          store[field] = String(req.body[field] ?? '').trim();
-        }
+      const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+      const filter = {};
+      if (req.query.search?.trim()) {
+        const term = new RegExp(escapeRegex(req.query.search.trim()), 'i');
+        filter.$or = [{ summary: term }, { actorEmail: term }, { action: term }];
       }
 
-      await store.save();
-      res.json({ success: true, store: toStoreInfo(store) });
+      const entries = await ActivityLog.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
+      res.json({ success: true, count: entries.length, activity: entries.map(toActivityEntry) });
     } catch (error) {
       next(error);
     }

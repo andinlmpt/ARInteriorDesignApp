@@ -1,7 +1,8 @@
 /**
  * useLayoutCustomization Hook
- * Design-flow step 6 (Customize): recolour, replace and AI-regenerate the layout placed
- * in AR, and keep the user's edited layout in the planner's room-local frame for step 7.
+ * Design-flow step 6 (Customize): recolour, replace, lock and AI-regenerate the layout placed
+ * in AR, warn about collisions, and keep the user's edited layout in the planner's room-local
+ * frame for step 7.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -15,6 +16,7 @@ import {
 } from '@/services/DesignFlowService';
 import { saveCustomizedLayout, saveDesignGeneration } from '@/utils/designFlowStorage';
 import { canPlaceMore, resolveAvailableColorHex } from '@/utils/furnitureCatalogHelpers';
+import { describePlacementIssue } from '@/utils/placementWarning';
 import { normalizeYaw, unityToRoomLocal } from '@/utils/roomLocalToUnity';
 import type { FurnitureLibraryItem } from '@/types/ar-view';
 import type {
@@ -23,7 +25,12 @@ import type {
   DesignFlowGenerationResult,
   DesignProposalV2,
 } from '@/types/design-flow';
-import type { LayoutPayload, PlacedFurniturePayload, SelectionPayload } from '@/types/unity-bridge';
+import type {
+  LayoutPayload,
+  PlacedFurniturePayload,
+  PlacementSafetyPayload,
+  SelectionPayload,
+} from '@/types/unity-bridge';
 
 const SAVE_DEBOUNCE_MS = 600;
 const MAX_REPLACEMENTS = 12;
@@ -53,11 +60,16 @@ interface UseLayoutCustomizationReturn {
   selectedCatalogItem: FurnitureLibraryItem | undefined;
   colorOptions: FurnitureColorOption[];
   replacementOptions: FurnitureLibraryItem[];
+  /** Why the selected piece's placement is unsafe, e.g. "Abu Dhabi Sofa is in the way". */
+  selectedWarning: string | null;
   regenerating: boolean;
   handleLayout: (payload: LayoutPayload) => void;
   handleSelection: (payload: SelectionPayload) => void;
+  handlePlacementSafety: (payload: PlacementSafetyPayload) => void;
   setColor: (hex: string) => void;
   replaceWith: (item: FurnitureLibraryItem) => void;
+  /** Locks the selected piece in place, or unlocks it. */
+  toggleLock: () => void;
   regenerate: () => Promise<void>;
   /** Writes the latest layout to local storage immediately (before leaving AR). */
   flushCustomizedSave: () => Promise<void>;
@@ -76,6 +88,8 @@ export function useLayoutCustomization({
   const [pieces, setPieces] = useState<PlacedFurniturePayload[]>([]);
   const piecesRef = useRef<PlacedFurniturePayload[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [safety, setSafety] = useState<PlacementSafetyPayload | null>(null);
+  const safetyRef = useRef<PlacementSafetyPayload | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   /** Planner room the current Unity layout was mapped with (a regenerate may resize it). */
   const appliedRoomRef = useRef<PlanRoom | null>(null);
@@ -188,10 +202,30 @@ export function useLayoutCustomization({
     [enabled, pieces, unityRef]
   );
 
+  const handlePlacementSafety = useCallback(
+    (payload: PlacementSafetyPayload) => {
+      if (!enabled) return;
+      const prev = safetyRef.current;
+      const wasSafe = !prev || prev.isSafe || prev.instanceId !== payload.instanceId;
+      // Buzz once when a piece first runs into trouble, not on every update.
+      if (wasSafe && !payload.isSafe) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      }
+      safetyRef.current = payload;
+      setSafety(payload);
+    },
+    [enabled]
+  );
+
   const selectedPiece = useMemo(
     () => pieces.find((piece) => piece.instanceId === selectedId) ?? null,
     [pieces, selectedId]
   );
+
+  const selectedWarning = useMemo(() => {
+    if (!selectedPiece || !safety || safety.instanceId !== selectedPiece.instanceId) return null;
+    return describePlacementIssue(safety, (modelId) => catalogById.get(modelId)?.name);
+  }, [catalogById, safety, selectedPiece]);
 
   const selectedCatalogItem = selectedPiece ? catalogById.get(selectedPiece.modelId) : undefined;
 
@@ -247,6 +281,22 @@ export function useLayoutCustomization({
     },
     [selectedPiece, unityRef, onStatus]
   );
+
+  const toggleLock = useCallback(() => {
+    if (!selectedPiece) return;
+    const locked = !selectedPiece.locked;
+    const { instanceId } = selectedPiece;
+    unityRef.current?.setFurnitureLocked({ instanceId, locked });
+    unityRef.current?.wakeUnityPlayer?.();
+    // Show the new state right away; Unity confirms with its next layoutChanged.
+    const next = piecesRef.current.map((piece) =>
+      piece.instanceId === instanceId ? { ...piece, locked } : piece
+    );
+    piecesRef.current = next;
+    setPieces(next);
+    onStatus?.(locked ? 'Locked in place. Unlock it to move it again.' : 'Unlocked. Drag or twist to adjust.');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+  }, [selectedPiece, unityRef, onStatus]);
 
   const regenerate = useCallback(async () => {
     const generation = generationRef.current;
@@ -307,11 +357,14 @@ export function useLayoutCustomization({
     selectedCatalogItem,
     colorOptions,
     replacementOptions,
+    selectedWarning,
     regenerating,
     handleLayout,
     handleSelection,
+    handlePlacementSafety,
     setColor,
     replaceWith,
+    toggleLock,
     regenerate,
     flushCustomizedSave,
   };

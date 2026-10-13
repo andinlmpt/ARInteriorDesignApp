@@ -25,7 +25,6 @@ ALLOWED_ORIGINS=http://localhost:8081,http://localhost:19006
 - **THEME_RECOMMENDATION_API_KEY** - Alternative name for Pexels API key
 
 The Pexels API key is already configured and will be used for:
-- Theme recommendation image search
 - Explore tab image search
 - Custom design image generation
 
@@ -46,6 +45,29 @@ The Groq API key is used for:
 
 When configured alongside `GROQ_API_KEY`, the backend uses Groq to enhance prompts and Hugging Face to generate images. Without `HF_API_KEY`, Groq-enhanced prompts fall back to Pexels image search.
 
+### Cloudinary (file storage)
+
+Uploaded product 3D models, thumbnails, store logos and profile photos are stored on Cloudinary
+when this is set, so phones can load them from any network. Without it, files are saved in
+`backend/uploads` on this PC and only work on the same Wi-Fi.
+
+- **CLOUDINARY_URL** - `cloudinary://<api_key>:<api_secret>@<cloud_name>`. Copy it from the
+  Cloudinary console: **Dashboard → API environment variable**. Keep the secret in this file only.
+- **CLOUDINARY_FOLDER** (optional) - top folder for this app's files, default `ar-interior`.
+
+Cloudinary's free plan limits each file to about 10 MB. Stores can still upload 3D models up
+to 300 MB: anything over 8 MB is made lighter before it is stored (geometry simplified to about
+100k vertices, textures resized to 1024 px, real-world size kept within 2 cm). This runs in a
+separate process, one model at a time, and can take up to a minute for big files. If a model
+can't get under 9 MB, the upload is refused with a message asking for a lighter export.
+
+To move files that are already in `backend/uploads`:
+
+```bash
+node scripts/migrate-uploads-to-cloudinary.mjs          # dry run
+node scripts/migrate-uploads-to-cloudinary.mjs --apply  # upload and update links
+```
+
 ### Optional Variables
 
 - **ALLOWED_ORIGINS** - Comma-separated list of allowed CORS origins
@@ -53,6 +75,9 @@ When configured alongside `GROQ_API_KEY`, the backend uses Groq to enhance promp
   - Add your device IP if needed: `http://192.168.1.131:19006`
 
 - **OPENAI_API_KEY** - For other AI features (optional)
+
+- **RATE_LIMIT_MAX** / **RATE_LIMIT_WINDOW_MINUTES** - API requests allowed per IP per window
+  - Default: `100` per `15` minutes. Raise it temporarily for bulk imports.
 
 - **SENTRY_DSN** - Sentry error tracking DSN (optional)
 - **SENTRY_ENVIRONMENT** - Sentry environment name (optional)

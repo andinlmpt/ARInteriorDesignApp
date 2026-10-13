@@ -57,7 +57,6 @@ npx expo start --clear
 ## 🎯 Features
 
 - ✨ **AI Design Generation** - Generate interior designs with AI
-- 🎨 **Theme Recommendations** - Get personalized style suggestions
 - 📷 **AR Room Scanning** - Scan and map rooms in 3D
 - 🏠 **3D Layout Visualization** - View designs in 3D
 - 📐 **Spatial Mapping** - Accurate room measurements

@@ -1,5 +1,5 @@
 import { FormEvent, KeyboardEvent, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import './Login.css';
 
@@ -101,7 +101,7 @@ export function LoginPage() {
           <div className="login-heading">
             <span className="login-heading-accent" aria-hidden="true" />
             <h2>Welcome back</h2>
-            <p>Sign in to the admin console</p>
+            <p>Sign in to the admin or store console</p>
           </div>
 
           {error ? (
@@ -172,7 +172,9 @@ export function LoginPage() {
             {submitting ? <span className="login-spinner" aria-label="Signing in" /> : 'Sign in'}
           </button>
 
-          <p className="login-note">Admin access only. Contact your administrator for credentials.</p>
+          <p className="login-note">
+            Own a furniture store? <Link to="/register" className="login-link">Register your store</Link>
+          </p>
         </form>
       </main>
     </div>

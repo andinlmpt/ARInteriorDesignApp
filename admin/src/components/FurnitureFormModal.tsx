@@ -1,7 +1,10 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { api, type FurnitureItem } from '../api/client';
+import { storeApi, type FurnitureItem, type ModelSize } from '../api/client';
 import { resolveAssetUrl } from '../utils/assetUrl';
+import { compareModelSize, formatSizeCm, orient } from '../utils/modelSize';
 import { Modal } from './Modal';
+
+const formatMegabytes = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
 
 const CATEGORIES = [
   { value: 'chair', label: 'Chair' },
@@ -61,15 +64,21 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
   const [form, setForm] = useState<Partial<FurnitureItem>>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [uploadingGlb, setUploadingGlb] = useState(false);
+  /** Shown under the GLB field, where the store is looking while it uploads. */
+  const [glbError, setGlbError] = useState('');
   const [uploadingThumb, setUploadingThumb] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  /** Measured size of the current GLB (AR shows the model at this size). */
+  const [modelSize, setModelSize] = useState<ModelSize | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setError('');
+    setGlbError('');
     setMessage('');
     setForm(item ? { ...item } : { ...emptyForm });
+    setModelSize(item?.modelSize ?? null);
   }, [open, item]);
 
   function updateField<K extends keyof FurnitureItem>(key: K, value: FurnitureItem[K]) {
@@ -89,13 +98,20 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
   async function handleGlbUpload(file: File | null) {
     if (!file) return;
     setUploadingGlb(true);
-    setError('');
+    setGlbError('');
     try {
-      const res = await api.uploadGlb(file);
+      const res = await storeApi.uploadGlb(file);
       updateField('glbUrl', res.url);
-      setMessage(`GLB uploaded (${res.filename})`);
+      setModelSize(res.modelSize ?? null);
+      const size = res.modelSize
+        ? `Model size: ${formatSizeCm(res.modelSize)}.`
+        : "Its size couldn't be measured.";
+      const optimized = res.optimized
+        ? ` Optimized for phones: ${formatMegabytes(res.optimized.fromBytes)} → ${formatMegabytes(res.optimized.toBytes)}.`
+        : '';
+      setMessage(`GLB uploaded (${res.filename}). ${size}${optimized}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'GLB upload failed');
+      setGlbError(err instanceof Error ? err.message : 'GLB upload failed');
     } finally {
       setUploadingGlb(false);
     }
@@ -106,7 +122,7 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
     setUploadingThumb(true);
     setError('');
     try {
-      const res = await api.uploadThumbnail(file);
+      const res = await storeApi.uploadImage(file);
       updateField('thumbnailUrl', res.url);
       setMessage(`Thumbnail uploaded (${res.filename})`);
     } catch (err) {
@@ -115,6 +131,30 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
       setUploadingThumb(false);
     }
   }
+
+  /** Sets the product size fields to the 3D model's measured size (long side as width). */
+  function applyModelSize() {
+    if (!modelSize) return;
+    const size = orient(modelSize);
+    const inches = (m: number) => Math.round(m / 0.0254);
+    const round = (m: number) => Math.round(m * 100) / 100;
+    setForm((prev) => ({
+      ...prev,
+      width: round(size.width),
+      depth: round(size.depth),
+      height: round(size.height),
+      lengthIn: inches(size.width),
+      widthIn: inches(size.depth),
+      heightIn: inches(size.height),
+      dimensionLabel: `L ${inches(size.width)}" × W ${inches(size.depth)}" × H ${inches(size.height)}"`,
+    }));
+  }
+
+  const sizeCheck = compareModelSize(form.glbUrl ? modelSize : null, {
+    width: Number(form.width) || 0,
+    height: Number(form.height) || 0,
+    depth: Number(form.depth) || 0,
+  });
 
   function buildPayload(): Partial<FurnitureItem> {
     return {
@@ -149,10 +189,10 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
     try {
       const payload = buildPayload();
       if (isEdit && item?.id) {
-        await api.updateFurniture(item.id, payload);
+        await storeApi.updateProduct(item.id, payload);
         onSaved(`Updated ${payload.displayName || item.id}`);
       } else {
-        await api.createFurniture(payload);
+        await storeApi.createProduct(payload);
         onSaved(`Created ${payload.displayName || 'product'}`);
       }
       onClose();
@@ -297,11 +337,22 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
             onChange={(e) => handleGlbUpload(e.target.files?.[0] || null)}
             disabled={uploadingGlb}
           />
-          {form.glbUrl ? (
+          {uploadingGlb ? (
+            <small style={{ color: 'var(--muted)' }}>
+              Uploading… Large models are optimized for phones first, which can take a minute.
+            </small>
+          ) : glbError ? (
+            <small style={{ color: 'var(--danger)' }} role="alert">
+              {glbError}
+            </small>
+          ) : form.glbUrl ? (
             <small style={{ color: 'var(--muted)' }}>{form.glbUrl}</small>
           ) : (
             <small style={{ color: 'var(--danger)' }}>Upload a GLB before saving</small>
           )}
+          <small style={{ color: 'var(--muted)' }}>
+            Up to 300 MB. Files over 8 MB are made lighter automatically so they load fast in AR.
+          </small>
         </div>
 
         <div className="field">
@@ -320,6 +371,38 @@ export function FurnitureFormModal({ open, item, onClose, onSaved }: FurnitureFo
             />
           ) : null}
         </div>
+
+        {form.glbUrl ? (
+          sizeCheck.status === 'wrongUnits' ? (
+            <div className="alert alert-error size-check">
+              The 3D model is {formatSizeCm(sizeCheck.model)}. It was probably saved in the wrong unit (for example
+              centimetres instead of metres), so AR would show it far too {sizeCheck.tooBig ? 'big' : 'small'}.
+              Re-export the model in metres and upload it again.
+            </div>
+          ) : sizeCheck.status === 'mismatch' ? (
+            <div className="alert alert-warning size-check">
+              <p>
+                The 3D model is <strong>{formatSizeCm(sizeCheck.model)}</strong>, but this product is{' '}
+                <strong>{formatSizeCm({ width: Number(form.width) || 0, height: Number(form.height) || 0, depth: Number(form.depth) || 0 })}</strong>.
+                AR shows the model at its own size, so customers would see the wrong size.
+              </p>
+              <p>Fix the 3D model to match the real product. If the numbers below are wrong instead, use the model’s size.</p>
+              <button type="button" className="btn btn-ghost btn-small" onClick={applyModelSize}>
+                Use the model’s size
+              </button>
+            </div>
+          ) : sizeCheck.status === 'match' ? (
+            <p className="size-check size-check-ok">
+              ✓ The 3D model matches this size ({formatSizeCm(sizeCheck.model)}). Customers see it at real size in AR.
+            </p>
+          ) : sizeCheck.status === 'noProductSize' ? (
+            <p className="size-check muted">
+              The 3D model is {formatSizeCm(sizeCheck.model)}. Enter the real product size below; it should match.
+            </p>
+          ) : (
+            <p className="size-check muted">The 3D model’s size couldn’t be measured, so it can’t be checked.</p>
+          )
+        ) : null}
 
         <div className="form-grid-3">
           <div className="field">

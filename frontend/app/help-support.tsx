@@ -1,8 +1,9 @@
 /**
- * Help & Contact — phone, email, and FAQs in one place.
+ * Help & Contact — phone, email, and FAQs in one place. FAQs are managed by admins in the
+ * web console; the built-in list is shown when the server can't be reached.
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   StyleSheet,
@@ -10,6 +11,7 @@ import {
   ScrollView,
   Linking,
   Pressable,
+  ActivityIndicator,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,32 +22,28 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, radii } from '@/components/ui/theme';
 import { getHorizontalPadding } from '@/utils/responsive';
 import { BRAND } from '@/constants/branding';
-
-const FAQS: { question: string; answer: string }[] = [
-  {
-    question: 'How do I start designing?',
-    answer: 'Use the + tab — AR Furniture or AR Measurement — to begin.',
-  },
-  {
-    question: 'How do I measure a room?',
-    answer:
-      'Open AR Measurement from the + tab and follow the on-screen guides to scan and confirm your room size.',
-  },
-  {
-    question: 'Can I save my projects?',
-    answer:
-      'Yes. Export a layout from AR Furniture and it will appear under Profile → Projects. Photos you save also show up in the Wishlist tab.',
-  },
-  {
-    question: 'How do I save an AR photo?',
-    answer:
-      'After placing furniture, tap the camera button on the bottom toolbar. The photo is saved to your gallery and the Wishlist tab.',
-  },
-];
+import { DEFAULT_FAQS } from '@/constants/defaultContent';
+import { ContentService, type Faq } from '@/services/ContentService';
 
 export default function HelpSupportScreen() {
   const router = useRouter();
   const { colors, statusBarStyle } = useTheme();
+  /** null while loading. */
+  const [faqs, setFaqs] = useState<Faq[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    ContentService.getFaqs()
+      .then((res) => {
+        if (!cancelled) setFaqs(res.faqs);
+      })
+      .catch(() => {
+        if (!cancelled) setFaqs(DEFAULT_FAQS);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const callPhone = () => {
     void Linking.openURL(`tel:${BRAND.contact.phoneTel}`);
@@ -150,43 +148,49 @@ export default function HelpSupportScreen() {
             <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
           </Pressable>
 
-          <AppText
-            variant="subtitle"
-            weight="700"
-            style={[styles.sectionLabel, { color: colors.textPrimary, marginTop: spacing.sm }]}
-          >
-            Frequently asked questions
-          </AppText>
+          {faqs === null || faqs.length > 0 ? (
+            <AppText
+              variant="subtitle"
+              weight="700"
+              style={[styles.sectionLabel, { color: colors.textPrimary, marginTop: spacing.sm }]}
+            >
+              Frequently asked questions
+            </AppText>
+          ) : null}
 
-          <View
-            style={[
-              styles.faqCard,
-              { backgroundColor: colors.surfacePrimary, borderColor: colors.border },
-            ]}
-          >
-            {FAQS.map((faq, index) => (
-              <View
-                key={faq.question}
-                style={[
-                  styles.faqSection,
-                  index < FAQS.length - 1 && {
-                    borderBottomWidth: StyleSheet.hairlineWidth,
-                    borderBottomColor: colors.border,
-                  },
-                ]}
-              >
-                <AppText variant="body" weight="600" style={{ color: colors.textPrimary }}>
-                  {faq.question}
-                </AppText>
-                <AppText
-                  variant="body"
-                  style={{ color: colors.textSecondary, lineHeight: 22, marginTop: spacing.xs }}
+          {faqs === null ? (
+            <ActivityIndicator color={colors.accent} style={styles.faqLoading} />
+          ) : faqs.length > 0 ? (
+            <View
+              style={[
+                styles.faqCard,
+                { backgroundColor: colors.surfacePrimary, borderColor: colors.border },
+              ]}
+            >
+              {faqs.map((faq, index) => (
+                <View
+                  key={`${index}-${faq.question}`}
+                  style={[
+                    styles.faqSection,
+                    index < faqs.length - 1 && {
+                      borderBottomWidth: StyleSheet.hairlineWidth,
+                      borderBottomColor: colors.border,
+                    },
+                  ]}
                 >
-                  {faq.answer}
-                </AppText>
-              </View>
-            ))}
-          </View>
+                  <AppText variant="body" weight="600" style={{ color: colors.textPrimary }}>
+                    {faq.question}
+                  </AppText>
+                  <AppText
+                    variant="body"
+                    style={{ color: colors.textSecondary, lineHeight: 22, marginTop: spacing.xs }}
+                  >
+                    {faq.answer}
+                  </AppText>
+                </View>
+              ))}
+            </View>
+          ) : null}
         </ScrollView>
       </SafeAreaView>
     </View>
@@ -240,5 +244,8 @@ const styles = StyleSheet.create({
   },
   faqSection: {
     paddingVertical: spacing.md,
+  },
+  faqLoading: {
+    paddingVertical: spacing.lg,
   },
 });

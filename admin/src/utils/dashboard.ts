@@ -1,8 +1,30 @@
-import type { AdminUser, FurnitureItem } from '../api/client';
-import type { ActivityEntry, CategoryCount } from '../types/dashboard';
+import type { FurnitureItem } from '../api/client';
+import type { CategoryCount } from '../types/dashboard';
 
-/** Updates within this window of creation are treated as part of the create, not a separate edit. */
-const EDIT_THRESHOLD_MS = 60 * 1000;
+const ACTIVITY_LABELS: Record<string, string> = {
+  'store.registered': 'Store registered',
+  'store.approved': 'Store accepted',
+  'store.rejected': 'Store rejected',
+  'store.suspended': 'Store suspended',
+  'store.reinstated': 'Store reinstated',
+  'store.resubmitted': 'Store resubmitted',
+  'store.profile_updated': 'Store profile updated',
+  'product.created': 'Product added',
+  'product.updated': 'Product updated',
+  'product.deleted': 'Product deleted',
+  'product.taken_down': 'Product taken down',
+  'product.restored': 'Product restored',
+  'product.assigned': 'Product assigned',
+  'user.role_changed': 'Role changed',
+  'content.faqs_updated': 'FAQs updated',
+  'content.terms_updated': 'Terms updated',
+  'content.privacy_updated': 'Privacy policy updated',
+};
+
+/** Human label for an activity-log action such as "store.approved". */
+export function activityLabel(action: string): string {
+  return ACTIVITY_LABELS[action] ?? action;
+}
 
 export function formatCategoryLabel(category: string): string {
   const value = category.trim() || 'other';
@@ -41,57 +63,6 @@ export function getRecentlyAdded(items: FurnitureItem[], limit: number): Furnitu
     .filter((item) => item.active && time(item.createdAt) > 0)
     .sort((a, b) => time(b.createdAt) - time(a.createdAt))
     .slice(0, limit);
-}
-
-/**
- * Builds an activity feed from product and user timestamps.
- * There is no dedicated activity log in the backend yet, so this only covers
- * events that can be inferred from createdAt/updatedAt.
- */
-export function buildActivityFeed(
-  furniture: FurnitureItem[],
-  users: AdminUser[],
-  limit: number
-): ActivityEntry[] {
-  const entries: ActivityEntry[] = [];
-
-  for (const item of furniture) {
-    const created = time(item.createdAt);
-    const updated = time(item.updatedAt);
-
-    if (created) {
-      entries.push({
-        id: `product-added-${item.id}`,
-        kind: 'product-added',
-        description: `Product “${item.displayName}” was added`,
-        timestamp: item.createdAt as string,
-      });
-    }
-
-    if (updated && updated - created > EDIT_THRESHOLD_MS) {
-      entries.push({
-        id: `product-updated-${item.id}`,
-        kind: item.active ? 'product-updated' : 'product-deactivated',
-        description: item.active
-          ? `Product “${item.displayName}” was updated`
-          : `Product “${item.displayName}” was deactivated`,
-        timestamp: item.updatedAt as string,
-      });
-    }
-  }
-
-  for (const user of users) {
-    if (!time(user.createdAt)) continue;
-    const who = user.name || user.email;
-    entries.push({
-      id: `user-${user.id}`,
-      kind: user.role === 'admin' ? 'admin-created' : 'user-registered',
-      description: user.role === 'admin' ? `Admin account created for ${who}` : `New user registered: ${who}`,
-      timestamp: user.createdAt,
-    });
-  }
-
-  return entries.sort((a, b) => time(b.timestamp) - time(a.timestamp)).slice(0, limit);
 }
 
 export function formatRelativeTime(value: string, now = Date.now()): string {

@@ -15,6 +15,8 @@ ARInteriorDesignApp/
 │   │   └── server.js    # Server entry point
 │   └── package.json
 │
+├── admin/               # Web console for admins and furniture stores (Vite + React)
+│
 ├── frontend/            # React Native mobile app
 │   ├── app/            # Expo Router pages
 │   ├── components/     # Reusable components
@@ -90,10 +92,19 @@ npm run dev
 - **AR Visualization**: Place and visualize furniture in real-world spaces
 - **AI-Powered Design**: Get intelligent design recommendations
 - **3D Layout**: Create and edit 3D room layouts
-- **Theme Recommendations**: AI-generated theme suggestions based on preferences
 - **Spatial Mapping**: Advanced room scanning and mapping
 - **Project Management**: Save and manage multiple design projects
 - **User Profiles**: Personalized user experience and preferences
+
+## 👥 User roles
+
+| Role | Where | What they do |
+|---|---|---|
+| Customer | Mobile app | Scans rooms, generates layouts, views furniture in AR |
+| Furniture store | Web console (`admin/`) | Registers at `/register`, then adds, edits, hides and deletes its own products |
+| Admin | Web console (`admin/`) | Accepts or rejects store registrations, suspends stores, takes down products, manages users, reads the activity log |
+
+A new store starts as **pending**. Its products appear in the mobile app only after an admin accepts it, and disappear again if the store is suspended or the admin takes a product down.
 
 ## 🛠️ Tech Stack
 

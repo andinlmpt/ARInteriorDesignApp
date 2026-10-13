@@ -15,6 +15,7 @@ import {
   type ApplyLayoutRequest,
   type SpawnFurnitureRequest,
   type FurnitureColorRequest,
+  type FurnitureLockRequest,
   type UnityErrorPayload,
   type UnityInboundMessage,
   type UnityOutboundMessage,
@@ -66,6 +67,8 @@ export interface UnityARViewerHandle {
   /** Swaps the selected piece for another catalog item at the same spot and facing. */
   replaceSelectedFurniture: (request: SpawnFurnitureRequest) => void;
   setFurnitureColor: (request: FurnitureColorRequest) => void;
+  /** Locks a piece in place (no drag, twist, delete or replace) or unlocks it. */
+  setFurnitureLocked: (request: FurnitureLockRequest) => void;
   clearScene: () => void;
   /** Asks Unity to push a fresh `layoutChanged` event. */
   getCurrentLayout: () => void;
@@ -158,6 +161,8 @@ interface UnityARViewerProps {
   onPhotoCaptured?: (payload: ARPhotoCapturedPayload) => void;
   onHistoryChanged?: (payload: HistoryStatePayload) => void;
   onPlacementSafety?: (payload: PlacementSafetyPayload) => void;
+  /** The user tried to drag or twist a locked piece. Carries its instance id. */
+  onFurnitureLockBlocked?: (instanceId: string) => void;
   onUnityError?: (payload: UnityErrorPayload) => void;
   /** Unity native back / exit from ARRoomMeasurement. */
   onRequestClose?: () => void;
@@ -221,6 +226,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
       onPhotoCaptured,
       onHistoryChanged,
       onPlacementSafety,
+      onFurnitureLockBlocked,
       onUnityError,
       onRequestClose,
       onMeasurementPlanReady,
@@ -299,6 +305,8 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
           sendToUnity('replaceSelectedFurniture', JSON.stringify(request)),
         setFurnitureColor: (request: FurnitureColorRequest) =>
           sendToUnity('setFurnitureColor', JSON.stringify(request)),
+        setFurnitureLocked: (request: FurnitureLockRequest) =>
+          sendToUnity('setFurnitureLocked', JSON.stringify(request)),
         clearScene: () => sendToUnity('clearScene', ''),
         getCurrentLayout: () => sendToUnity('getCurrentLayout', ''),
         exportLayout: () => sendToUnity('exportLayout', ''),
@@ -488,6 +496,10 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
             break;
           }
 
+          case 'furnitureLockBlocked':
+            onFurnitureLockBlocked?.(msg.data);
+            break;
+
           case 'error': {
             const payload = parseUnityPayload<UnityErrorPayload>(msg);
             onUnityError?.(payload ?? { code: 'unknown', message: msg.data });
@@ -529,6 +541,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
         onFurnitureSelected,
         onHistoryChanged,
         onPlacementSafety,
+        onFurnitureLockBlocked,
         onLayoutChanged,
         onMeasurementPlanClosed,
         onMeasurementPlanReady,

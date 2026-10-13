@@ -42,9 +42,10 @@ const userSchema = new mongoose.Schema({
     type: String, // base64 data URL from device camera/gallery
     select: false, // exclude from default queries to avoid large payloads
   },
+  /** user = mobile app customer, store = furniture store (sells products), admin = runs the platform. */
   role: {
     type: String,
-    enum: ['user', 'admin'],
+    enum: ['user', 'store', 'admin'],
     default: 'user',
   },
   preferences: {

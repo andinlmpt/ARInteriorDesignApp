@@ -48,6 +48,7 @@ public class FurnitureLayoutHistory : MonoBehaviour
         {
             placementController.FurniturePlaced += OnPlaced;
             placementController.FurnitureRemoved += OnRemoved;
+            placementController.FurnitureLockChanged += OnLockChanged;
         }
 
         if (manipulator != null)
@@ -63,6 +64,7 @@ public class FurnitureLayoutHistory : MonoBehaviour
         {
             placementController.FurniturePlaced -= OnPlaced;
             placementController.FurnitureRemoved -= OnRemoved;
+            placementController.FurnitureLockChanged -= OnLockChanged;
         }
 
         if (manipulator != null)
@@ -125,6 +127,13 @@ public class FurnitureLayoutHistory : MonoBehaviour
         if (snapshot == null || snapshot.instanceId != instanceId) return;
 
         Push(new RemoveCommand(snapshot));
+    }
+
+    // Recorded so undo unlocks before it can move a piece back to a pre-lock pose.
+    void OnLockChanged(PlacedFurniture furniture)
+    {
+        if (suppressRecording || furniture == null) return;
+        Push(new LockCommand(furniture.InstanceId, furniture.IsLocked));
     }
 
     void OnGestureBegan(PlacedFurniture furniture)
@@ -201,6 +210,24 @@ public class FurnitureLayoutHistory : MonoBehaviour
 
         public void Redo(FurniturePlacementController placement)
             => placement.RemoveFurniture(snapshot.instanceId);
+    }
+
+    sealed class LockCommand : ICommand
+    {
+        readonly string instanceId;
+        readonly bool locked;
+
+        public LockCommand(string instanceId, bool locked)
+        {
+            this.instanceId = instanceId;
+            this.locked = locked;
+        }
+
+        public void Undo(FurniturePlacementController placement)
+            => placement.SetFurnitureLocked(instanceId, !locked);
+
+        public void Redo(FurniturePlacementController placement)
+            => placement.SetFurnitureLocked(instanceId, locked);
     }
 
     sealed class TransformCommand : ICommand

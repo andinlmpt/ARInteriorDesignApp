@@ -298,6 +298,9 @@ public class PlacedFurniturePayload
     /// <summary>"#RRGGBB" tint chosen by the user, empty for the model's own colours.</summary>
     public string colorHex;
 
+    /// <summary>True while the user has locked this piece in place.</summary>
+    public bool locked;
+
     /// <summary>
     /// True when <see cref="sourcePosition"/> is valid: the pose in the frame RN sent with
     /// applyLayout (room-centred metres), i.e. with the two-corner wall alignment undone.
@@ -316,6 +319,14 @@ public class FurnitureColorRequest
     public string colorHex;
 }
 
+/// <summary>Payload for setFurnitureLocked. Empty instanceId targets the selected piece.</summary>
+[Serializable]
+public class FurnitureLockRequest
+{
+    public string instanceId;
+    public bool locked;
+}
+
 /// <summary>Placement safety feedback for the selected furniture piece.</summary>
 [Serializable]
 public class PlacementSafetyPayload
@@ -326,9 +337,35 @@ public class PlacementSafetyPayload
     public bool hasFurnitureCollision;
     public bool hasWallCollision;
     public bool isTooCloseToWall;
+    /// <summary>True while a drag is being held back by another piece.</summary>
+    public bool isBlocked;
+    /// <summary>Model id of the piece overlapped or in the way; empty when none.</summary>
+    public string otherModelId;
     public float nearestFurnitureDistance;
     public float nearestWallDistance;
     public string reason;
+
+    public static PlacementSafetyPayload From(FurniturePlacementSafety.Result result, PlacedFurniture furniture)
+    {
+        return new PlacementSafetyPayload
+        {
+            instanceId = furniture != null ? furniture.InstanceId : string.Empty,
+            modelId = furniture != null ? furniture.ModelId : string.Empty,
+            isSafe = result.isSafe,
+            hasFurnitureCollision = result.hasFurnitureCollision,
+            hasWallCollision = result.hasWallCollision,
+            isTooCloseToWall = result.isTooCloseToWall,
+            isBlocked = result.isBlocked,
+            otherModelId = result.otherModelId ?? string.Empty,
+            nearestFurnitureDistance = float.IsFinite(result.nearestFurnitureDistance)
+                ? result.nearestFurnitureDistance
+                : -1f,
+            nearestWallDistance = float.IsFinite(result.nearestWallDistance)
+                ? result.nearestWallDistance
+                : -1f,
+            reason = result.reason ?? string.Empty,
+        };
+    }
 }
 
 /// <summary>Full in-session layout returned by GetCurrentLayout.</summary>

@@ -38,6 +38,8 @@ interface ARPlannerOverlayProps {
   selectedLibraryItem: string | null;
   /** Catalog modelId of the currently selected placed piece in Unity (if any). */
   selectedPlacedModelId?: string | null;
+  /** The selected placed piece is locked, so Delete is disabled. */
+  selectedLocked?: boolean;
   placedModelIds: string[];
   canUndo: boolean;
   canRedo: boolean;
@@ -112,6 +114,7 @@ export function ARPlannerOverlay({
   furnitureLoading = false,
   selectedLibraryItem,
   selectedPlacedModelId = null,
+  selectedLocked = false,
   placedModelIds = [],
   canUndo,
   canRedo,
@@ -479,7 +482,12 @@ export function ARPlannerOverlay({
             />
             <ToolButton icon="arrow-undo" onPress={onUndo} disabled={!canUndo} label="Undo" />
             <ToolButton icon="arrow-redo" onPress={onRedo} disabled={!canRedo} label="Redo" />
-            <ToolButton icon="trash-outline" onPress={onRemoveSelected} label="Delete" />
+            <ToolButton
+              icon="trash-outline"
+              onPress={onRemoveSelected}
+              disabled={selectedLocked}
+              label={selectedLocked ? 'Delete (unlock first)' : 'Delete'}
+            />
           </View>
         </View>
       )}

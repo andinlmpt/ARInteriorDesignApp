@@ -9,6 +9,8 @@ using Touch = UnityEngine.InputSystem.EnhancedTouch.Touch;
 /// <summary>
 /// Steps C–E of spatial mapping after the floor outline is closed:
 /// mark doors/windows on walls, existing furniture on the floor, then confirm.
+/// Furniture detection already runs while the outline is being drawn, so the
+/// furniture step starts with what the camera saw during the scan.
 /// </summary>
 [DefaultExecutionOrder(-95)]
 public class ARDesignSpatialMappingController : MonoBehaviour
@@ -58,6 +60,8 @@ public class ARDesignSpatialMappingController : MonoBehaviour
     public bool HasPendingOpeningEdge { get; private set; }
     public int ObstacleCount => obstacles.Count;
     public int PendingSuggestionCount => pendingSuggestions.Count;
+    /// <summary>Furniture spotted while the outline is still open (shown as a count while scanning).</summary>
+    public int EarlySightingCount => autoSuggest != null ? autoSuggest.EarlySightingCount : 0;
     public bool IsFurnitureScanning => autoSuggest != null && autoSuggest.IsScanning;
     public IReadOnlyList<FurnitureAutoSuggestion> PendingSuggestions => pendingSuggestions;
     public bool OpeningIsDoor => openingIsDoor;
@@ -107,6 +111,8 @@ public class ARDesignSpatialMappingController : MonoBehaviour
 
     void Update()
     {
+        TickEarlyFurnitureScan();
+
         if (CurrentPhase == Phase.ExistingFurniture && autoSuggest != null)
         {
             var previousCount = pendingSuggestions.Count;
@@ -133,6 +139,19 @@ public class ARDesignSpatialMappingController : MonoBehaviour
             TryAddObstacleAtScreen(touch.screenPosition);
     }
 
+    /// <summary>Steps 1 and 2 together: look for furniture while the user walks the corners.</summary>
+    void TickEarlyFurnitureScan()
+    {
+        if (CurrentPhase != Phase.Outline || autoSuggest == null || cornerBuilder == null) return;
+        // The floor height is known once the wall height is set and the outline has started.
+        if (!cornerBuilder.IsHeightLocked || cornerBuilder.CornerCount == 0) return;
+
+        var before = autoSuggest.EarlySightingCount;
+        autoSuggest.TickEarlyScan(RoomPolygonUtil.ComputeFloorY(cornerBuilder.Corners));
+        if (autoSuggest.EarlySightingCount != before)
+            DataChanged?.Invoke();
+    }
+
     void OnCornersChanged()
     {
         if (cornerBuilder == null) return;
@@ -144,7 +163,10 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         }
 
         if (CurrentPhase == Phase.Outline)
+        {
+            autoSuggest?.AdoptEarlySightings(cornerBuilder.Corners, pendingSuggestions);
             SetPhase(Phase.Openings);
+        }
     }
 
     public void RunFurnitureAutoScan()
@@ -158,6 +180,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
     public void ResetToOutline()
     {
         autoSuggest?.DiscardResults();
+        autoSuggest?.ClearEarlySightings();
         openings.Clear();
         obstacles.Clear();
         pendingSuggestions.Clear();

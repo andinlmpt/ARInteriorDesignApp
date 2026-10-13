@@ -10,6 +10,7 @@ import dotenv from 'dotenv';
 import DesignSession from '../models/DesignSession.js';
 import Furniture from '../models/Furniture.js';
 import { mockPricePhp } from '../utils/furnitureMockPricing.js';
+import { withPublicVisibility } from '../services/catalogVisibility.js';
 import mongoose from 'mongoose';
 import RoomMeasurement from '../models/RoomMeasurement.js';
 import { planLayouts } from '../services/layoutPlanner.js';
@@ -470,7 +471,9 @@ async function resolveFurnitureList(roomType, requiredItemIds = [], requiredCate
 
   if (requiredItemIds.length > 0) {
     try {
-      const docs = await Furniture.find({ id: { $in: requiredItemIds }, active: { $ne: false } }).lean();
+      const docs = await Furniture.find(
+        await withPublicVisibility({ id: { $in: requiredItemIds }, active: { $ne: false } })
+      ).lean();
       docs.forEach((doc, index) => {
         const mapped = mapFurnitureForGa(
           {

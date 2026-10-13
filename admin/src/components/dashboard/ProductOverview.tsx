@@ -21,7 +21,7 @@ export function ProductOverview({ section, onRetry }: ProductOverviewProps) {
       emptyMessage="No products available"
       onRetry={onRetry}
       skeleton={<SkeletonRows count={5} />}
-      footerLink={{ to: '/products', label: 'Manage products' }}
+      footerLink={{ to: '/products', label: 'View all products' }}
     >
       <ul className="category-list">
         {items.map((item) => {
