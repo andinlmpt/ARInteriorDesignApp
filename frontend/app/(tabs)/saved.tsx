@@ -46,14 +46,17 @@ function displayTitleForItem(item: SavedItem): string {
   return item.name;
 }
 
+/** Themes and Pexels photos came from the removed Explore tab — hidden, not deleted. */
+function isFromRemovedExploreTab(item: SavedItem): boolean {
+  return item.type === 'theme' || Boolean(item.imageUrl?.includes('pexels.com'));
+}
+
 function typeLabel(type: SavedItem['type']): string {
   switch (type) {
     case 'furniture':
       return 'Product';
     case 'design':
       return 'Design';
-    case 'theme':
-      return 'Theme';
     case 'project':
       return 'Project';
     default:
@@ -102,7 +105,7 @@ export default function SavedScreen() {
     try {
       setIsLoading(true);
       const items = await savedItemsService.getSavedItems();
-      setSavedItems(items);
+      setSavedItems(items.filter((item) => !isFromRemovedExploreTab(item)));
     } catch (error) {
       console.error('[SavedScreen] Failed to load saved items:', error);
       showDialog('Couldn’t load your wishlist', 'Check that you’re signed in and the backend is running.');
@@ -176,8 +179,6 @@ export default function SavedScreen() {
 
     if (item.type === 'project') {
       router.push('/projects');
-    } else if (item.type === 'theme') {
-      router.push(`/explore?id=${item.id}`);
     } else {
       showDialog(item.name, item.description || item.price || 'Wishlist item');
     }

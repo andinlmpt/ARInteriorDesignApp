@@ -91,6 +91,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     bool heightBaseSet;
     bool heightLocked;
     RoomOutlinePhase outlinePhase = RoomOutlinePhase.Height;
+    bool autoOutline;
     Vector3 heightFloorBase;
     Texture2D cachedMeasurementIcon;
     GameObject previewMeasureLabel;
@@ -142,8 +143,37 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         IsInHeightPhase && !heightBaseSet
         && placementIndicator != null && placementIndicator.IsLockedOnFloor;
 
+    /// <summary>
+    /// Automatic scan (<see cref="ARAutoRoomScan"/>) owns the outline: the height base is not
+    /// seeded as the first corner, taps go to <see cref="AutoTapped"/>, the reticle stays on
+    /// for aiming, and the corner list is replaced as a whole through <see cref="SetCorners"/>.
+    /// </summary>
+    public bool AutoOutline
+    {
+        get => autoOutline;
+        set
+        {
+            if (autoOutline == value) return;
+            autoOutline = value;
+            if (autoOutline) HideLivePreview();
+            ApplyWidthReticle();
+            RebuildVisuals();
+        }
+    }
+
+    /// <summary>Floor point under the aim while outlining (valid when <see cref="IsAimOnFloor"/>).</summary>
+    public Vector3 AimPoint { get; private set; }
+
+    /// <summary>Floor point the height is measured from (valid when <see cref="HasHeightBase"/>).</summary>
+    public Vector3 HeightBasePoint => heightFloorBase;
+
+    /// <summary>Best floor height known so far.</summary>
+    public float FloorY => EstimateFloorY();
+
     public event Action CornersChanged;
     public event Action HeightPhaseChanged;
+    /// <summary>Automatic outline only: the user tapped this floor point while outlining.</summary>
+    public event Action<Vector3> AutoTapped;
 
     void Awake()
     {
@@ -233,8 +263,15 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         if (widthTouch.phase != TouchPhase.Began) return;
         if (IsPointerOverUI(widthTouch.touchId)) return;
 
-        if (TryGetFloorHit(widthTouch.screenPosition, out var widthHit))
-            TryAddCorner(widthHit);
+        if (!TryGetFloorHit(widthTouch.screenPosition, out var widthHit)) return;
+        if (autoOutline)
+        {
+            widthHit.y = FindFloorY(widthHit);
+            AutoTapped?.Invoke(widthHit);
+            return;
+        }
+
+        TryAddCorner(widthHit);
     }
 
     void OnPhase(RoomScanController.ScanPhase phase)
@@ -291,9 +328,22 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         if (IsInHeightPhase && !heightBaseSet)
             BeginHeightPlacementTracking();
         else if (heightLocked)
-            placementIndicator?.StopTracking(clearOverlay: true);
+            ApplyWidthReticle();
         else if (!IsInHeightPhase)
             placementIndicator?.StartTracking();
+    }
+
+    /// <summary>
+    /// Width phase: manual outlining only needs the live tape, but the automatic scan keeps the
+    /// floor reticle so the user can aim at a missing corner and hold.
+    /// </summary>
+    void ApplyWidthReticle()
+    {
+        if (!active || !heightLocked || placementIndicator == null) return;
+        if (autoOutline && !loopClosed)
+            placementIndicator.StartTracking();
+        else
+            placementIndicator.StopTracking(clearOverlay: true);
     }
 
     /// <summary>Places the height base at the current floor reticle (Start button).</summary>
@@ -332,15 +382,18 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         heightLocked = true;
         outlinePhase = RoomOutlinePhase.Width;
 
-        SeedWidthStartFromHeightBase();
+        // The automatic outline is built from the walls, so the base point is not a corner.
+        if (!autoOutline)
+            SeedWidthStartFromHeightBase();
 
         if (heightLine != null) heightLine.enabled = false;
         SetHeightMeasureVisible(false);
         EndHeightPlacementTracking();
         RebuildVisuals();
 
-        // Width phase: no floor reticle — only the preview measurement line.
+        // Width phase: manual uses only the preview measurement line; automatic keeps the reticle.
         placementIndicator?.StopTracking(clearOverlay: true);
+        ApplyWidthReticle();
 
         HeightPhaseChanged?.Invoke();
         CornersChanged?.Invoke();
@@ -394,6 +447,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         if (!CanClose) return false;
         loopClosed = true;
         HideLivePreview();
+        ApplyWidthReticle();
         RebuildVisuals(closed: true);
         CornersChanged?.Invoke();
         return true;
@@ -404,6 +458,33 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     {
         if (!loopClosed) return;
         loopClosed = false;
+        ApplyWidthReticle();
+        RebuildVisuals();
+        CornersChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Automatic outline: replaces every corner at once (already in outline order).
+    /// Points are put on the floor height; the outline stays open until <see cref="CloseLoop"/>.
+    /// </summary>
+    public void SetCorners(IReadOnlyList<Vector3> points)
+    {
+        if (loopClosed || roomLocked) return;
+
+        foreach (var slot in cornerAnchors)
+            ReleaseCornerSlot(slot);
+        cornerAnchors.Clear();
+        corners.Clear();
+
+        var floorY = EstimateFloorY();
+        for (var i = 0; i < points.Count && i < maxCorners; i++)
+        {
+            var p = points[i];
+            p.y = floorY;
+            corners.Add(p);
+            cornerAnchors.Add(null);
+        }
+
         RebuildVisuals();
         CornersChanged?.Invoke();
     }
@@ -948,7 +1029,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
 
     void UpdatePreview()
     {
-        if (corners.Count == 0 || arCamera == null || raycastManager == null)
+        if ((corners.Count == 0 && !autoOutline) || arCamera == null || raycastManager == null)
         {
             IsAimOnFloor = false;
             HideLivePreview();
@@ -963,6 +1044,15 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         }
 
         hit.y = FindFloorY(hit);
+        AimPoint = hit;
+
+        // The automatic outline isn't drawn in tap order, so a tape from the "last" corner would mislead.
+        if (autoOutline || corners.Count == 0)
+        {
+            HideLivePreview();
+            return;
+        }
+
         var from = corners[^1];
         var lengthMeters = Vector3.Distance(Flat(from), Flat(hit));
 
@@ -1081,7 +1171,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
             markers[i].SetActive(!roomLocked);
             markers[i].transform.position = corners[i] + Vector3.up * 0.02f;
             // Emphasize the Finish / width-start corner.
-            var scale = (i == 0 && heightLocked) ? cornerMarkerSize * 1.45f : cornerMarkerSize;
+            var scale = (i == 0 && heightLocked && !autoOutline) ? cornerMarkerSize * 1.45f : cornerMarkerSize;
             markers[i].transform.localScale = Vector3.one * scale;
         }
 

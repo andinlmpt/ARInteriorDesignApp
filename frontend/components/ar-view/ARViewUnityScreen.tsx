@@ -1,5 +1,7 @@
 /**
- * AR View — Unity ARDesignScene (scan → confirm → place → export).
+ * AR View — the "Design a room" AR steps on Unity's ARRoomMeasurement scene:
+ * scan the room (then on to preferences), and later place the chosen AI layout
+ * in the real room (align → place → customize → finish).
  * Native Android/iOS only. Uses @azesmway/react-native-unity.
  */
 
@@ -60,6 +62,7 @@ import { isUnityPlayerWarm, markUnityPlayerWarm } from '@/utils/unitySession';
 const UNITY_READY_TIMEOUT_MS = 15000;
 /** First cold start waits for Unity/ARCore; warm remounts should be instant. */
 const UNITY_MOUNT_DELAY_MS = 1200;
+/** Unity's old AR Furniture scene — never opened now, but a warm player can still be on it. */
 const FURNITURE_UNITY_SCENE = 'ARDesignScene';
 const MEASUREMENT_UNITY_SCENE = 'ARRoomMeasurement';
 
@@ -70,18 +73,6 @@ function normalizeUnitySceneName(sceneName?: string | null): string | null {
   return null;
 }
 
-function isSceneSyncedForArMode(
-  mode: 'furniture' | 'measure',
-  scene: string,
-  measuredFurnitureActive: boolean
-): boolean {
-  const expected = mode === 'furniture' ? FURNITURE_UNITY_SCENE : MEASUREMENT_UNITY_SCENE;
-  if (scene === expected) return true;
-  return (
-    mode === 'measure' && measuredFurnitureActive && scene === MEASUREMENT_UNITY_SCENE
-  );
-}
-
 function isSyntheticFurnitureOnlyRoom(payload: RoomConfirmedPayload): boolean {
   if (payload.furniturePlacementOnly) return true;
   // BeginFurniturePlacementOnly uses a 24×24 m floor at 2.5 m height (576 m²).
@@ -90,25 +81,6 @@ function isSyntheticFurnitureOnlyRoom(payload: RoomConfirmedPayload): boolean {
     Math.abs(payload.depth - 24) < 0.05 &&
     Math.abs(payload.height - 2.5) < 0.05
   );
-}
-
-function buildMeasuredFurnitureHandoffPayload(
-  payload: RoomConfirmedPayload,
-  roomName: string
-) {
-  const points = payload.floorPolygon?.points;
-  return {
-    roomName: roomName || 'Untitled room',
-    width: payload.width,
-    depth: payload.depth,
-    height: payload.height,
-    wallHeight: payload.wallHeight || payload.height,
-    boundsMin: payload.boundsMin,
-    boundsMax: payload.boundsMax,
-    floorPolygon: Array.isArray(points)
-      ? points.map((p) => ({ x: p.x ?? 0, y: p.y ?? 0, z: p.z ?? 0 }))
-      : undefined,
-  };
 }
 
 function scanHintMessage(status: ScanStatusPayload | null): string {
@@ -150,8 +122,6 @@ function scanHintMessage(status: ScanStatusPayload | null): string {
 export function ARViewUnityScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
-    furniture?: string | string[];
-    mode?: string | string[];
     projectId?: string | string[];
     flow?: string | string[];
     applyLayout?: string | string[];
@@ -166,26 +136,18 @@ export function ARViewUnityScreen() {
   const measurementIdParam = Array.isArray(params.measurementId) ? params.measurementId[0] : params.measurementId;
   const isDesignFlow = flowParam === 'design';
   const isApplyLayoutFlow = isDesignFlow && applyLayoutParam === '1';
-  const initialFurniture = Array.isArray(params.furniture)
-    ? params.furniture[0]
-    : params.furniture;
-  const modeParam = Array.isArray(params.mode) ? params.mode[0] : params.mode;
-  const arMode: 'furniture' | 'measure' = modeParam === 'measure' ? 'measure' : 'furniture';
-  /** New project or mode — force Unity scene sync (player stays warm across visits). */
-  const arSessionKey = `${arMode}:${activeProjectId ?? ''}`;
+  /** New project — force Unity scene sync (player stays warm across visits). */
+  const arSessionKey = activeProjectId ?? '';
   const unityRef = useRef<UnityARViewerHandle>(null);
-  const autoSelectedRef = useRef(false);
   const pendingSpawnRef = useRef<string | null>(null);
   const placementUnlockedRef = useRef(false);
   const measurementFlowCompleteRef = useRef(false);
-  /** After naming a measured room, Unity places furniture on that shell (ARDesignScene). */
+  /** Layout step: Unity has the layout's room shell up and is placing furniture on it. */
   const measuredFurnitureActiveRef = useRef(false);
   /** Prevents requestClose ↔ handleBack feedback loops that crash UaaL on reopen. */
   const closingRef = useRef(false);
   /** One soft-reload per screen mount when already on ARRoomMeasurement. */
-  const measureNeedsReloadRef = useRef(arMode === 'measure');
-  /** One soft-reload per screen mount when already on ARDesignScene (furniture). */
-  const furnitureNeedsReloadRef = useRef(arMode === 'furniture');
+  const measureNeedsReloadRef = useRef(true);
   /** Ensures open/reload runs once per AR screen mount (ping must not re-boot). */
   const modeBootedRef = useRef(false);
   /** User closed the catalog sheet — ignore duplicate Unity unlock events that re-open it. */
@@ -252,9 +214,7 @@ export function ARViewUnityScreen() {
   }, [isApplyLayoutFlow, proposalIdParam]);
 
   const [selectedCategory, setSelectedCategory] = useState<FurnitureCategory | 'all'>('all');
-  const [selectedLibraryItem, setSelectedLibraryItem] = useState<string | null>(
-    initialFurniture ?? null
-  );
+  const [selectedLibraryItem, setSelectedLibraryItem] = useState<string | null>(null);
   const [unityReady, setUnityReady] = useState(false);
   const [unityTimedOut, setUnityTimedOut] = useState(!unityAvailable);
   const [activeUnityScene, setActiveUnityScene] = useState<string | null>(null);
@@ -262,12 +222,10 @@ export function ARViewUnityScreen() {
     unityAvailable
       ? isApplyLayoutFlow
         ? 'Loading your layout in AR…'
-        : arMode === 'measure'
-        ? 'Loading AR measurement…'
-        : 'Loading Unity AR…'
+        : 'Loading room scan…'
       : 'Unity AR is not available in this build'
   );
-  const [libraryOpen, setLibraryOpen] = useState(arMode === 'furniture');
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [furnitureLoading, setFurnitureLoading] = useState(false);
   const [mountUnity, setMountUnity] = useState(false);
   const [roomConfirmed, setRoomConfirmed] = useState(false);
@@ -292,8 +250,11 @@ export function ARViewUnityScreen() {
   const measureExportKickoffTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const measureExportStartedRef = useRef(false);
   const furnitureLoadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Mongo id of the room measurement saved in this AR session (for linking Export 3D). */
-  const savedMeasurementIdRef = useRef<string | null>(null);
+  /**
+   * Mongo id of this design's room scan: saved here in the scan step, or passed in from the
+   * layouts screen for the AR layout step. Export 3D links to it instead of saving a new scan.
+   */
+  const savedMeasurementIdRef = useRef<string | null>(measurementIdParam || null);
   const [placementUnlocked, setPlacementUnlocked] = useState(false);
   const [savingPhoto, setSavingPhoto] = useState(false);
   const photoCaptureTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -315,17 +276,13 @@ export function ARViewUnityScreen() {
   /** Short top notice (e.g. "Room measurement saved") — auto-hides. */
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Measure mode: save the room automatically (no name modal) once the layout is generated. */
+  /** Save the scanned room automatically under the project name (no name modal). */
   const autoSaveMeasurePendingRef = useRef(false);
   /** Name typed on the Start new project tab — used as the room measurement name. */
   const projectNameRef = useRef<string | null>(null);
-  /** Project that AR Furniture captures are attached to (created on first capture if absent). */
+  /** Project that AR photos are attached to (created on first capture if absent). */
   const photoProjectIdRef = useRef<string | undefined>(activeProjectId);
-  /** After Save measure succeeds — prompt user to run Export 3D next. */
-  const [measureSavedPrompt, setMeasureSavedPrompt] = useState<{
-    roomName: string;
-  } | null>(null);
-  /** Confirm before leaving AR Measurement / Furniture so we can reset the scene. */
+  /** Confirm before leaving AR so we can reset the scene. */
   const [exitConfirmVisible, setExitConfirmVisible] = useState(false);
 
   useEffect(() => {
@@ -411,11 +368,11 @@ export function ARViewUnityScreen() {
         return;
       }
 
-      // Measured flow: wait until Unity armed placement on the plan.
-      if (arMode === 'measure' && !placementUnlockedRef.current) {
+      // Wait until Unity armed placement on the room shell.
+      if (!placementUnlockedRef.current) {
         pendingSpawnRef.current = itemId;
         setFurnitureLoading(false);
-        setStatusMessage('Opening measured room — try again in a moment');
+        setStatusMessage('Opening your room — try again in a moment');
         return;
       }
 
@@ -452,7 +409,7 @@ export function ARViewUnityScreen() {
         depth: item.dimensions.length,
       });
     },
-    [arMode, placedModelIds]
+    [placedModelIds]
   );
 
   useEffect(() => {
@@ -499,16 +456,10 @@ export function ARViewUnityScreen() {
   const handleUnityReady = useCallback((sceneName?: string) => {
     if (closingRef.current) return;
 
-    const scene =
-      normalizeUnitySceneName(sceneName) ??
-      (arMode === 'measure' ? MEASUREMENT_UNITY_SCENE : FURNITURE_UNITY_SCENE);
+    const scene = normalizeUnitySceneName(sceneName) ?? MEASUREMENT_UNITY_SCENE;
     setActiveUnityScene(scene);
 
-    const synced = isSceneSyncedForArMode(
-      arMode,
-      scene,
-      measuredFurnitureActiveRef.current
-    );
+    const synced = scene === MEASUREMENT_UNITY_SCENE;
     if (synced) {
       markUnityPlayerWarm();
       setUnityReady(true);
@@ -517,107 +468,61 @@ export function ARViewUnityScreen() {
       unityRef.current?.resumeUnityPlayer?.();
     }
 
-    if (arMode === 'measure') {
-      if (applyLayoutActiveRef.current) {
-        setLibraryOpen(false);
-        setMeasurementModalVisible(false);
-        setStatusMessage('Opening your layout in AR…');
-        modeBootedRef.current = true;
-        measureNeedsReloadRef.current = false;
-        if (synced) {
-          markUnityPlayerWarm();
-          setUnityReady(true);
-          setUnityTimedOut(false);
-        } else {
-          unityRef.current?.resumeUnityPlayer?.();
-        }
-        return;
-      }
-
-      // Do not unlock furniture from unityReady/ping — wait for reloadComplete after
-      // openMeasuredFurnitureDesign arms placement on this scene.
-      if (!measuredFurnitureActiveRef.current || !placementUnlockedRef.current) {
-        setLibraryOpen(false);
-      }
-      setMeasurementModalVisible(false);
-      if (!measuredFurnitureActiveRef.current) {
-        setMeasurePlanReady(false);
-      }
-      setMeasureSavedPrompt(null);
-      setExportResultDialog(null);
-      setExportingMeasure(false);
-      if (!measuredFurnitureActiveRef.current) {
-        measurementFlowCompleteRef.current = false;
-        setStatusMessage('Point the camera around the room to measure');
-      }
-
-      // Ping / late unityReady must not open/reload again after the first boot.
-      if (
-        modeBootedRef.current &&
-        scene === MEASUREMENT_UNITY_SCENE &&
-        !measureNeedsReloadRef.current
-      ) {
-        return;
-      }
-
-      if (scene !== MEASUREMENT_UNITY_SCENE) {
-        modeBootedRef.current = true;
-        measureNeedsReloadRef.current = false;
-        unityRef.current?.resumeUnityPlayer?.();
-        unityRef.current?.openRoomMeasurement();
-      } else if (measureNeedsReloadRef.current) {
-        modeBootedRef.current = true;
-        measureNeedsReloadRef.current = false;
-        unityRef.current?.reloadMeasurement();
-      } else {
-        // Fresh LoadScene already auto-starts the scan.
-        modeBootedRef.current = true;
-      }
-      return;
-    }
-
-    // Furniture mode — wait until Unity is actually on ARDesignScene before showing RN chrome.
-    if (scene === MEASUREMENT_UNITY_SCENE) {
+    if (applyLayoutActiveRef.current) {
       setLibraryOpen(false);
       setMeasurementModalVisible(false);
-      setStatusMessage('Switching to AR Furniture…');
-      // LoadScene + PendingBootAction boots furniture — do not soft-reload again after.
-      furnitureNeedsReloadRef.current = false;
-      unityRef.current?.resumeUnityPlayer?.();
-      unityRef.current?.openFurnitureDesign();
+      setStatusMessage('Opening your layout in AR…');
+      modeBootedRef.current = true;
+      measureNeedsReloadRef.current = false;
+      if (synced) {
+        markUnityPlayerWarm();
+        setUnityReady(true);
+        setUnityTimedOut(false);
+      } else {
+        unityRef.current?.resumeUnityPlayer?.();
+      }
       return;
     }
 
-    setStatusMessage('Select your desired furniture');
-    setLibraryOpen(true);
-    measurementFlowCompleteRef.current = true;
-    setPlacementUnlocked(true);
-    placementUnlockedRef.current = true;
-    setRoomConfirmed(true);
-    setScanProgress(1);
-    setScanReady(true);
+    // Do not unlock furniture from unityReady/ping — wait for reloadComplete after
+    // openMeasuredFurnitureDesign arms placement on this scene.
+    if (!measuredFurnitureActiveRef.current || !placementUnlockedRef.current) {
+      setLibraryOpen(false);
+    }
     setMeasurementModalVisible(false);
+    if (!measuredFurnitureActiveRef.current) {
+      setMeasurePlanReady(false);
+    }
+    setExportResultDialog(null);
+    setExportingMeasure(false);
+    if (!measuredFurnitureActiveRef.current) {
+      measurementFlowCompleteRef.current = false;
+      setStatusMessage('Point the camera around the room to measure');
+    }
 
-    if (modeBootedRef.current && scene === FURNITURE_UNITY_SCENE) return;
-    modeBootedRef.current = true;
+    // Ping / late unityReady must not open/reload again after the first boot.
+    if (
+      modeBootedRef.current &&
+      scene === MEASUREMENT_UNITY_SCENE &&
+      !measureNeedsReloadRef.current
+    ) {
+      return;
+    }
 
-    if (furnitureNeedsReloadRef.current) {
-      furnitureNeedsReloadRef.current = false;
-      // Warm player on ARDesignScene: clear placed items only — keep GLB memory/disk cache.
-      if (isUnityPlayerWarm() && scene === FURNITURE_UNITY_SCENE) {
-        unityRef.current?.resumeFurniture();
-      } else {
-        unityRef.current?.reloadFurniture();
-      }
+    if (scene !== MEASUREMENT_UNITY_SCENE) {
+      modeBootedRef.current = true;
+      measureNeedsReloadRef.current = false;
+      unityRef.current?.resumeUnityPlayer?.();
+      unityRef.current?.openRoomMeasurement();
+    } else if (measureNeedsReloadRef.current) {
+      modeBootedRef.current = true;
+      measureNeedsReloadRef.current = false;
+      unityRef.current?.reloadMeasurement();
     } else {
-      unityRef.current?.openFurnitureDesign();
+      // Fresh LoadScene already auto-starts the scan.
+      modeBootedRef.current = true;
     }
-
-    if (initialFurniture && !autoSelectedRef.current) {
-      autoSelectedRef.current = true;
-      setSelectedLibraryItem(initialFurniture);
-    }
-  }, [arMode, initialFurniture]);
+  }, []);
 
   const openLibrarySheet = useCallback(() => {
     if (libraryUserDismissedRef.current) return;
@@ -651,51 +556,33 @@ export function ARViewUnityScreen() {
       setUnityTimedOut(false);
       modeBootedRef.current = true;
       measureNeedsReloadRef.current = false;
-      furnitureNeedsReloadRef.current = false;
 
-      const scene =
-        normalizeUnitySceneName(sceneName) ??
-        (arMode === 'measure' ? MEASUREMENT_UNITY_SCENE : FURNITURE_UNITY_SCENE);
-      setActiveUnityScene(scene);
+      setActiveUnityScene(normalizeUnitySceneName(sceneName) ?? MEASUREMENT_UNITY_SCENE);
 
-      if (arMode === 'measure') {
-        if (applyLayoutActiveRef.current) {
-          setLibraryOpen(false);
-          setStatusMessage('Opening the measured room…');
-          return;
-        }
-
-        // Measured furniture unlocks on ARRoomMeasurement (no scene switch).
-        if (measuredFurnitureActiveRef.current) {
-          unlockMeasuredFurnitureUi();
-          return;
-        }
-
+      if (applyLayoutActiveRef.current) {
         setLibraryOpen(false);
-        setMeasurementModalVisible(false);
-        setMeasurePlanReady(false);
-        setStatusMessage('Point the camera around the room to measure');
+        setStatusMessage('Opening the measured room…');
         return;
       }
 
-      setStatusMessage('Select your desired furniture');
-      setLibraryOpen(true);
-      measurementFlowCompleteRef.current = true;
-      setPlacementUnlocked(true);
-      placementUnlockedRef.current = true;
-      setRoomConfirmed(true);
-      setScanProgress(1);
-      setScanReady(true);
+      // Measured furniture unlocks on ARRoomMeasurement (no scene switch).
+      if (measuredFurnitureActiveRef.current) {
+        unlockMeasuredFurnitureUi();
+        return;
+      }
+
+      setLibraryOpen(false);
       setMeasurementModalVisible(false);
+      setMeasurePlanReady(false);
+      setStatusMessage('Point the camera around the room to measure');
     },
-    [arMode, unlockMeasuredFurnitureUi]
+    [unlockMeasuredFurnitureUi]
   );
 
   /** Dedicated unlock from Unity after openMeasuredFurnitureDesign (reloadComplete can drop on UaaL). */
   const handleMeasuredFurnitureReady = useCallback(
     (sceneName?: string) => {
       if (closingRef.current) return;
-      if (arMode !== 'measure') return;
 
       markUnityPlayerWarm();
       setUnityReady(true);
@@ -714,7 +601,7 @@ export function ARViewUnityScreen() {
         console.log('[ARViewUnity] measuredFurnitureReady from Unity');
       }
     },
-    [arMode, unlockMeasuredFurnitureUi]
+    [unlockMeasuredFurnitureUi]
   );
 
   useEffect(() => {
@@ -751,15 +638,14 @@ export function ARViewUnityScreen() {
   }, []);
 
   const handleLayoutAligned = useCallback(
-    (payload: LayoutAlignmentPayload, firstTime: boolean) => {
+    (payload: LayoutAlignmentPayload) => {
       const gap = Math.abs(payload.measuredM - payload.planM);
       const lengths = `Wall ${payload.measuredM.toFixed(2)} m · plan ${payload.planM.toFixed(2)} m`;
       if (gap > 0.3) {
-        showToast(`${lengths}. Lengths differ, so check the wall or tap Realign.`, 5000);
+        showToast(`${lengths}. Lengths differ. If it looks off, go back and mark the corners again.`, 5000);
       } else {
-        showToast(firstTime ? `Lined up with your room. ${lengths}` : `Layout moved. ${lengths}`, 3000);
+        showToast(`Lined up with your room. ${lengths}`, 3000);
       }
-      if (!firstTime) setStatusMessage('Walk around to see your layout in the room');
     },
     [showToast]
   );
@@ -771,9 +657,6 @@ export function ARViewUnityScreen() {
     handleLayoutAlignment,
     markCorner: markAlignmentCorner,
     undoCorner: undoAlignmentCorner,
-    flip: flipLayoutAlignment,
-    realign: realignLayout,
-    setView: setLayoutView,
   } = useLayoutAlignment({
     enabled: isApplyLayoutFlow,
     ready: isApplyLayoutFlow && applyPayloadReady && placementUnlocked,
@@ -851,21 +734,11 @@ export function ARViewUnityScreen() {
   }, [activeProjectId, customization, router, showToast]);
 
   const furnitureUiReady =
-    unityReady &&
-    (arMode === 'furniture'
-      ? activeUnityScene === FURNITURE_UNITY_SCENE
-      : measuredFurnitureActive && measurePlanReady && placementUnlocked);
+    unityReady && measuredFurnitureActive && measurePlanReady && placementUnlocked;
 
-  const expectedUnityScene =
-    arMode === 'furniture' ? FURNITURE_UNITY_SCENE : MEASUREMENT_UNITY_SCENE;
-  const unitySceneSynced =
-    activeUnityScene === expectedUnityScene ||
-    (arMode === 'measure' &&
-      measuredFurnitureActive &&
-      activeUnityScene === MEASUREMENT_UNITY_SCENE);
+  const unitySceneSynced = activeUnityScene === MEASUREMENT_UNITY_SCENE;
 
-  const measureHandoffPending =
-    arMode === 'measure' && measuredFurnitureActive && !placementUnlocked;
+  const measureHandoffPending = measuredFurnitureActive && !placementUnlocked;
 
   // Do NOT bulk-prefetch GLBs on open — sofa files are 70–250 MB and loading
   // many at once OOMs / freeze the device. Models load on place (with disk cache).
@@ -877,16 +750,16 @@ export function ARViewUnityScreen() {
 
   const handleScanStatus = useCallback(
     (payload: ScanStatusPayload) => {
-      // Furniture mode owns its own status copy — ignore scan HUD updates.
+      // The layout step owns its own status copy — ignore scan HUD updates.
       if (applyLayoutActiveRef.current) return;
-      if (arMode === 'furniture' || placementUnlockedRef.current) return;
+      if (placementUnlockedRef.current) return;
 
       setScanProgress(payload.progress ?? 0);
       setScanReady(Boolean(payload.readyToConfirm));
       setRoomConfirmed(Boolean(payload.confirmed));
       setStatusMessage(scanHintMessage(payload));
     },
-    [arMode]
+    []
   );
 
   const handleRoomConfirmed = useCallback(
@@ -900,64 +773,18 @@ export function ARViewUnityScreen() {
         return;
       }
 
-      if (measurementFlowCompleteRef.current) {
-        // Already in furniture mode — ignore late confirm events.
-        if (arMode === 'furniture') return;
-      }
-
-      // Measured room reapplied on ARDesignScene after handoff — unlock placement.
-      if (arMode === 'measure' && measuredFurnitureActiveRef.current) {
-        if (isSyntheticFurnitureOnlyRoom(payload)) {
-          setStatusMessage('Waiting for measured room shell…');
-          return;
-        }
-        if (placementUnlockedRef.current) {
-          return;
-        }
-        setConfirmedPayload(payload);
-        setMeasurementModalVisible(false);
-        setMeasurePlanReady(true);
-        setPlacementUnlocked(true);
-        placementUnlockedRef.current = true;
-        setRoomConfirmed(true);
-        setScanProgress(1);
-        setScanReady(true);
-        openLibrarySheet();
-        setActiveUnityScene('ARDesignScene');
-        setStatusMessage('Tap to place · 1 finger move · 2 on piece rotate · 2 on room orbit');
-        return;
-      }
-
-      // Furniture-only / open-floor unlock from Unity.
-      if (isSyntheticFurnitureOnlyRoom(payload) || arMode === 'furniture') {
-        if (arMode === 'measure' && isSyntheticFurnitureOnlyRoom(payload)) {
-          setConfirmedPayload(null);
-          setMeasurementModalVisible(false);
-          setPlacementUnlocked(false);
-          placementUnlockedRef.current = false;
-          setRoomConfirmed(false);
-          setScanProgress(0.15);
-          setScanReady(false);
-          setStatusMessage(
-            'Point the camera around the room — tap floor height, then corners to measure'
-          );
-          return;
-        }
-
-        measurementFlowCompleteRef.current = true;
+      // Unity's open-floor room (no scan) — keep the user scanning.
+      if (isSyntheticFurnitureOnlyRoom(payload)) {
         setConfirmedPayload(null);
         setMeasurementModalVisible(false);
-        setMeasurementError(null);
-        setPlacementUnlocked(true);
-        placementUnlockedRef.current = true;
-        setRoomConfirmed(true);
-        setScanProgress(1);
-        setScanReady(true);
-        setLibraryOpen(true);
-        setStatusMessage('Select your desired furniture');
-        if (selectedLibraryItem) {
-          pendingSpawnRef.current = selectedLibraryItem;
-        }
+        setPlacementUnlocked(false);
+        placementUnlockedRef.current = false;
+        setRoomConfirmed(false);
+        setScanProgress(0.15);
+        setScanReady(false);
+        setStatusMessage(
+          'Point the camera around the room — tap floor height, then corners to measure'
+        );
         return;
       }
 
@@ -972,25 +799,15 @@ export function ARViewUnityScreen() {
       measuredFurnitureActiveRef.current = false;
       setMeasuredFurnitureActive(false);
       setConfirmedPayload(payload);
-      if (arMode === 'measure') {
-        // Skip the name modal — save under the project name and go straight to placement.
-        const stamp = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-        setMeasureRoomName(projectNameRef.current?.trim() || `Room ${stamp}`);
-        autoSaveMeasurePendingRef.current = true;
-        setMeasurementModalVisible(false);
-        setStatusMessage('Saving room measurement…');
-      } else {
-        setMeasureRoomName('');
-        setMeasurementModalVisible(true);
-        setStatusMessage('Room measured — save or continue to furniture');
-      }
+      // Skip the name modal — save under the project name and go on to preferences.
+      const stamp = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      setMeasureRoomName(projectNameRef.current?.trim() || `Room ${stamp}`);
+      autoSaveMeasurePendingRef.current = true;
+      setMeasurementModalVisible(false);
+      setStatusMessage('Saving room measurement…');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-
-      if (selectedLibraryItem) {
-        pendingSpawnRef.current = selectedLibraryItem;
-      }
     },
-    [arMode, openLibrarySheet, selectedLibraryItem, unlockMeasuredFurnitureUi]
+    [unlockMeasuredFurnitureUi]
   );
 
   const clearMeasureExportTimeout = useCallback(() => {
@@ -1049,44 +866,9 @@ export function ARViewUnityScreen() {
         console.warn('[ARViewUnity] Failed to save export to Projects:', err);
       }
 
-      let measurementId = savedMeasurementIdRef.current;
-      if (!measurementId && confirmedPayload) {
-        try {
-          const trimmed =
-            measureRoomName.trim() ||
-            payload.fileName?.replace(/\.glb$/i, '') ||
-            'Room scan';
-          const created = await RoomMeasurementService.save({
-            width: confirmedPayload.width,
-            depth: confirmedPayload.depth,
-            height: confirmedPayload.height,
-            floorAreaSqm: confirmedPayload.floorAreaSqm,
-            wallHeight: confirmedPayload.wallHeight,
-            dimensionLabel: confirmedPayload.dimensionLabel,
-            boundsMin: confirmedPayload.boundsMin,
-            boundsMax: confirmedPayload.boundsMax,
-            floorPolygon: confirmedPayload.floorPolygon?.points,
-            openings: confirmedPayload.openings,
-            obstacles: confirmedPayload.obstacles,
-            scanMetadata: {
-              planeCount: confirmedPayload.planeCount,
-              meshChunkCount: confirmedPayload.meshChunkCount,
-              horizontalAreaSqm: confirmedPayload.horizontalAreaSqm,
-              verticalAreaSqm: confirmedPayload.verticalAreaSqm,
-              cornerCount: confirmedPayload.cornerCount,
-              source: 'unity-ar',
-            },
-            name: trimmed,
-            projectId,
-          });
-          measurementId = created.id;
-          savedMeasurementIdRef.current = created.id;
-          setMeasurementSaved(true);
-        } catch (err) {
-          console.warn('[ARViewUnity] Could not auto-save room for export link:', err);
-        }
-      }
-
+      // Link to the design's own scan. Never save a new scan here: it would show up as an
+      // extra room choice in preferences for this project.
+      const measurementId = savedMeasurementIdRef.current;
       if (measurementId) {
         try {
           previewUri = await persistRoomExportGlb(measurementId, payload.path);
@@ -1123,7 +905,7 @@ export function ARViewUnityScreen() {
         savedToProjects,
       });
     },
-    [activeProjectId, confirmedPayload, measureRoomName]
+    [activeProjectId, measureRoomName]
   );
 
   const handleExportMeasure = useCallback(async () => {
@@ -1185,7 +967,7 @@ export function ARViewUnityScreen() {
     }
 
     const trimmedName = measureRoomName.trim();
-    if (arMode === 'measure' && !trimmedName) {
+    if (!trimmedName) {
       setMeasurementError('Please enter a room name');
       return;
     }
@@ -1214,7 +996,7 @@ export function ARViewUnityScreen() {
           cornerCount: confirmedPayload.cornerCount,
           source: 'unity-ar',
         },
-        name: arMode === 'measure' ? trimmedName : trimmedName || 'Room scan',
+        name: trimmedName,
         projectId: activeProjectId,
       });
       savedMeasurementIdRef.current = saved.id;
@@ -1244,44 +1026,16 @@ export function ARViewUnityScreen() {
         });
         return;
       }
-
-      if (arMode === 'measure') {
-        showToast('Room measurement saved');
-        // Unity commitRoomName opens the plan + arms furniture placement on this scene.
-        libraryUserDismissedRef.current = false;
-        measuredFurnitureActiveRef.current = true;
-        setMeasuredFurnitureActive(true);
-        setMeasurementModalVisible(false);
-        setMeasurePlanReady(false);
-        setPlacementUnlocked(false);
-        placementUnlockedRef.current = false;
-        setLibraryOpen(false);
-        setStatusMessage('Opening measured room for furniture…');
-        unityRef.current?.commitRoomName(trimmedName);
-        const wakeUnity = () => unityRef.current?.wakeUnityPlayer?.();
-        setTimeout(wakeUnity, 50);
-        setTimeout(wakeUnity, 400);
-        // Safety: if measurementPlanReady never arrives, unlock anyway.
-        setTimeout(() => {
-          if (!placementUnlockedRef.current && measuredFurnitureActiveRef.current) {
-            console.warn('[ARViewUnity] Unlocking measured furniture UI (measurementPlanReady timeout)');
-            unlockMeasuredFurnitureUi();
-          }
-        }, 2500);
-      }
     } catch {
       setMeasurementError('Could not save. Check Wi‑Fi and that the backend is running.');
-      if (arMode === 'measure') {
-        // Auto-save failed — fall back to the modal so the user can retry or skip.
-        setMeasurementModalVisible(true);
-        setStatusMessage('Room measurement not saved');
-      }
+      // Auto-save failed — fall back to the modal so the user can retry or skip.
+      setMeasurementModalVisible(true);
+      setStatusMessage('Room measurement not saved');
     } finally {
       setSavingMeasurement(false);
     }
   }, [
     activeProjectId,
-    arMode,
     confirmedPayload,
     isDesignFlow,
     measureRoomName,
@@ -1289,7 +1043,6 @@ export function ARViewUnityScreen() {
     router,
     savingMeasurement,
     showToast,
-    unlockMeasuredFurnitureUi,
   ]);
 
   // Runs after the room-confirmed handler has committed payload + name to state.
@@ -1300,41 +1053,13 @@ export function ARViewUnityScreen() {
     void handleSaveMeasurement();
   }, [confirmedPayload, handleSaveMeasurement, measureRoomName]);
 
-  const startExportAfterSave = useCallback(() => {
-    setMeasureSavedPrompt(null);
-    setStatusMessage('Measurement saved — exporting 3D layout…');
-    handleExportMeasure();
-  }, [handleExportMeasure]);
-
-  const handleCancelMeasureName = useCallback(() => {
-    if (savingMeasurement) return;
-    setMeasurementModalVisible(false);
-    setMeasurementError(null);
-    measuredFurnitureActiveRef.current = true;
-    setMeasuredFurnitureActive(true);
-    setMeasurePlanReady(false);
-    setPlacementUnlocked(false);
-    placementUnlockedRef.current = false;
-    setLibraryOpen(false);
-    setStatusMessage('Opening measured room for furniture…');
-    unityRef.current?.cancelRoomName();
-    const wakeUnity = () => unityRef.current?.wakeUnityPlayer?.();
-    setTimeout(wakeUnity, 50);
-    setTimeout(wakeUnity, 400);
-    setTimeout(() => {
-      if (!placementUnlockedRef.current && measuredFurnitureActiveRef.current) {
-        console.warn('[ARViewUnity] Unlocking measured furniture UI (measurementPlanReady timeout)');
-        unlockMeasuredFurnitureUi();
-      }
-    }, 2500);
-  }, [savingMeasurement, unlockMeasuredFurnitureUi]);
-
+  /** Skip saving the scan (save failed) and go on to preferences with its size. */
   const handleContinueFromMeasurement = useCallback(() => {
     if (savingMeasurement) return;
 
     measurementFlowCompleteRef.current = true;
     setMeasurementModalVisible(false);
-    if (isDesignFlow && confirmedPayload) {
+    if (confirmedPayload) {
       router.replace({
         pathname: '/design-preferences',
         params: {
@@ -1347,40 +1072,8 @@ export function ARViewUnityScreen() {
           flow: 'design',
         },
       });
-      return;
     }
-    if (arMode === 'measure') {
-      setPlacementUnlocked(false);
-      placementUnlockedRef.current = false;
-      setStatusMessage('Measurement complete');
-      router.replace('/room-measurements');
-      return;
-    }
-
-    setPlacementUnlocked(true);
-    placementUnlockedRef.current = true;
-    setRoomConfirmed(true);
-    setStatusMessage('Select your desired furniture');
-
-    if (selectedLibraryItem) {
-      if (catalogLoading || catalogItems.length === 0) {
-        pendingSpawnRef.current = selectedLibraryItem;
-      } else {
-        spawnCatalogItem(selectedLibraryItem, catalogItems);
-      }
-    }
-  }, [
-    activeProjectId,
-    arMode,
-    catalogItems,
-    catalogLoading,
-    confirmedPayload,
-    isDesignFlow,
-    router,
-    savingMeasurement,
-    selectedLibraryItem,
-    spawnCatalogItem,
-  ]);
+  }, [activeProjectId, confirmedPayload, router, savingMeasurement]);
 
   const handleLayoutChanged = useCallback((payload: LayoutPayload) => {
     const furniture = payload.furniture ?? [];
@@ -1404,13 +1097,11 @@ export function ARViewUnityScreen() {
     handleCustomizeSelection(payload);
     if (payload.selected && payload.modelId) {
       setSelectedPlacedModelId(payload.modelId);
-      if (arMode === 'measure') {
-        setStatusMessage('Selected — 1 finger drag · 2 fingers on piece to rotate');
-      }
+      setStatusMessage('Selected — 1 finger drag · 2 fingers on piece to rotate');
     } else {
       setSelectedPlacedModelId(null);
     }
-  }, [arMode, handleCustomizeSelection]);
+  }, [handleCustomizeSelection]);
 
   const handlePlacementSafety = useCallback((payload: PlacementSafetyPayload) => {
     handleCustomizeSafety(payload);
@@ -1419,15 +1110,11 @@ export function ARViewUnityScreen() {
       (modelId) => catalogItems.find((item) => item.id === modelId)?.name,
     );
     if (!issue) {
-      setStatusMessage(
-        arMode === 'measure'
-          ? 'Placed — 1 finger move · 2 fingers on piece to twist-rotate'
-          : 'Placed — drag to move, twist to rotate'
-      );
+      setStatusMessage('Placed — 1 finger move · 2 fingers on piece to twist-rotate');
       return;
     }
     setStatusMessage(`Unsafe — ${issue}`);
-  }, [arMode, catalogItems, handleCustomizeSafety]);
+  }, [catalogItems, handleCustomizeSafety]);
 
   const handleFurnitureLockBlocked = useCallback(() => {
     showToast('This piece is locked. Tap Locked to move it again.');
@@ -1515,7 +1202,6 @@ export function ARViewUnityScreen() {
     setMeasureRoomName('');
     setMeasurePlanReady(false);
     setExportingMeasure(false);
-    setMeasureSavedPrompt(null);
     setExportResultDialog(null);
     setRoomConfirmed(false);
     setScanProgress(0);
@@ -1528,23 +1214,7 @@ export function ARViewUnityScreen() {
     libraryUserDismissedRef.current = false;
   }, []);
 
-  const resetFurnitureSessionLocally = useCallback(() => {
-    autoSelectedRef.current = false;
-    pendingSpawnRef.current = null;
-    setPlacedModelIds([]);
-    setSelectedPlacedModelId(null);
-    setSelectedLibraryItem(null);
-    setCanUndo(false);
-    setCanRedo(false);
-    setActiveTool('place');
-    setLibraryOpen(true);
-    setExportResultDialog(null);
-    setExportingMeasure(false);
-    setSavingPhoto(false);
-    setStatusMessage('Select your desired furniture');
-  }, []);
-
-  /** Full RN + boot-flag reset when switching AR Furniture ↔ AR Measurement (Unity player stays alive). */
+  /** Full RN + boot-flag reset for each AR session (the Unity player stays alive between visits). */
   useEffect(() => {
     closingRef.current = false;
     modeBootedRef.current = false;
@@ -1552,10 +1222,8 @@ export function ARViewUnityScreen() {
     libraryUserDismissedRef.current = false;
     measurementFlowCompleteRef.current = false;
     placementUnlockedRef.current = false;
-    autoSelectedRef.current = false;
     pendingSpawnRef.current = null;
-    measureNeedsReloadRef.current = arMode === 'measure';
-    furnitureNeedsReloadRef.current = arMode === 'furniture';
+    measureNeedsReloadRef.current = true;
 
     setUnityReady(false);
     setUnityTimedOut(false);
@@ -1577,13 +1245,10 @@ export function ARViewUnityScreen() {
     setMeasureRoomName('');
     setMeasurePlanReady(false);
     setExportingMeasure(false);
-    setMeasureSavedPrompt(null);
     setExportResultDialog(null);
-    setSelectedLibraryItem(initialFurniture ?? null);
-    setStatusMessage(
-      arMode === 'measure' ? 'Loading AR measurement…' : 'Loading AR Furniture…'
-    );
-  }, [arSessionKey, arMode, initialFurniture]);
+    setSelectedLibraryItem(null);
+    setStatusMessage(isApplyLayoutFlow ? 'Loading your layout in AR…' : 'Loading room scan…');
+  }, [arSessionKey, isApplyLayoutFlow]);
 
   const bootstrapUnitySceneForSession = useCallback(() => {
     if (closingRef.current || !unityAvailable) return;
@@ -1592,13 +1257,9 @@ export function ARViewUnityScreen() {
     } catch {
       /* native view may not be attached yet */
     }
-    if (arMode === 'furniture') {
-      unityRef.current?.openFurnitureDesign();
-      return;
-    }
     if (measuredFurnitureActiveRef.current) return;
     unityRef.current?.openRoomMeasurement();
-  }, [arMode, unityAvailable]);
+  }, [unityAvailable]);
 
   useEffect(() => {
     if (!mountUnity || !unityAvailable) return;
@@ -1628,36 +1289,20 @@ export function ARViewUnityScreen() {
     if (closingRef.current) return;
     setExitConfirmVisible(false);
 
-    if (arMode === 'measure') {
-      resetMeasureSessionLocally();
-      try {
-        if (activeUnityScene === FURNITURE_UNITY_SCENE) {
-          unityRef.current?.pauseFurniture();
-        } else {
-          unityRef.current?.pauseMeasurement();
-        }
-      } catch (err) {
-        console.warn('[ARViewUnity] pause AR failed:', err);
-      }
-      measureNeedsReloadRef.current = true;
-    } else {
-      resetFurnitureSessionLocally();
-      try {
+    resetMeasureSessionLocally();
+    try {
+      if (activeUnityScene === FURNITURE_UNITY_SCENE) {
         unityRef.current?.pauseFurniture();
-      } catch (err) {
-        console.warn('[ARViewUnity] pauseFurniture failed:', err);
+      } else {
+        unityRef.current?.pauseMeasurement();
       }
-      furnitureNeedsReloadRef.current = true;
+    } catch (err) {
+      console.warn('[ARViewUnity] pause AR failed:', err);
     }
+    measureNeedsReloadRef.current = true;
 
     leaveArScreen(destination);
-  }, [
-    activeUnityScene,
-    arMode,
-    leaveArScreen,
-    resetFurnitureSessionLocally,
-    resetMeasureSessionLocally,
-  ]);
+  }, [activeUnityScene, leaveArScreen, resetMeasureSessionLocally]);
 
   const confirmExitAr = useCallback(() => exitAr(), [exitAr]);
 
@@ -1705,11 +1350,7 @@ export function ARViewUnityScreen() {
               setStatusMessage('Placing your layout…');
               return;
             }
-            setStatusMessage(
-              arMode === 'measure'
-                ? 'Placed — 1 finger move · 2 on piece rotate'
-                : 'Selected — drag to move, pinch to scale, twist to rotate'
-            );
+            setStatusMessage('Placed — 1 finger move · 2 on piece rotate');
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
           }}
           onFurnitureReady={() => {
@@ -1718,74 +1359,28 @@ export function ARViewUnityScreen() {
               furnitureLoadTimeoutRef.current = null;
             }
             setFurnitureLoading(false);
-            setStatusMessage(
-              arMode === 'measure'
-                ? 'Furniture ready — placed on your measured room'
-                : 'Aim at the floor — tap when the black reticle appears'
-            );
+            setStatusMessage('Furniture ready — placed on your measured room');
           }}
           onExportStarted={() => {
-            if (arMode !== 'measure') return;
             measureExportStartedRef.current = true;
             clearMeasureExportKickoff();
             armMeasureExportTimeout(180_000);
           }}
           onExportComplete={(payload) => {
-            // Measurement mode: Unity native Export used to be ignored — finalize here too
-            // so GLB + Room Measurements link always happen.
-            if (arMode === 'measure') {
-              clearAllMeasureExportTimers();
-              setExportingMeasure(false);
-              if (!payload.success || !payload.path) {
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-                setExportResultDialog({
-                  kind: 'error',
-                  message: payload.error || 'Export failed. Try Export 3D again.',
-                });
-                return;
-              }
-              void finalizeMeasureExport(payload);
-              return;
-            }
-
+            // Unity's own Export button lands here too — finalize so the GLB reaches Projects.
             clearAllMeasureExportTimers();
             setExportingMeasure(false);
-            setStatusMessage(
-              payload.success
-                ? `Exported ${payload.fileName} (${Math.round((payload.byteLength || 0) / 1024)} KB)`
-                : `Export failed: ${payload.error || 'unknown error'}`
-            );
-
             if (!payload.success || !payload.path) {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+              setExportResultDialog({
+                kind: 'error',
+                message: payload.error || 'Export failed. Try Export 3D again.',
+              });
               return;
             }
-
-            void projectService
-              .saveUnityLayoutExport(payload, activeProjectId)
-              .then((project) => {
-                router.push(
-                  buildModelPreviewExportHref({
-                    uri: payload.path,
-                    title: project.name || payload.fileName,
-                    furnitureCount: payload.furnitureCount,
-                    projectId: project.id,
-                  })
-                );
-              })
-              .catch((err) => {
-                console.warn('[ARViewUnity] Failed to save export to Projects:', err);
-                router.push(
-                  buildModelPreviewExportHref({
-                    uri: payload.path,
-                    title: payload.fileName,
-                    furnitureCount: payload.furnitureCount,
-                  })
-                );
-              });
+            void finalizeMeasureExport(payload);
           }}
           onMeasurementPlanReady={() => {
-            if (arMode !== 'measure') return;
             setMeasurePlanReady(true);
             if (measuredFurnitureActiveRef.current) {
               const wasLocked = !placementUnlockedRef.current;
@@ -1793,10 +1388,6 @@ export function ARViewUnityScreen() {
               if (wasLocked && __DEV__) {
                 console.log('[ARViewUnity] Unlocked furniture via measurementPlanReady');
               }
-              return;
-            }
-            if (!measureSavedPrompt && !exportingMeasure) {
-              setStatusMessage('Room plan ready — place furniture, then Export 3D');
             }
           }}
           onMeasurementPlanClosed={() => {
@@ -1806,7 +1397,6 @@ export function ARViewUnityScreen() {
             setMeasurePlanReady(false);
           }}
           onRequestRnExport3d={() => {
-            if (arMode !== 'measure') return;
             void handleExportMeasure();
           }}
           onPhotoCaptured={(payload: ARPhotoCapturedPayload) => {
@@ -1892,13 +1482,7 @@ export function ARViewUnityScreen() {
         <View style={styles.loadingOverlay} pointerEvents="none">
           <ActivityIndicator size="large" color={colors.accent} />
           <Text style={styles.loadingText}>
-            {arMode === 'measure'
-              ? activeUnityScene === FURNITURE_UNITY_SCENE
-                ? 'Switching to AR Measurement…'
-                : 'Starting AR Measurement…'
-              : activeUnityScene === MEASUREMENT_UNITY_SCENE
-                ? 'Switching to AR Furniture…'
-                : 'Starting AR Furniture…'}
+            {isApplyLayoutFlow ? 'Opening your layout in AR…' : 'Starting the room scan…'}
           </Text>
         </View>
       )}
@@ -1941,14 +1525,10 @@ export function ARViewUnityScreen() {
           onUndo={() => unityRef.current?.undo()}
           onRedo={() => unityRef.current?.redo()}
           onClear={handleClear}
-          onExport={
-            arMode === 'measure'
-              ? () => {
-                  void handleExportMeasure();
-                }
-              : undefined
-          }
-          exportDisabled={arMode === 'measure' && exportingMeasure}
+          onExport={() => {
+            void handleExportMeasure();
+          }}
+          exportDisabled={exportingMeasure}
           onSavePhoto={handleSavePhoto}
           savingPhoto={savingPhoto}
           onRemoveSelected={() => unityRef.current?.removeSelectedFurniture()}
@@ -1961,7 +1541,7 @@ export function ARViewUnityScreen() {
             });
           }}
           onBack={handleBack}
-          enablePlannerOrbit={arMode === 'measure' && measuredFurnitureActive}
+          enablePlannerOrbit={measuredFurnitureActive}
           onPlannerPointer={(payload) => unityRef.current?.plannerPointer(payload)}
           style={savingPhoto ? { opacity: 0, pointerEvents: 'none' } : undefined}
         />
@@ -1969,10 +1549,6 @@ export function ARViewUnityScreen() {
 
       {furnitureUiReady && isApplyLayoutFlow && layoutAligned && !layoutAligning && !savingPhoto && (
         <LayoutViewControls
-          view={alignment?.view ?? 'real'}
-          onSetView={setLayoutView}
-          onRealign={realignLayout}
-          onFlip={flipLayoutAlignment}
           onRegenerate={() => {
             void customization.regenerate();
           }}
@@ -2022,8 +1598,7 @@ export function ARViewUnityScreen() {
         </View>
       )}
 
-      {arMode === 'measure' &&
-        unityAvailable &&
+      {unityAvailable &&
         (unityReady || unityTimedOut) &&
         !furnitureUiReady &&
         !measureHandoffPending && (
@@ -2038,48 +1613,30 @@ export function ARViewUnityScreen() {
         </View>
       )}
 
-      {arMode === 'furniture' && (
-        <RoomMeasurementSaveModal
-          visible={measurementModalVisible}
-          payload={confirmedPayload}
-          saving={savingMeasurement}
-          saved={measurementSaved}
-          error={measurementError}
-          onSave={handleSaveMeasurement}
-          onContinue={handleContinueFromMeasurement}
-        />
-      )}
-
-      {arMode === 'measure' && (
-        <RoomMeasurementSaveModal
-          visible={measurementModalVisible}
-          payload={confirmedPayload}
-          saving={savingMeasurement}
-          saved={measurementSaved}
-          error={measurementError}
-          measureMode
-          roomName={measureRoomName}
-          onChangeRoomName={(text) => {
-            setMeasureRoomName(text);
-            if (measurementError) setMeasurementError(null);
-          }}
-          onSave={handleSaveMeasurement}
-          onContinue={handleContinueFromMeasurement}
-          onCancel={handleCancelMeasureName}
-        />
-      )}
+      <RoomMeasurementSaveModal
+        visible={measurementModalVisible}
+        payload={confirmedPayload}
+        saving={savingMeasurement}
+        error={measurementError}
+        roomName={measureRoomName}
+        onChangeRoomName={(text) => {
+          setMeasureRoomName(text);
+          if (measurementError) setMeasurementError(null);
+        }}
+        onSave={handleSaveMeasurement}
+        onSkip={handleContinueFromMeasurement}
+      />
 
       <ARToastNotice message={toastMessage} />
 
       {/* Inline overlay, not <Modal>: an Android dialog window steals focus and pauses Unity mid-export. */}
-      {arMode === 'measure' && exportingMeasure ? (
+      {exportingMeasure ? (
         <View style={styles.exportBusyBackdrop} pointerEvents="auto">
           <View style={styles.exportBusyCard}>
             <ActivityIndicator size="large" color="#0C295F" />
             <Text style={styles.exportBusyTitle}>Creating 3D layout…</Text>
             <Text style={styles.exportBusyBody}>
-              Building your room model from the saved measurements and linking it to Room
-              Measurements and Projects.
+              Building a 3D model of your room and layout, then saving it to Projects.
             </Text>
           </View>
         </View>
@@ -2087,11 +1644,11 @@ export function ARViewUnityScreen() {
 
       <AppDialog
         visible={exitConfirmVisible}
-        title={arMode === 'measure' ? 'Exit measurement?' : 'Exit AR Furniture?'}
+        title={isApplyLayoutFlow ? 'Exit AR view?' : 'Exit room scan?'}
         message={
-          arMode === 'measure'
-            ? 'Are you sure you want to exit? Your current scan on screen will be cleared so the next open starts fresh.'
-            : 'Are you sure you want to exit? Placed furniture on screen will be cleared so the next open starts fresh.'
+          isApplyLayoutFlow
+            ? 'Are you sure you want to exit? Placed furniture on screen will be cleared so the next open starts fresh.'
+            : 'Are you sure you want to exit? Your current scan on screen will be cleared so the next open starts fresh.'
         }
         icon="exit-outline"
         dismissOnBackdrop={!exportingMeasure && !savingMeasurement && !savingPhoto}
@@ -2114,34 +1671,6 @@ export function ARViewUnityScreen() {
       />
 
       <AppDialog
-        visible={Boolean(measureSavedPrompt)}
-        title="Measurement saved"
-        message={
-          measureSavedPrompt
-            ? `“${measureSavedPrompt.roomName}” is saved to Room Measurements. Next, export the 3D layout so you can preview it and find it in Projects.`
-            : undefined
-        }
-        icon="checkmark-circle-outline"
-        dismissOnBackdrop={false}
-        onRequestClose={() => setMeasureSavedPrompt(null)}
-        actions={[
-          {
-            label: 'Later',
-            tone: 'ghost',
-            onPress: () => {
-              setMeasureSavedPrompt(null);
-              setStatusMessage('Room saved — tap Export 3D anytime');
-            },
-          },
-          {
-            label: 'Export 3D',
-            tone: 'primary',
-            onPress: startExportAfterSave,
-          },
-        ]}
-      />
-
-      <AppDialog
         visible={exportResultDialog?.kind === 'success'}
         title="3D layout exported"
         message={
@@ -2151,9 +1680,6 @@ export function ARViewUnityScreen() {
                 exportResultDialog.savedToProjects
                   ? 'Saved to Projects.'
                   : 'Could not add to Projects.',
-                exportResultDialog.linkedToMeasurement
-                  ? 'Linked for cube preview on Room Measurements.'
-                  : 'Preview link could not be saved — try Export 3D again.',
               ].join(' ')
             : undefined
         }

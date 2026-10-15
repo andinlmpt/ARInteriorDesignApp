@@ -8,22 +8,22 @@ import type { Faq } from '@/services/ContentService';
 export const DEFAULT_FAQS: Faq[] = [
   {
     question: 'How do I start designing?',
-    answer: 'Use the + tab — AR Furniture or AR Measurement — to begin.',
+    answer: 'Tap the + tab and choose Design a room. Name your project, scan your room, then pick a style and budget to get AI layouts.',
   },
   {
     question: 'How do I measure a room?',
     answer:
-      'Open AR Measurement from the + tab and follow the on-screen guides to scan and confirm your room size.',
+      'Scanning is the first step of Design a room. Follow the on-screen guides to mark the floor, wall height and corners, then confirm your room size.',
   },
   {
     question: 'Can I save my projects?',
     answer:
-      'Yes. Export a layout from AR Furniture and it will appear under Profile → Projects. Photos you save also show up in the Wishlist tab.',
+      'Yes. Every Design a room project is listed under Profile → Projects. In the AR view, tap Export to save a 3D layout to that project.',
   },
   {
     question: 'How do I save an AR photo?',
     answer:
-      'After placing furniture, tap the camera button on the bottom toolbar. The photo is saved to your gallery and the Wishlist tab.',
+      'In the AR view, tap the camera button on the bottom toolbar. The photo is saved to your gallery and to the project under Profile → Projects.',
   },
 ];
 

@@ -7,9 +7,13 @@ using UnityEngine.XR.ARSubsystems;
 using Unity.InferenceEngine;
 
 /// <summary>
-/// Optional COCO object detector (Inference Engine). Loads the model at
-/// Resources/ML/FurnitureDetector: YOLO11n pretrained on COCO, taken from
+/// Object detector for the room scan (Inference Engine). Prefers Resources/ML/RoomDetector:
+/// YOLOv8s pretrained on Open Images V7 (601 classes, Ultralytics, AGPL-3.0), which knows doors,
+/// windows and far more furniture (wardrobes, cabinets, shelves, desks, nightstands, …). Falls back
+/// to Resources/ML/FurnitureDetector: YOLO11n pretrained on COCO, from
 /// huggingface.co/unity/inference-engine-yolo (GPL-3.0). See Editor ▸ AR Interior ▸ Setup Furniture Detector.
+/// Furniture comes back as suggestions from <see cref="TryDetect"/>; doors and windows are kept as
+/// <see cref="AutoOpeningResolver.Sighting"/>s for <see cref="TakeOpeningSightings"/>.
 /// </summary>
 [DisallowMultipleComponent]
 public class ARFurnitureCocoDetector : MonoBehaviour
@@ -34,9 +38,23 @@ public class ARFurnitureCocoDetector : MonoBehaviour
         if (instance != null) instance.ReleaseModel();
         instance = null;
     }
+    const string RoomModelResourcePath = "ML/RoomDetector";
     const string ModelResourcePath = "ML/FurnitureDetector";
     const int InputSize = 640;
     const float IouThreshold = 0.5f;
+    const int MaxOpeningSightings = 120;
+
+    static bool? hasRoomModel;
+
+    /// <summary>True when the Open Images model (doors and windows) ships with this build.</summary>
+    public static bool HasRoomModel
+    {
+        get
+        {
+            hasRoomModel ??= Resources.Load<ModelAsset>(RoomModelResourcePath) != null;
+            return hasRoomModel.Value;
+        }
+    }
 
     // Turns YOLO's (centre x, centre y, width, height) rows into (x1, y1, x2, y2) for NMS.
     static readonly float[] CentersToCorners =
@@ -50,7 +68,16 @@ public class ARFurnitureCocoDetector : MonoBehaviour
     [SerializeField] private Camera arCamera;
     [SerializeField] private ARCameraManager cameraManager;
     [SerializeField] private float minConfidence = 0.45f;
-    [SerializeField] private float scanIntervalSeconds = 1.5f;
+    [Tooltip("Open Images scores run lower than COCO's; repeat sightings make up for it.")]
+    [SerializeField] private float openImagesScoreThreshold = 0.2f;
+    [SerializeField] private float openImagesFurnitureConfidence = 0.25f;
+    [SerializeField] private float scanIntervalSeconds = 2.0f;
+    [Tooltip("A new frame is only captured while the phone turns slower than this (degrees per second).")]
+    [SerializeField] private float maxTurnDegreesPerSecond = 35f;
+    [Tooltip("…and moves slower than this (metres per second). Steady frames are sharper too.")]
+    [SerializeField] private float maxMoveMetresPerSecond = 0.4f;
+    [Tooltip("Model layers sent to the GPU per frame. Fewer spreads a detection over more frames, so the camera doesn't stutter.")]
+    [SerializeField] private int maxLayersPerFrame = 4;
 
     // Padding colour around the letterboxed frame, as in YOLO training (114/255 grey).
     static readonly Color LetterboxGrey = new Color(0.447f, 0.447f, 0.447f, 1f);
@@ -58,6 +85,9 @@ public class ARFurnitureCocoDetector : MonoBehaviour
     float nextScanTime;
     bool loggedMissingModel;
     int nextSuggestionId;
+    bool openImages;
+    float scoreThreshold;
+    readonly List<AutoOpeningResolver.Sighting> openingSightings = new();
 
     ModelAsset modelAsset;
     Worker worker;
@@ -81,10 +111,35 @@ public class ARFurnitureCocoDetector : MonoBehaviour
     Tensor<float> scoreOutput;
     List<RawDet> completedDetections;
     float inferenceStarted;
+    int inferenceFrames;
     bool discardInFlight;
+    bool hasLastPose;
+    Vector3 lastCameraPosition;
+    Quaternion lastCameraRotation;
+    float turnSpeed;
+    float moveSpeed;
     Vector3 captureOrigin, captureBottomLeft, captureBottomRight, captureTopLeft;
 
     public bool IsAvailable => ready;
+
+    /// <summary>Loads the model ahead of time (a short pause), e.g. while the user holds still for the floor.</summary>
+    public void Preload()
+    {
+        if (!ready) TryLoadModel();
+    }
+
+    /// <summary>True while the phone turns or moves too fast for a sharp, cheap-to-skip frame.</summary>
+    public bool IsMovingFast => turnSpeed > maxTurnDegreesPerSecond || moveSpeed > maxMoveMetresPerSecond;
+    /// <summary>The loaded model knows doors and windows.</summary>
+    public bool DetectsOpenings => ready && openImages;
+
+    /// <summary>Door/window sightings since the last call (rays from where the camera was).</summary>
+    public List<AutoOpeningResolver.Sighting> TakeOpeningSightings()
+    {
+        var taken = new List<AutoOpeningResolver.Sighting>(openingSightings);
+        openingSightings.Clear();
+        return taken;
+    }
     public bool IsScanning => schedule != null || boxOutput != null;
     public bool HasResults => completedDetections != null;
 
@@ -144,26 +199,36 @@ public class ARFurnitureCocoDetector : MonoBehaviour
     {
         if (ready || loadAttempted || (instance != null && instance != this)) return;
         loadAttempted = true;
-        modelAsset = Resources.Load<ModelAsset>(ModelResourcePath);
+        modelAsset = Resources.Load<ModelAsset>(RoomModelResourcePath);
+        openImages = modelAsset != null;
+        if (modelAsset == null)
+            modelAsset = Resources.Load<ModelAsset>(ModelResourcePath);
         if (modelAsset == null)
             return;
+        scoreThreshold = openImages ? openImagesScoreThreshold : minConfidence;
 
         try
         {
             var model = ModelLoader.Load(modelAsset);
 
-            // YOLO outputs (1, 84, 8400): box centre x, centre y, width, height in input pixels, then
-            // 80 class scores. Pick the best class per box and run non-max suppression in the graph,
-            // so the worker returns only the kept boxes, their class ids and their scores.
+            // YOLO outputs (1, 4 + classes, 8400): box centre x, centre y, width, height in input pixels,
+            // then the class scores (80 for COCO, 601 for Open Images). Pick the best class per box and
+            // run non-max suppression in the graph, so the worker returns only the kept boxes, their
+            // class ids and their scores.
             var graph = new FunctionalGraph();
             var inputs = graph.AddInputs(model);
             var output = Functional.Forward(model, inputs)[0];
             var boxes = output[0, 0..4, ..].Transpose(0, 1);
             var classScores = output[0, 4.., ..];
+            // Open Images has catch-alls ("Furniture", "House", "Building") whose big boxes would win
+            // the suppression over the door or sofa inside them, so only room classes compete.
+            if (openImages)
+                classScores = classScores * Functional.Constant(
+                    new TensorShape(RoomDetectorLabels.OpenImagesClassCount, 1), RoomDetectorLabels.OpenImagesRoomMask());
             var scores = Functional.ReduceMax(classScores, 0);
             var classIds = Functional.ArgMax(classScores, 0);
             var boxCorners = Functional.MatMul(boxes, Functional.Constant(new TensorShape(4, 4), CentersToCorners));
-            var keep = Functional.NMS(boxCorners, scores, IouThreshold, minConfidence);
+            var keep = Functional.NMS(boxCorners, scores, IouThreshold, scoreThreshold);
 
             var backend = SystemInfo.supportsComputeShaders ? BackendType.GPUCompute : BackendType.CPU;
             worker = new Worker(
@@ -175,7 +240,7 @@ public class ARFurnitureCocoDetector : MonoBehaviour
             inputTensor = new Tensor<float>(new TensorShape(1, 3, InputSize, InputSize));
             inputRt = new RenderTexture(InputSize, InputSize, 0, RenderTextureFormat.ARGB32);
             ready = true;
-            Debug.Log($"[ARFurnitureCocoDetector] COCO detector ready ({backend}).");
+            Debug.Log($"[ARFurnitureCocoDetector] {(openImages ? "Open Images room" : "COCO")} detector ready ({backend}).");
         }
         catch (Exception e)
         {
@@ -269,7 +334,7 @@ public class ARFurnitureCocoDetector : MonoBehaviour
 
         if (completedDetections == null)
         {
-            if (!IsScanning && Time.unscaledTime >= nextScanTime && TryCaptureFrame())
+            if (!IsScanning && Time.unscaledTime >= nextScanTime && !IsMovingFast && TryCaptureFrame())
                 BeginInference();
             return empty;
         }
@@ -279,22 +344,30 @@ public class ARFurnitureCocoDetector : MonoBehaviour
         var results = new List<FurnitureAutoSuggestion>();
         // One note per detection saying what happened to it, so a scan log explains itself.
         var notes = new List<string>();
+        var furnitureConfidence = openImages ? openImagesFurnitureConfidence : minConfidence;
         foreach (var det in detections)
         {
             var what = $"{det.label} {det.confidence:F2}";
-            var mapped = CocoFurnitureLabelMap.Map(det.label);
+            var opening = RoomDetectorLabels.MapOpening(det.label);
+            if (opening != null)
+            {
+                notes.Add($"{what} {RecordOpeningSighting(det, opening)}");
+                continue;
+            }
+
+            var mapped = RoomDetectorLabels.MapFurniture(det.label);
             if (mapped == null)
             {
                 notes.Add($"{what} ignored (not furniture)");
                 continue;
             }
-            if (det.confidence < minConfidence)
+            if (det.confidence < furnitureConfidence)
             {
                 notes.Add($"{what} ignored (low confidence)");
                 continue;
             }
 
-            var defaultSize = CocoFurnitureLabelMap.DefaultSize(mapped);
+            var defaultSize = RoomDetectorLabels.DefaultSize(det.label, mapped);
             Vector3 center, size;
             float yaw;
             string method;
@@ -348,6 +421,47 @@ public class ARFurnitureCocoDetector : MonoBehaviour
         Debug.Log($"[ARFurnitureCocoDetector] AR scan: {detections.Count} detections, {results.Count} furniture suggestions" +
             (notes.Count > 0 ? ": " + string.Join("; ", notes) : "."));
         return results;
+    }
+
+    /// <summary>
+    /// Keeps a door/window as rays through its box from the captured camera pose, so it can be put
+    /// on a wall once the room outline is known (even if that happens later).
+    /// </summary>
+    string RecordOpeningSighting(RawDet det, string kind)
+    {
+        if (det.confidence < RoomDetectorLabels.MinOpeningConfidence(det.label))
+            return "ignored (low confidence)";
+        var box = det.normalizedBox;
+        // Cut off at the side: its width isn't the opening's. It'll be seen whole from elsewhere.
+        if (box.xMin < 0.02f || box.xMax > 0.98f)
+            return "skipped (cut off at the side of the view)";
+
+        openingSightings.Add(new AutoOpeningResolver.Sighting
+        {
+            kind = kind,
+            confidence = det.confidence,
+            origin = captureOrigin,
+            bottomLeft = CaptureRay(box.xMin, box.yMax),
+            bottomRight = CaptureRay(box.xMax, box.yMax),
+            bottomCenter = CaptureRay(box.center.x, box.yMax),
+            topCenter = CaptureRay(box.center.x, box.yMin),
+            topCut = box.yMin < 0.02f,
+            bottomCut = box.yMax > 0.98f,
+        });
+        if (openingSightings.Count > MaxOpeningSightings)
+            openingSightings.RemoveAt(0);
+        return $"kept as a {kind} sighting";
+    }
+
+    /// <summary>Ray direction through a point of the captured frame (normalized, y down).</summary>
+    Vector3 CaptureRay(float nx, float ny)
+    {
+        var vx = Mathf.Clamp01(nx);
+        var vy = 1f - Mathf.Clamp01(ny);
+        var point = captureBottomLeft
+            + (captureBottomRight - captureBottomLeft) * vx
+            + (captureTopLeft - captureBottomLeft) * vy;
+        return point - captureOrigin;
     }
 
     /// <summary>
@@ -518,6 +632,7 @@ public class ARFurnitureCocoDetector : MonoBehaviour
         {
             TextureConverter.ToTensor(inputRt, inputTensor, default);
             inferenceStarted = Time.unscaledTime;
+            inferenceFrames = 0;
             discardInFlight = false;
             schedule = worker.ScheduleIterable(inputTensor);
         }
@@ -531,16 +646,18 @@ public class ARFurnitureCocoDetector : MonoBehaviour
 
     void Update()
     {
+        TrackCameraMotion();
         if (!IsScanning) return;
+        inferenceFrames++;
         try
         {
             if (Time.unscaledTime - inferenceStarted > 60f)
                 throw new TimeoutException("Furniture detection timed out.");
             if (schedule != null)
             {
-                // Spread scheduling across frames; never synchronously wait for GPU output.
-                var budget = System.Diagnostics.Stopwatch.StartNew();
-                while (budget.Elapsed.TotalMilliseconds < 4)
+                // Spread the model over frames a few layers at a time, so the GPU work of one
+                // detection doesn't land in one frame (a visible camera stutter). Never wait for output.
+                for (var layers = 0; layers < maxLayersPerFrame; layers++)
                 {
                     if (schedule.MoveNext()) continue;
                     (schedule as IDisposable)?.Dispose();
@@ -560,6 +677,7 @@ public class ARFurnitureCocoDetector : MonoBehaviour
             if (boxOutput.count > 0 && (!boxOutput.IsReadbackRequestDone()
                 || !classOutput.IsReadbackRequestDone() || !scoreOutput.IsReadbackRequestDone())) return;
             completedDetections = ReadDetections(boxOutput, classOutput, scoreOutput);
+            Debug.Log($"[Perf] Detection took {(Time.unscaledTime - inferenceStarted) * 1000f:F0} ms over {inferenceFrames} frames.");
             if (discardInFlight) completedDetections = null;
             boxOutput = null;
             classOutput = null;
@@ -572,6 +690,24 @@ public class ARFurnitureCocoDetector : MonoBehaviour
             ReleaseModel();
             loadAttempted = true;
         }
+    }
+
+    /// <summary>Smoothed camera speed (same idea as <see cref="ARScanGuidance"/>), to skip blurry frames.</summary>
+    void TrackCameraMotion()
+    {
+        if (arCamera == null) return;
+        var t = arCamera.transform;
+        var dt = Time.unscaledDeltaTime;
+        if (hasLastPose && dt > 1e-4f)
+        {
+            var k = 1f - Mathf.Exp(-dt / 0.25f);
+            turnSpeed = Mathf.Lerp(turnSpeed, Quaternion.Angle(lastCameraRotation, t.rotation) / dt, k);
+            moveSpeed = Mathf.Lerp(moveSpeed, Vector3.Distance(lastCameraPosition, t.position) / dt, k);
+        }
+
+        lastCameraRotation = t.rotation;
+        lastCameraPosition = t.position;
+        hasLastPose = true;
     }
 
     public void DiscardResults()
@@ -644,8 +780,8 @@ public class ARFurnitureCocoDetector : MonoBehaviour
         for (var n = 0; n < boxes.shape[0]; n++)
         {
             var score = scores[n];
-            if (score < minConfidence) continue;
-            var label = CocoFurnitureLabelMap.ClassName(classIds[n]);
+            if (score < scoreThreshold) continue;
+            var label = RoomDetectorLabels.ClassName(openImages, classIds[n]);
             if (label == null) continue;
 
             // Boxes are in input pixels with y down; map them back to the whole screen (normalized, y down).
@@ -660,7 +796,7 @@ public class ARFurnitureCocoDetector : MonoBehaviour
                 confidence = score,
                 normalizedBox = new Rect(centerX - width * 0.5f, centerY - height * 0.5f, width, height),
             });
-            if (CocoFurnitureLabelMap.Map(label) != null)
+            if (RoomDetectorLabels.MapFurniture(label) != null || RoomDetectorLabels.MapOpening(label) != null)
                 Debug.Log($"[ARFurnitureCocoDetector] Detected {label}, confidence {score:F2}.");
         }
 
@@ -722,9 +858,14 @@ public static class ARFurniturePlaneAutoScannerOverlapsHelper
     }
 }
 
-/// <summary>COCO class names relevant to interior furniture.</summary>
-public static class CocoFurnitureLabelMap
+/// <summary>
+/// Class names for both detector models, and what they mean for the room: furniture types
+/// (obstacles for the layout planner) or doors and windows.
+/// </summary>
+public static class RoomDetectorLabels
 {
+    public const int OpenImagesClassCount = 601;
+
     static readonly string[] CocoNames =
     {
         "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
@@ -738,27 +879,88 @@ public static class CocoFurnitureLabelMap
         "scissors", "teddy bear", "hair drier", "toothbrush",
     };
 
-    public static string ClassName(int classId)
+    /// <summary>
+    /// Open Images V7 class ids (Ultralytics yolov8*-oiv7 order) for the classes a room scan uses.
+    /// Every other class is masked out of the model's scores.
+    /// </summary>
+    static readonly Dictionary<int, string> OpenImagesRoomClasses = new()
     {
-        if (classId < 0 || classId >= CocoNames.Length) return null;
-        return CocoNames[classId];
+        { 164, "Door" }, { 587, "Window" }, { 588, "Window blind" }, { 148, "Curtain" },
+        { 136, "Couch" }, { 477, "Sofa bed" }, { 499, "Studio couch" }, { 317, "Loveseat" },
+        { 34, "Bed" }, { 104, "Chair" }, { 494, "Stool" }, { 41, "Bench" },
+        { 514, "Table" }, { 122, "Coffee table" }, { 290, "Kitchen & dining room table" }, { 153, "Desk" },
+        { 574, "Wardrobe" }, { 147, "Cupboard" }, { 77, "Cabinetry" }, { 107, "Chest of drawers" },
+        { 189, "Filing cabinet" }, { 55, "Bookcase" }, { 453, "Shelf" }, { 352, "Nightstand" },
+        { 527, "Television" }, { 419, "Refrigerator" }, { 258, "Houseplant" },
+    };
+
+    public static string ClassName(bool openImages, int classId)
+    {
+        if (openImages)
+            return OpenImagesRoomClasses.TryGetValue(classId, out var name) ? name : null;
+        return classId >= 0 && classId < CocoNames.Length ? CocoNames[classId] : null;
     }
 
-    public static string Map(string cocoLabel)
+    /// <summary>1 for room classes, 0 for the rest (shape: classes × 1).</summary>
+    public static float[] OpenImagesRoomMask()
     {
-        if (string.IsNullOrEmpty(cocoLabel)) return null;
-        var lower = cocoLabel.ToLowerInvariant();
-        return lower switch
+        var mask = new float[OpenImagesClassCount];
+        foreach (var id in OpenImagesRoomClasses.Keys)
+            mask[id] = 1f;
+        return mask;
+    }
+
+    /// <summary>"door" | "window" for an opening, otherwise null. Blinds and curtains hang over windows.</summary>
+    public static string MapOpening(string label) => label?.ToLowerInvariant() switch
+    {
+        "door" => "door",
+        "window" or "window blind" or "curtain" => "window",
+        _ => null,
+    };
+
+    /// <summary>A curtain is weaker evidence of a window than the window itself.</summary>
+    public static float MinOpeningConfidence(string label) => label?.ToLowerInvariant() switch
+    {
+        "door" => 0.2f,
+        "curtain" => 0.35f,
+        _ => 0.25f,
+    };
+
+    /// <summary>The layout planner's obstacle type for a detected class, or null when it isn't furniture.</summary>
+    public static string MapFurniture(string label)
+    {
+        if (string.IsNullOrEmpty(label)) return null;
+        return label.ToLowerInvariant() switch
         {
-            "couch" => "sofa",
-            "chair" => "chair",
+            "couch" or "sofa bed" or "studio couch" or "loveseat" => "sofa",
             "bed" => "bed",
-            "dining table" => "table",
-            "potted plant" => "other",
-            "tv" => "other",
+            "chair" or "stool" or "bench" => "chair",
+            "table" or "dining table" or "coffee table" or "kitchen & dining room table" => "table",
+            "desk" => "desk",
+            "wardrobe" or "cupboard" => "wardrobe",
+            "cabinetry" or "chest of drawers" or "filing cabinet" or "bookcase" or "shelf" or "nightstand"
+                or "refrigerator" or "television" or "tv" or "houseplant" or "potted plant" => "other",
             _ => null,
         };
     }
+
+    /// <summary>Typical footprint (width, height, depth) when depth can't measure it.</summary>
+    public static Vector3 DefaultSize(string label, string obstacleType) => label?.ToLowerInvariant() switch
+    {
+        "loveseat" => new Vector3(1.5f, 0.85f, 0.9f),
+        "stool" => new Vector3(0.4f, 0.6f, 0.4f),
+        "bench" => new Vector3(1.2f, 0.45f, 0.4f),
+        "coffee table" => new Vector3(1.0f, 0.45f, 0.6f),
+        "nightstand" => new Vector3(0.5f, 0.55f, 0.4f),
+        "chest of drawers" => new Vector3(0.9f, 1.0f, 0.5f),
+        "cabinetry" => new Vector3(1.0f, 0.9f, 0.5f),
+        "filing cabinet" => new Vector3(0.5f, 1.0f, 0.6f),
+        "bookcase" => new Vector3(0.8f, 1.8f, 0.35f),
+        "shelf" => new Vector3(0.8f, 1.5f, 0.35f),
+        "refrigerator" => new Vector3(0.7f, 1.7f, 0.7f),
+        "houseplant" or "potted plant" => new Vector3(0.4f, 0.8f, 0.4f),
+        _ => DefaultSize(obstacleType),
+    };
 
     public static Vector3 DefaultSize(string obstacleType) => obstacleType switch
     {

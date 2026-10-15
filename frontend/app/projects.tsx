@@ -1,5 +1,5 @@
 /**
- * Projects — split into AR Furniture (captured photos) and AR Measurement (3D layout exports).
+ * Projects — "Design a room" projects, with any 3D layout export and AR photos saved to them.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -23,21 +23,14 @@ import { spacing, radii } from '@/components/ui/theme';
 import { getHorizontalPadding } from '@/utils/responsive';
 import { ImageViewerModal } from '@/components/ui/ImageViewerModal';
 import { projectService } from '@/services/ProjectService';
-import type { Project, ProjectArMode } from '@/types/project';
+import type { Project } from '@/types/project';
 import { BRAND } from '@/constants/branding';
 import { buildModelPreviewExportHref } from '@/utils/modelPreviewExport';
 
-/** Legacy projects predate `arMode` — Unity exports belong to AR Measurement. */
-function projectCategory(project: Project): ProjectArMode {
-  if (project.arMode) return project.arMode;
-  return project.source === 'unity-export' ? 'measure' : 'furniture';
+/** AR Furniture / AR Measurement projects (and legacy ones without `arMode`) stay stored but hidden. */
+function isDesignProject(project: Project): boolean {
+  return project.arMode === 'design';
 }
-
-const CATEGORIES: { key: ProjectArMode; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { key: 'furniture', label: 'Furniture', icon: 'cube-outline' },
-  { key: 'measure', label: 'Measure', icon: 'resize-outline' },
-  { key: 'design', label: 'Design', icon: 'color-wand-outline' },
-];
 
 type DialogState = {
   title: string;
@@ -65,14 +58,13 @@ export default function ProjectsScreen() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<DialogState | null>(null);
-  const [category, setCategory] = useState<ProjectArMode>('furniture');
   const [photoPreview, setPhotoPreview] = useState<{ uri: string; title: string; subtitle: string } | null>(
     null
   );
 
   const visibleProjects = useMemo(
-    () => projects.filter((p) => projectCategory(p) === category),
-    [projects, category]
+    () => projects.filter(isDesignProject),
+    [projects]
   );
 
   const closeDialog = useCallback(() => setDialog(null), []);
@@ -137,12 +129,6 @@ export default function ProjectsScreen() {
     setSelected(allSelected ? new Set() : new Set(visibleProjects.map((p) => p.id)));
   };
 
-  const switchCategory = (next: ProjectArMode) => {
-    if (next === category) return;
-    exitSelectMode();
-    setCategory(next);
-  };
-
   const deleteIds = async (ids: string[]) => {
     closeDialog();
     setDeleting(new Set(ids));
@@ -178,51 +164,69 @@ export default function ProjectsScreen() {
     });
   };
 
+  const openDesign = (project: Project) => {
+    router.push({
+      pathname: '/design-preferences',
+      params: { projectId: project.id, flow: 'design' },
+    });
+  };
+
   const openProject = (project: Project) => {
-    if (projectCategory(project) === 'design') {
-      router.push({
-        pathname: '/design-preferences',
-        params: { projectId: project.id, flow: 'design' },
+    const exportPath = project.unityExport?.path;
+    const latestPhoto = project.photos?.[project.photos.length - 1];
+    if (!exportPath && !latestPhoto) {
+      openDesign(project);
+      return;
+    }
+
+    // Export 3D and the camera button in the AR step save here, so offer them before the design.
+    const actions: AppDialogAction[] = [];
+    if (exportPath) {
+      actions.push({
+        label: 'View 3D layout',
+        tone: 'primary',
+        onPress: () => {
+          closeDialog();
+          router.push(
+            buildModelPreviewExportHref({
+              uri: exportPath,
+              title: project.name || project.unityExport?.fileName,
+              furnitureCount: project.unityExport?.furnitureCount,
+              projectId: project.id,
+            })
+          );
+        },
       });
-      return;
     }
-
-    if (projectCategory(project) === 'furniture') {
-      const latest = project.photos?.[project.photos.length - 1];
-      if (latest) {
-        const count = project.photos?.length ?? 1;
-        setPhotoPreview({
-          uri: latest.uri,
-          title: project.name,
-          subtitle: `${count} capture${count === 1 ? '' : 's'} · ${formatDate(latest.capturedAt)}`,
-        });
-        return;
-      }
-      showMessage(
-        project.name,
-        'No captures yet. Use the camera button in AR Furniture to add photos to this project.',
-        'camera-outline'
-      );
-      return;
+    if (latestPhoto) {
+      const count = project.photos?.length ?? 1;
+      actions.push({
+        label: count === 1 ? 'View photo' : `View latest photo (${count})`,
+        tone: exportPath ? 'ghost' : 'primary',
+        onPress: () => {
+          closeDialog();
+          setPhotoPreview({
+            uri: latestPhoto.uri,
+            title: project.name,
+            subtitle: `${count} AR photo${count === 1 ? '' : 's'} · ${formatDate(latestPhoto.capturedAt)}`,
+          });
+        },
+      });
     }
-
-    if (project.source === 'unity-export' && project.unityExport?.path) {
-      router.push(
-        buildModelPreviewExportHref({
-          uri: project.unityExport.path,
-          title: project.name || project.unityExport.fileName,
-          furnitureCount: project.unityExport.furnitureCount,
-          projectId: project.id,
-        })
-      );
-      return;
-    }
-
-    showMessage(
-      project.name,
-      'No 3D layout yet. Tap Export in AR Measurement to add one to this project.',
-      'information-circle-outline'
-    );
+    actions.push({
+      label: 'Open design',
+      tone: 'ghost',
+      onPress: () => {
+        closeDialog();
+        openDesign(project);
+      },
+    });
+    setDialog({
+      title: project.name,
+      message: 'What would you like to open?',
+      icon: 'folder-open-outline',
+      actions,
+    });
   };
 
   const handlePress = (project: Project) => {
@@ -237,20 +241,18 @@ export default function ProjectsScreen() {
   };
 
   const renderItem = ({ item }: { item: Project }) => {
-    const isUnity = item.source === 'unity-export';
-    const isFurniture = projectCategory(item) === 'furniture';
-    const isDesign = projectCategory(item) === 'design';
+    const hasExport = Boolean(item.unityExport?.path);
     const photoCount = item.photos?.length ?? 0;
-    const thumbnail = isFurniture ? item.photos?.[photoCount - 1]?.uri ?? item.thumbnail : undefined;
+    const thumbnail = item.photos?.[photoCount - 1]?.uri;
     const isDeleting = deleting.has(item.id);
     const isSelected = selected.has(item.id);
-    const subtitle = isDesign
-      ? `AI layout · ${formatDate(item.updatedAt)}`
-      : isFurniture
-      ? `${photoCount > 0 ? `${photoCount} capture${photoCount === 1 ? '' : 's'}` : 'No captures yet'} · ${formatDate(item.updatedAt)}`
-      : isUnity
-        ? `3D layout · ${item.unityExport?.furnitureCount ?? 0} pieces · ${formatDate(item.updatedAt)}`
-        : `Not exported yet · ${formatDate(item.updatedAt)}`;
+    const subtitle = [
+      hasExport ? `3D layout · ${item.unityExport?.furnitureCount ?? 0} pieces` : 'AI layout',
+      photoCount > 0 ? `${photoCount} photo${photoCount === 1 ? '' : 's'}` : null,
+      formatDate(item.updatedAt),
+    ]
+      .filter(Boolean)
+      .join(' · ');
     return (
       <TouchableOpacity
         style={[
@@ -288,21 +290,13 @@ export default function ProjectsScreen() {
           <View
             style={[
               styles.iconWrap,
-              { backgroundColor: isUnity ? `${BRAND.colors.orange}18` : `${colors.accent}18` },
+              { backgroundColor: hasExport ? `${BRAND.colors.orange}18` : `${colors.accent}18` },
             ]}
           >
             <Ionicons
-              name={
-                isDesign
-                  ? 'color-wand-outline'
-                  : isUnity
-                    ? 'cube-outline'
-                    : isFurniture
-                      ? 'camera-outline'
-                      : 'folder-outline'
-              }
+              name={hasExport ? 'cube-outline' : 'color-wand-outline'}
               size={22}
-              color={isUnity ? BRAND.colors.orange : colors.accent}
+              color={hasExport ? BRAND.colors.orange : colors.accent}
             />
           </View>
         )}
@@ -373,36 +367,6 @@ export default function ProjectsScreen() {
           </View>
         </View>
 
-        <View
-          style={[styles.segment, { backgroundColor: colors.surfacePrimary, borderColor: colors.border }]}
-          accessibilityRole="tablist"
-        >
-          {CATEGORIES.map((c) => {
-            const active = c.key === category;
-            return (
-              <TouchableOpacity
-                key={c.key}
-                onPress={() => switchCategory(c.key)}
-                activeOpacity={0.85}
-                style={[styles.segmentBtn, active && { backgroundColor: colors.accent }]}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: active }}
-                accessibilityLabel={c.label}
-              >
-                <Ionicons name={c.icon} size={16} color={active ? '#FFFFFF' : colors.textSecondary} />
-                <AppText
-                  variant="caption"
-                  weight="600"
-                  numberOfLines={1}
-                  style={{ color: active ? '#FFFFFF' : colors.textSecondary }}
-                >
-                  {c.label}
-                </AppText>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
         {loading ? (
           <View style={styles.centered}>
             <ActivityIndicator size="large" color={colors.accent} />
@@ -416,30 +380,12 @@ export default function ProjectsScreen() {
             contentContainerStyle={[styles.list, selectMode && { paddingBottom: 96 + insets.bottom }]}
             ListEmptyComponent={
               <View style={styles.empty}>
-                <Ionicons
-                  name={
-                    category === 'furniture'
-                      ? 'camera-outline'
-                      : category === 'design'
-                        ? 'color-wand-outline'
-                        : 'cube-outline'
-                  }
-                  size={48}
-                  color={colors.textMuted}
-                />
+                <Ionicons name="color-wand-outline" size={48} color={colors.textMuted} />
                 <AppText variant="h3" style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-                  {category === 'furniture'
-                    ? 'No AR Furniture projects yet'
-                    : category === 'design'
-                      ? 'No design projects yet'
-                      : 'No AR Measurement projects yet'}
+                  No design projects yet
                 </AppText>
                 <AppText variant="body" color="textMuted" style={styles.emptyText}>
-                  {category === 'furniture'
-                    ? 'Tap the camera button in AR Furniture and your captures will appear here.'
-                    : category === 'design'
-                      ? 'Start Design a room from the Camera tab to generate layouts.'
-                      : 'Export a 3D layout from AR Measurement and it will appear here.'}
+                  Tap the + tab and choose Design a room to generate layouts.
                 </AppText>
               </View>
             }
@@ -528,25 +474,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   title: { fontWeight: '700' },
-  segment: {
-    flexDirection: 'row',
-    marginHorizontal: getHorizontalPadding(spacing.lg),
-    marginBottom: spacing.md,
-    padding: 4,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    gap: 4,
-  },
-  segmentBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    minHeight: 40,
-    borderRadius: radii.pill,
-    paddingHorizontal: spacing.sm,
-  },
   thumbnail: {
     width: 44,
     height: 44,

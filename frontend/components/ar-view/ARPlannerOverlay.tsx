@@ -52,7 +52,7 @@ interface ARPlannerOverlayProps {
   onUndo: () => void;
   onRedo: () => void;
   onClear: () => void;
-  /** Omit to hide the top-right Export button (AR Furniture mode). */
+  /** Omit to hide the top-right Export button. */
   onExport?: () => void;
   onSavePhoto?: () => void;
   savingPhoto?: boolean;

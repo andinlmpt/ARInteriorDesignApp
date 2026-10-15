@@ -16,9 +16,14 @@ public class ARDesignCameraWatchdog : MonoBehaviour
     [SerializeField] private ARDesignLayoutModeController layoutMode;
     [SerializeField] private float checkInterval = 1.25f;
     [SerializeField] private float gracePeriod = 3f;
+    [Tooltip("Seconds the camera may be unavailable (taken by the phone's flashlight, another app) before the session is restarted.")]
+    [SerializeField] private float cameraUnavailableRecoverAfter = 2f;
+    [SerializeField] private float cameraRetryInterval = 3f;
 
     float nextCheck;
     float aliveSince;
+    float cameraUnavailableSince = -1f;
+    float nextCameraRetry;
 
     void Awake()
     {
@@ -37,6 +42,7 @@ public class ARDesignCameraWatchdog : MonoBehaviour
         if (layoutMode != null && layoutMode.IsPlannerOrbitActive) return;
 
         if (Time.unscaledTime < aliveSince + gracePeriod) return;
+        if (TickCameraUnavailable()) return;
         if (Time.unscaledTime < nextCheck) return;
         nextCheck = Time.unscaledTime + checkInterval;
 
@@ -59,6 +65,29 @@ public class ARDesignCameraWatchdog : MonoBehaviour
             Debug.LogWarning($"[ARDesignCameraWatchdog] Recovering from state={ARSession.state}");
             bootstrap?.ResumeCamera();
         }
+    }
+
+    /// <summary>
+    /// While ARCore reports the camera as unavailable (the phone's flashlight or another app holds
+    /// it), keep trying to get it back every few seconds instead of leaving the view frozen.
+    /// </summary>
+    bool TickCameraUnavailable()
+    {
+        if (ARSession.notTrackingReason != UnityEngine.XR.ARSubsystems.NotTrackingReason.CameraUnavailable)
+        {
+            cameraUnavailableSince = -1f;
+            return false;
+        }
+
+        var now = Time.unscaledTime;
+        if (cameraUnavailableSince < 0f) cameraUnavailableSince = now;
+        if (now - cameraUnavailableSince >= cameraUnavailableRecoverAfter && now >= nextCameraRetry)
+        {
+            nextCameraRetry = now + cameraRetryInterval;
+            bootstrap?.ReacquireCamera();
+        }
+
+        return true;
     }
 
     void OnApplicationPause(bool paused)

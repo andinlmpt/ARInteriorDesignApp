@@ -21,8 +21,7 @@ const MAX_RETRIES = 2;
 
 // Get Pexels API key from environment
 const getPexelsApiKey = () => {
-  // Pexels API key for theme recommendation
-  const pexelsKey = process.env.PEXELS_API_KEY || process.env.THEME_RECOMMENDATION_API_KEY || 'OdfpmqRFbKh3StVE19NieMW9QYAhDuQWSftDvYd0rPQRBMowMAjILJ9O';
+  const pexelsKey = process.env.PEXELS_API_KEY;
   if (pexelsKey && pexelsKey.trim().length > 20) {
     console.log('[ImageGeneration] Using Pexels API key');
     return pexelsKey.trim();

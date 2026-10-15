@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Haptics from 'expo-haptics';
 import type { UnityARViewerHandle } from '@/components/UnityARViewer';
-import type { LayoutAlignmentPayload, LayoutViewMode } from '@/types/unity-bridge';
+import type { LayoutAlignmentPayload } from '@/types/unity-bridge';
 
 const BEGIN_RETRY_MS = 1500;
 const MAX_BEGIN_RETRIES = 4;
@@ -28,7 +28,7 @@ interface UseLayoutAlignmentProps {
   /** Unity has the room shell and furniture placement armed. */
   ready: boolean;
   unityRef: React.RefObject<UnityARViewerHandle | null>;
-  /** Called every time the layout lands on the real room (first time and realigns). */
+  /** Called when the layout lands on the real room. */
   onAligned?: (payload: LayoutAlignmentPayload, firstTime: boolean) => void;
 }
 
@@ -40,9 +40,6 @@ interface UseLayoutAlignmentReturn {
   handleLayoutAlignment: (payload: LayoutAlignmentPayload) => void;
   markCorner: () => void;
   undoCorner: () => void;
-  flip: () => void;
-  realign: () => void;
-  setView: (view: LayoutViewMode) => void;
 }
 
 export function useLayoutAlignment({
@@ -137,25 +134,6 @@ export function useLayoutAlignment({
   const markCorner = useCallback(() => unityRef.current?.markAlignmentCorner(), [unityRef]);
   const undoCorner = useCallback(() => unityRef.current?.undoAlignmentCorner(), [unityRef]);
 
-  const flip = useCallback(() => {
-    unityRef.current?.flipLayoutAlignment();
-    prevRef.current = null;
-  }, [unityRef]);
-
-  const realign = useCallback(() => {
-    retriesRef.current = 0;
-    prevRef.current = null;
-    sendBegin();
-  }, [sendBegin]);
-
-  const setView = useCallback(
-    (view: LayoutViewMode) => {
-      setAlignment((prev) => (prev ? { ...prev, view } : prev));
-      unityRef.current?.setLayoutView(view);
-    },
-    [unityRef]
-  );
-
   return {
     alignment,
     isAligning: enabled && alignment?.state === 'aligning',
@@ -163,8 +141,5 @@ export function useLayoutAlignment({
     handleLayoutAlignment,
     markCorner,
     undoCorner,
-    flip,
-    realign,
-    setView,
   };
 }

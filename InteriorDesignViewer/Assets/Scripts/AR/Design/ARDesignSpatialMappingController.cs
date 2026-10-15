@@ -9,8 +9,11 @@ using Touch = UnityEngine.InputSystem.EnhancedTouch.Touch;
 /// <summary>
 /// Steps C–E of spatial mapping after the floor outline is closed:
 /// mark doors/windows on walls, existing furniture on the floor, then confirm.
-/// Furniture detection already runs while the outline is being drawn, so the
-/// furniture step starts with what the camera saw during the scan.
+/// The object detector already runs while the outline is being drawn, so these steps start with
+/// what the camera saw during the scan. Doors and windows it sees (Open Images model) are put on
+/// the walls by themselves (<see cref="AutoOpeningResolver"/>), and furniture seen consistently
+/// is added by itself. Tapping an opening or a piece of furniture removes it (and it stays away);
+/// tapping the floor at both edges still marks a door/window by hand.
 /// </summary>
 [DefaultExecutionOrder(-95)]
 public class ARDesignSpatialMappingController : MonoBehaviour
@@ -41,6 +44,14 @@ public class ARDesignSpatialMappingController : MonoBehaviour
     const float DefaultDoorHeight = 2.1f;
     const float DefaultWindowHeight = 1.2f;
     const float DefaultWindowSill = 0.9f;
+    const string AutoPrefix = "auto-";
+    /// <summary>A detected piece of furniture is added by itself once seen this often, or this confidently.</summary>
+    const int AutoAcceptSightings = 2;
+    const float AutoAcceptConfidence = 0.55f;
+
+    readonly AutoOpeningResolver.Tracker openingTracker = new();
+    /// <summary>Furniture the user removed: detections there are ignored.</summary>
+    readonly List<RoomObstaclePayload> removedObstacles = new();
 
     int openingCounter;
     int obstacleCounter;
@@ -59,6 +70,12 @@ public class ARDesignSpatialMappingController : MonoBehaviour
     /// <summary>True after the first edge of a door/window is tapped, until the second edge.</summary>
     public bool HasPendingOpeningEdge { get; private set; }
     public int ObstacleCount => obstacles.Count;
+    /// <summary>Doors/windows the detector placed (still on the walls).</summary>
+    public int AutoOpeningCount => openings.FindAll(o => IsAuto(o.id)).Count;
+    /// <summary>Furniture the detector added by itself (still there).</summary>
+    public int AutoObstacleCount => obstacles.FindAll(o => IsAuto(o.id)).Count;
+    /// <summary>The build has the model that sees doors and windows.</summary>
+    public bool DetectsOpenings => ARFurnitureCocoDetector.HasRoomModel;
     public int PendingSuggestionCount => pendingSuggestions.Count;
     /// <summary>Furniture spotted while the outline is still open (shown as a count while scanning).</summary>
     public int EarlySightingCount => autoSuggest != null ? autoSuggest.EarlySightingCount : 0;
@@ -113,11 +130,20 @@ public class ARDesignSpatialMappingController : MonoBehaviour
     {
         TickEarlyFurnitureScan();
 
+        if (CurrentPhase == Phase.Openings && autoSuggest != null)
+        {
+            autoSuggest.TickOpeningScan(ObstaclesAndRemoved(), pendingSuggestions);
+            ResolveOpeningSightings(autoSuggest.TakeNewOpeningSightings());
+        }
+
         if (CurrentPhase == Phase.ExistingFurniture && autoSuggest != null)
         {
             var previousCount = pendingSuggestions.Count;
-            autoSuggest.TickAutoScan(CurrentPhase, obstacles, pendingSuggestions);
-            if (pendingSuggestions.Count != previousCount || lastFurnitureScanning != IsFurnitureScanning
+            autoSuggest.TickAutoScan(CurrentPhase, ObstaclesAndRemoved(), pendingSuggestions);
+            // A door seen only now still goes on its wall.
+            ResolveOpeningSightings(autoSuggest.TakeNewOpeningSightings());
+            var accepted = AcceptConfidentSuggestions();
+            if (accepted || pendingSuggestions.Count != previousCount || lastFurnitureScanning != IsFurnitureScanning
                 || lastSuggestionRevision != autoSuggest.Revision)
             {
                 RebuildVisuals();
@@ -134,20 +160,191 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         if (IsPointerOverUI(touch.touchId)) return;
 
         if (CurrentPhase == Phase.Openings)
+        {
+            // Tapping a door or window removes it; otherwise the tap marks an edge by hand.
+            if (!HasPendingOpeningEdge && TryRemoveOpeningAtScreen(touch.screenPosition)) return;
             TryAddOpeningAtScreen(touch.screenPosition);
+        }
         else
+        {
+            if (TryRemoveObstacleAtScreen(touch.screenPosition)) return;
             TryAddObstacleAtScreen(touch.screenPosition);
+        }
+    }
+
+    static bool IsAuto(string id) => id != null && id.StartsWith(AutoPrefix);
+
+    List<RoomObstaclePayload> ObstaclesAndRemoved()
+    {
+        var list = new List<RoomObstaclePayload>(obstacles);
+        list.AddRange(removedObstacles);
+        return list;
+    }
+
+    float FloorY => cornerBuilder != null && cornerBuilder.CornerCount > 0
+        ? RoomPolygonUtil.ComputeFloorY(cornerBuilder.Corners)
+        : 0f;
+
+    /// <summary>Every sighting so far, against the just-closed outline (walls may have changed).</summary>
+    void ResolveAllOpeningSightings()
+    {
+        openingTracker.Clear();
+        openings.RemoveAll(o => IsAuto(o.id));
+        autoSuggest?.TakeNewOpeningSightings();
+        if (autoSuggest != null)
+            ResolveOpeningSightings(autoSuggest.OpeningSightings);
+    }
+
+    void ResolveOpeningSightings(IReadOnlyList<AutoOpeningResolver.Sighting> sightings)
+    {
+        if (sightings == null || sightings.Count == 0 || cornerBuilder == null || cornerBuilder.CornerCount < 3) return;
+
+        var corners = cornerBuilder.Corners;
+        var floorY = FloorY;
+        var changed = false;
+        foreach (var sighting in sightings)
+        {
+            if (!AutoOpeningResolver.TryPlace(sighting, corners, floorY, cornerBuilder.WallHeight, out var placement))
+                continue;
+            var candidate = openingTracker.Add(placement);
+            if (candidate == null) continue;
+            changed |= UpsertAutoOpening(candidate);
+        }
+
+        if (!changed) return;
+        RebuildVisuals();
+        DataChanged?.Invoke();
+    }
+
+    /// <summary>Adds or updates the opening for a confirmed detection, unless one marked by hand is there.</summary>
+    bool UpsertAutoOpening(AutoOpeningResolver.Tracker.Candidate c)
+    {
+        var existing = openings.Find(o => o.id == c.id);
+        if (existing == null)
+        {
+            foreach (var o in openings)
+            {
+                if (o.wallIndex != c.wall || IsAuto(o.id)) continue;
+                var overlap = Mathf.Min(o.offsetAlongWall + o.width, c.end) - Mathf.Max(o.offsetAlongWall, c.start);
+                if (overlap > 0.3f * Mathf.Min(o.width, c.end - c.start)) return false;
+            }
+
+            existing = new RoomOpeningPayload { id = c.id, type = c.kind, swing = c.kind == "door" ? "left" : "none" };
+            openings.Add(existing);
+            Debug.Log($"[ARDesignSpatialMapping] Auto {c.kind} on wall {c.wall}: " +
+                      $"{c.start:F2}–{c.end:F2} m, sill {c.sill:F2} m, top {c.top:F2} m ({c.sightings} sightings).");
+        }
+
+        existing.wallIndex = c.wall;
+        existing.offsetAlongWall = c.start;
+        existing.width = c.end - c.start;
+        existing.sillHeight = c.sill;
+        existing.height = Mathf.Max(0.3f, c.top - c.sill);
+        return true;
+    }
+
+    /// <summary>Tapping on a door or window (on the wall itself) removes it.</summary>
+    bool TryRemoveOpeningAtScreen(Vector2 screen)
+    {
+        if (openings.Count == 0 || cornerBuilder == null || cornerBuilder.CornerCount < 3) return false;
+        if (arCamera == null) arCamera = Camera.main;
+        if (arCamera == null) return false;
+
+        var ray = arCamera.ScreenPointToRay(screen);
+        var corners = cornerBuilder.Corners;
+        var floorY = FloorY;
+        RoomOpeningPayload hit = null;
+        var nearest = float.MaxValue;
+        foreach (var o in openings)
+        {
+            if (o.wallIndex < 0 || o.wallIndex >= corners.Count) continue;
+            if (!AutoOpeningResolver.TryHitWallPlane(ray.origin, ray.direction, corners, o.wallIndex, out var along, out var y, out var t))
+                continue;
+            var up = y - floorY;
+            if (along < o.offsetAlongWall - 0.1f || along > o.offsetAlongWall + o.width + 0.1f) continue;
+            if (up < o.sillHeight - 0.15f || up > o.sillHeight + o.height + 0.15f) continue;
+            if (t < nearest)
+            {
+                nearest = t;
+                hit = o;
+            }
+        }
+
+        if (hit == null) return false;
+        RemoveOpening(hit);
+        return true;
+    }
+
+    void RemoveOpening(RoomOpeningPayload opening)
+    {
+        openings.Remove(opening);
+        if (IsAuto(opening.id))
+            openingTracker.Suppress(opening.wallIndex, opening.offsetAlongWall + opening.width * 0.5f, opening.type);
+        RebuildVisuals();
+        DataChanged?.Invoke();
+    }
+
+    /// <summary>Furniture the detector has seen twice (or once, confidently) is added without a tap.</summary>
+    bool AcceptConfidentSuggestions()
+    {
+        var accepted = false;
+        for (var i = pendingSuggestions.Count - 1; i >= 0; i--)
+        {
+            var s = pendingSuggestions[i];
+            if (s.source != "coco") continue;
+            if (s.sightings < AutoAcceptSightings && s.confidence < AutoAcceptConfidence) continue;
+            AcceptSuggestionAtIndex(i, AutoPrefix);
+            accepted = true;
+        }
+
+        return accepted;
+    }
+
+    /// <summary>Tapping a piece of furniture already in the room removes it (and it isn't detected again).</summary>
+    bool TryRemoveObstacleAtScreen(Vector2 screen)
+    {
+        if (obstacles.Count == 0) return false;
+        if (!TryGetFloorPoint(screen, out var world) && !TryGetFloorFromRay(screen, out world)) return false;
+
+        for (var i = obstacles.Count - 1; i >= 0; i--)
+        {
+            var o = obstacles[i];
+            var center = new Vector3(o.center.x, o.center.y, o.center.z);
+            var size = new Vector3(o.size.x + 0.2f, o.size.y, o.size.z + 0.2f);
+            if (!ARFurniturePlaneAutoScannerOverlapsHelper.FootprintsOverlap(center, size, o.yaw, world, new Vector3(0.01f, 0.01f, 0.01f), 0f))
+                continue;
+            obstacles.RemoveAt(i);
+            removedObstacles.Add(o);
+            RebuildVisuals();
+            DataChanged?.Invoke();
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Where the tap's ray meets the floor height (when no AR plane is under the finger).</summary>
+    bool TryGetFloorFromRay(Vector2 screen, out Vector3 world)
+    {
+        world = default;
+        if (arCamera == null) arCamera = Camera.main;
+        if (arCamera == null || cornerBuilder == null || cornerBuilder.CornerCount < 3) return false;
+        return ARFurnitureCocoDetector.TryProjectToFloor(arCamera.ScreenPointToRay(screen), FloorY, out world);
     }
 
     /// <summary>Steps 1 and 2 together: look for furniture while the user walks the corners.</summary>
     void TickEarlyFurnitureScan()
     {
         if (CurrentPhase != Phase.Outline || autoSuggest == null || cornerBuilder == null) return;
-        // The floor height is known once the wall height is set and the outline has started.
-        if (!cornerBuilder.IsHeightLocked || cornerBuilder.CornerCount == 0) return;
+        // The floor height is known once the wall height is set. The automatic scan may have no
+        // corner yet while the user walks the walls, and doors seen then still count.
+        if (!cornerBuilder.IsHeightLocked) return;
 
+        var floorY = cornerBuilder.CornerCount > 0
+            ? RoomPolygonUtil.ComputeFloorY(cornerBuilder.Corners)
+            : cornerBuilder.FloorY;
         var before = autoSuggest.EarlySightingCount;
-        autoSuggest.TickEarlyScan(RoomPolygonUtil.ComputeFloorY(cornerBuilder.Corners));
+        autoSuggest.TickEarlyScan(floorY);
         if (autoSuggest.EarlySightingCount != before)
             DataChanged?.Invoke();
     }
@@ -157,8 +354,9 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         if (cornerBuilder == null) return;
         if (!cornerBuilder.IsLoopClosed)
         {
+            // Reopened to fix the outline: door/window sightings stay valid (they're rays, not walls).
             if (CurrentPhase != Phase.Outline)
-                ResetToOutline();
+                ResetToOutline(keepSightings: true);
             return;
         }
 
@@ -166,6 +364,8 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         {
             autoSuggest?.AdoptEarlySightings(cornerBuilder.Corners, pendingSuggestions);
             SetPhase(Phase.Openings);
+            // Doors and windows seen while walking the walls go up as soon as the walls exist.
+            ResolveAllOpeningSightings();
         }
     }
 
@@ -177,10 +377,18 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         DataChanged?.Invoke();
     }
 
-    public void ResetToOutline()
+    /// <summary>
+    /// Back to outlining: drops openings and furniture. A new scan also forgets what the detector saw;
+    /// reopening the outline to fix it keeps the door/window sightings.
+    /// </summary>
+    public void ResetToOutline(bool keepSightings = false)
     {
         autoSuggest?.DiscardResults();
         autoSuggest?.ClearEarlySightings();
+        if (!keepSightings)
+            autoSuggest?.ClearOpeningSightings();
+        openingTracker.Clear();
+        removedObstacles.Clear();
         openings.Clear();
         obstacles.Clear();
         pendingSuggestions.Clear();
@@ -249,15 +457,16 @@ public class ARDesignSpatialMappingController : MonoBehaviour
 
         if (CurrentPhase == Phase.Openings && openings.Count > 0)
         {
-            openings.RemoveAt(openings.Count - 1);
-            RebuildVisuals();
-            DataChanged?.Invoke();
+            RemoveOpening(openings[^1]);
             return;
         }
 
         if (CurrentPhase == Phase.ExistingFurniture && obstacles.Count > 0)
         {
+            var last = obstacles[^1];
             obstacles.RemoveAt(obstacles.Count - 1);
+            // An automatic one would just be detected again.
+            if (IsAuto(last.id)) removedObstacles.Add(last);
             RebuildVisuals();
             DataChanged?.Invoke();
         }
@@ -462,7 +671,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         return true;
     }
 
-    void AcceptSuggestionAtIndex(int index)
+    void AcceptSuggestionAtIndex(int index, string idPrefix = "")
     {
         if (index < 0 || index >= pendingSuggestions.Count) return;
         var s = pendingSuggestions[index];
@@ -471,7 +680,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         obstacleCounter += 1;
         obstacles.Add(new RoomObstaclePayload
         {
-            id = $"obstacle-{obstacleCounter}",
+            id = $"{idPrefix}obstacle-{obstacleCounter}",
             type = s.type,
             center = new ARDesignVec3(s.center),
             size = new ARDesignVec3(s.size),

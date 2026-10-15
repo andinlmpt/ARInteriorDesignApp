@@ -35,7 +35,6 @@ interface ProductDetailSheetProps {
   saving?: boolean;
   onClose: () => void;
   onToggleSave: (product: HomeProduct) => void;
-  onViewInAR: (product: HomeProduct) => void;
 }
 
 export function ProductDetailSheet({
@@ -45,7 +44,6 @@ export function ProductDetailSheet({
   saving = false,
   onClose,
   onToggleSave,
-  onViewInAR,
 }: ProductDetailSheetProps) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -253,32 +251,6 @@ export function ProductDetailSheet({
                 </>
               )}
             </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.cta,
-                styles.ctaPrimary,
-                {
-                  backgroundColor: outOfStock ? '#9CA3AF' : colors.accent,
-                },
-              ]}
-              activeOpacity={outOfStock ? 1 : 0.85}
-              disabled={outOfStock}
-              onPress={() => {
-                if (!outOfStock) onViewInAR(product);
-              }}
-              accessibilityState={{ disabled: outOfStock }}
-              accessibilityLabel={outOfStock ? 'Out of stock' : 'View in AR'}
-            >
-              <Ionicons
-                name={outOfStock ? 'lock-closed' : 'scan-outline'}
-                size={18}
-                color="#FFFFFF"
-              />
-              <AppText variant="subtitle" weight="700" style={styles.ctaPrimaryText}>
-                {outOfStock ? 'Out of stock' : 'View in AR'}
-              </AppText>
-            </TouchableOpacity>
           </View>
         </Pressable>
       </Pressable>
@@ -426,11 +398,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     minHeight: 48,
   },
-  ctaPrimary: {},
   ctaSecondary: {
     borderWidth: 1,
-  },
-  ctaPrimaryText: {
-    color: '#FFFFFF',
   },
 });

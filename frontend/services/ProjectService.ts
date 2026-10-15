@@ -119,8 +119,8 @@ class ProjectService {
   }
 
   /**
-   * Attach an AR Furniture capture to a project. Creates an AR Furniture project when
-   * `projectId` is missing or unknown (e.g. AR opened outside Start new project).
+   * Attach an AR photo to a project. Creates a design project when `projectId` is
+   * missing or unknown (e.g. AR opened outside Start new project).
    */
   async addProjectPhoto(projectId: string | undefined, photo: ProjectPhoto): Promise<Project> {
     await this.initialize();
@@ -131,7 +131,7 @@ class ProjectService {
         month: 'short',
         day: 'numeric',
       });
-      await this.createProject({ name: `AR Furniture ${stamp}`, arMode: 'furniture' });
+      await this.createProject({ name: `Room design ${stamp}`, arMode: 'design' });
       index = this.projects.length - 1;
     }
 
@@ -265,7 +265,7 @@ class ProjectService {
       updatedAt: exportedAt,
       tags: ['unity', 'export', '3d-layout'],
       source: 'unity-export',
-      arMode: 'measure',
+      arMode: 'design',
       unityExport,
     };
 

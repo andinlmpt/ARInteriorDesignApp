@@ -44,6 +44,9 @@ public static class SpatialMappingRegressionChecks
     public static void RunAndExport()
     {
         Run();
+        AutoWallGeometryChecks.Run();
+        AutoOpeningChecks.Run();
+        AutoOpeningChecks.RunDetectorOnTestPhotos();
         RnUnityExport.ExportAndroid();
     }
 

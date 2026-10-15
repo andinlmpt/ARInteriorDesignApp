@@ -21,7 +21,6 @@ import {
   type UnityOutboundMessage,
   type PlacementSafetyPayload,
   type LayoutAlignmentPayload,
-  type LayoutViewMode,
 } from '@/types/unity-bridge';
 import { isUnityViewAvailable } from '@/utils/unityAvailability';
 
@@ -38,8 +37,6 @@ export interface UnityARViewerHandle {
   startFurniturePlacement: () => void;
   /** Load Unity ARRoomMeasurement scene (native measurement HUDs). */
   openRoomMeasurement: () => void;
-  /** Ensure ARDesignScene + furniture placement (safe after measurement). */
-  openFurnitureDesign: () => void;
   /** Load ARDesignScene with the measured room shell for real GLB placement. */
   openDesignLayoutInAr: (payload?: {
     roomName?: string;
@@ -84,10 +81,6 @@ export interface UnityARViewerHandle {
   reloadMeasurement: () => void;
   /** Soft-reset AR Furniture without scene thrash (RN is leaving). */
   pauseFurniture: () => void;
-  /** Restart furniture placement on the current ARDesignScene. */
-  reloadFurniture: () => void;
-  /** Warm reopen — clear placed items, keep GLB template cache. */
-  resumeFurniture: () => void;
   /** Background-warm GLB URLs so place is instant later. */
   prefetchFurniture: (urls: string[]) => void;
   /** Resume native Unity player (required after exit AR — player stays paused until resumed). */
@@ -119,18 +112,11 @@ export interface UnityARViewerHandle {
     dy?: number;
     twistDelta?: number;
   }) => void;
-  /** AR Measurement: apply room name from RN modal and open the plan HUD. */
-  commitRoomName: (name: string) => void;
-  /** AR Measurement: dismiss name modal with "Untitled room". */
-  cancelRoomName: () => void;
   /** Design layout AR: live camera + start the two-corner alignment. */
   beginLayoutAlignment: () => void;
   /** Mark the floor point under the reticle as a wall corner. */
   markAlignmentCorner: () => void;
   undoAlignmentCorner: () => void;
-  /** Swap the matched plan wall for the opposite one (180° turn). */
-  flipLayoutAlignment: () => void;
-  setLayoutView: (view: LayoutViewMode) => void;
 }
 
 interface UnityARViewerProps {
@@ -283,7 +269,6 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
         startRoomScan: () => sendToUnity('startRoomScan', ''),
         startFurniturePlacement: () => sendToUnity('startFurniturePlacement', ''),
         openRoomMeasurement: () => sendToUnity('openRoomMeasurement', ''),
-        openFurnitureDesign: () => sendToUnity('openFurnitureDesign', ''),
         openDesignLayoutInAr: (payload) =>
           sendToUnity(
             'openDesignLayoutInAr',
@@ -316,8 +301,6 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
         pauseMeasurement: () => sendToUnity('pauseMeasurement', ''),
         reloadMeasurement: () => sendToUnity('reloadMeasurement', ''),
         pauseFurniture: () => sendToUnity('pauseFurniture', ''),
-        reloadFurniture: () => sendToUnity('reloadFurniture', ''),
-        resumeFurniture: () => sendToUnity('resumeFurniture', ''),
         prefetchFurniture: (urls: string[]) =>
           sendToUnity(
             'prefetchFurniture',
@@ -367,13 +350,9 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
               twistDelta: payload.twistDelta ?? 0,
             })
           ),
-        commitRoomName: (name: string) => sendToUnity('commitRoomName', name ?? ''),
-        cancelRoomName: () => sendToUnity('cancelRoomName', ''),
         beginLayoutAlignment: () => sendToUnity('beginLayoutAlignment', ''),
         markAlignmentCorner: () => sendToUnity('markAlignmentCorner', ''),
         undoAlignmentCorner: () => sendToUnity('undoAlignmentCorner', ''),
-        flipLayoutAlignment: () => sendToUnity('flipLayoutAlignment', ''),
-        setLayoutView: (view: LayoutViewMode) => sendToUnity('setLayoutView', view),
       }),
       [sendToUnity, wakeUnityPlayer, resumeUnityPlayer]
     );

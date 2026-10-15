@@ -103,7 +103,6 @@ export default function DesignLayoutsScreen() {
     router.push({
       pathname: '/ar-view',
       params: {
-        mode: 'measure',
         projectId: result.projectId || firstParam(params.projectId) || '',
         flow: 'design',
         applyLayout: '1',
