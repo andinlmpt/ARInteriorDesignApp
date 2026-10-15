@@ -1,11 +1,12 @@
 /**
  * AR View route — Unity AR embed is opt-in via EXPO_PUBLIC_UNITY_AR_ENABLED.
  * Default: Unity-only development notice (Build & Run in Unity).
+ * Only "Design a room" (flow=design) uses AR; anything else goes back to the tabs.
  */
 
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { ARViewErrorBoundary } from '@/components/ar-view/ARViewErrorBoundary';
 import { ARViewUnityDevNotice } from '@/components/ar-view/ARViewUnityDevNotice';
@@ -27,8 +28,8 @@ function ARViewWebUnsupported() {
       <Ionicons name="phone-portrait-outline" size={48} color={colors.accent} />
       <Text style={webStyles.title}>AR requires a mobile device</Text>
       <Text style={webStyles.message}>
-        AR furniture placement is developed in Unity for iOS and Android. Use Unity Build
-        &amp; Run on a device, or enable React Native Unity embed when integration is ready.
+        Room scanning and AR layouts run in Unity on iOS and Android. Open the app on a
+        phone to scan your room.
       </Text>
       {flow === 'design' ? (
         <TouchableOpacity
@@ -59,6 +60,13 @@ function ARViewWebUnsupported() {
 
 export default function ARViewRoute() {
   const isNative = Platform.OS === 'ios' || Platform.OS === 'android';
+  const params = useLocalSearchParams<{ flow?: string | string[] }>();
+  const flow = Array.isArray(params.flow) ? params.flow[0] : params.flow;
+
+  // AR Furniture / AR Measurement were removed; old links land back on the tabs.
+  if (flow !== 'design') {
+    return <Redirect href="/(tabs)" />;
+  }
 
   return (
     <ARViewErrorBoundary>

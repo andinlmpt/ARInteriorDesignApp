@@ -4,6 +4,9 @@ using UnityEngine.UI;
 /// <summary>
 /// Corner-to-corner scan chrome — ARPlan-inspired frosted pills, step dots, rounded controls,
 /// live coaching ("Move slowly", "Point at the floor"), Rescan, and a final "Scan complete".
+/// Titles say which of the five steps the user is on. With the automatic scan
+/// (<see cref="ARAutoRoomScan"/>) it also shows the hold-still ring, an arrow to a missing
+/// corner, the Auto on/off switch and "Start over" for the corners.
 /// </summary>
 [DefaultExecutionOrder(-90)]
 public class ARDesignScanHUD : MonoBehaviour
@@ -33,6 +36,8 @@ public class ARDesignScanHUD : MonoBehaviour
     static readonly Color RescanArmed = new(0.86f, 0.24f, 0.22f, 1f);
     const int RetryCornerCount = 4;
     const float RescanConfirmSeconds = 3f;
+    const int StepCount = 5;
+    static readonly Color AutoOrange = new(1f, 0.55f, 0.15f, 1f);
 
     Canvas canvas;
     Text topHintLabel;
@@ -68,8 +73,29 @@ public class ARDesignScanHUD : MonoBehaviour
     Image rescanImage;
     Text rescanLabel;
     float rescanArmedUntil = -1f;
+    float nextLiveRefreshAt;
     ARScanGuidance guidance;
+    ARAutoRoomScan autoScan;
+    RectTransform canvasRect;
+    Image dwellRing;
+    RectTransform targetArrow;
+    Button autoToggleButton;
+    Image autoToggleImage;
+    Text autoToggleLabel;
+    UnityEngine.XR.ARFoundation.ARCameraManager cameraManager;
+    Button lightButton;
+    Image lightImage;
+    Text lightLabel;
+    float nextLightCheckAt;
+    bool lightSupported;
     bool active;
+
+    bool AutoEnabled => autoScan != null && autoScan.Enabled;
+
+    /// <summary>Automatic scan is driving the floor, height or walls step right now.</summary>
+    bool AutoOutlineStep => AutoEnabled && autoScan.IsActive;
+
+    static string StepTitle(int step, string text) => $"Step {step} of {StepCount} · {text}";
 
     bool ShouldShowNativeHud()
     {
@@ -105,6 +131,11 @@ public class ARDesignScanHUD : MonoBehaviour
         }
 
         guidance = ARScanGuidance.EnsureOn(gameObject);
+        if (measurementOnlyMode)
+        {
+            autoScan = ARAutoRoomScan.EnsureOn(gameObject);
+            ARPerfLog.EnsureOn(gameObject);
+        }
 
         try
         {
@@ -134,10 +165,14 @@ public class ARDesignScanHUD : MonoBehaviour
             spatialMapping.PhaseChanged += OnSpatialChanged;
             spatialMapping.DataChanged += OnSpatialChanged;
         }
+
+        if (autoScan != null)
+            autoScan.Changed += OnCornersChanged;
     }
 
     void OnDisable()
     {
+        if (active) TurnLightOff();
         if (scanController == null) return;
         scanController.StatusChanged -= OnStatus;
         scanController.PhaseChanged -= OnPhase;
@@ -152,6 +187,9 @@ public class ARDesignScanHUD : MonoBehaviour
             spatialMapping.PhaseChanged -= OnSpatialChanged;
             spatialMapping.DataChanged -= OnSpatialChanged;
         }
+
+        if (autoScan != null)
+            autoScan.Changed -= OnCornersChanged;
     }
 
     void OnSpatialChanged() => RefreshCornerUi();
@@ -169,17 +207,26 @@ public class ARDesignScanHUD : MonoBehaviour
     void Update()
     {
         if (!active || cornerBuilder == null) return;
-        // Live height / width readouts change every frame while aiming.
-        if (cornerBuilder.IsInHeightPhase || cornerBuilder.CornerCount > 0)
+        // Live height / width readouts (and the automatic scan's hold progress) change all the
+        // time; about 12 refreshes a second reads the same and rebuilds the UI far less.
+        if ((cornerBuilder.IsInHeightPhase || cornerBuilder.CornerCount > 0 || AutoOutlineStep)
+            && Time.unscaledTime >= nextLiveRefreshAt)
+        {
+            nextLiveRefreshAt = Time.unscaledTime + 0.08f;
             RefreshCornerUi();
+        }
         RefreshCoaching();
         RefreshRescanButton();
+        RefreshAutoOverlay();
+        if (autoScan == null) RefreshLightButton();
     }
 
     void OnPhase(RoomScanController.ScanPhase phase)
     {
         if (canvas != null)
             canvas.gameObject.SetActive(phase != RoomScanController.ScanPhase.Confirmed);
+        if (!IsScanning(phase))
+            TurnLightOff();
         if (guidance != null)
             guidance.enabled = IsScanning(phase);
 
@@ -210,7 +257,8 @@ public class ARDesignScanHUD : MonoBehaviour
             if (cornerBuilder.IsInHeightPhase)
                 return; // base locked; leave overlay frozen until Finish
 
-            if (measurementOnlyMode && cornerBuilder.IsHeightLocked)
+            if (measurementOnlyMode && cornerBuilder.IsHeightLocked
+                && !(AutoEnabled && !cornerBuilder.IsLoopClosed))
             {
                 placementIndicator.StopTracking(clearOverlay: true);
                 return;
@@ -239,8 +287,16 @@ public class ARDesignScanHUD : MonoBehaviour
             return;
         }
 
+        var autoWalls = AutoEnabled && autoScan.CurrentStep == ARAutoRoomScan.Step.Walls;
         if (auxTypeButton != null)
-            auxTypeButton.gameObject.SetActive(false);
+        {
+            // Automatic walls step: "Start over" drops every corner and looks at the walls again.
+            auxTypeButton.gameObject.SetActive(autoWalls);
+            if (autoWalls && auxTypeLabel != null)
+                auxTypeLabel.text = "Start over";
+        }
+        if (auxSwingButton != null)
+            auxSwingButton.gameObject.SetActive(false);
 
         var inHeightPhase = cornerBuilder != null && cornerBuilder.IsInHeightPhase;
         var count = cornerBuilder != null ? cornerBuilder.CornerCount : 0;
@@ -257,9 +313,14 @@ public class ARDesignScanHUD : MonoBehaviour
             : 0;
 
         if (topHintLabel != null && scanController != null)
-            topHintLabel.text = BuildHintText(scanController.GetScanStatus());
+            topHintLabel.text = StepTitle(inHeightPhase ? 1 : 2, BuildHintText(scanController.GetScanStatus()));
 
-        if (subtitleLabel != null)
+        if (TryBuildAutoText(liveHeightCm, out var autoTitle, out var autoSubtitle))
+        {
+            if (topHintLabel != null) topHintLabel.text = autoTitle;
+            if (subtitleLabel != null) subtitleLabel.text = autoSubtitle;
+        }
+        else if (subtitleLabel != null)
         {
             var spotted = spatialMapping != null ? spatialMapping.EarlySightingCount : 0;
             var spottedSuffix = spotted > 0 ? $" · {spotted} furniture spotted" : string.Empty;
@@ -324,7 +385,8 @@ public class ARDesignScanHUD : MonoBehaviour
 
         if (undoButton != null)
         {
-            var canUndo = inHeightPhase ? cornerBuilder.HasHeightBase : count > 0;
+            // Automatic walls step: Undo takes back a corner, or with none goes back to the height.
+            var canUndo = inHeightPhase ? cornerBuilder.HasHeightBase : count > 0 || autoWalls;
             undoButton.interactable = canUndo;
             if (undoImage != null)
                 undoImage.color = canUndo ? Frost : FrostSoft;
@@ -403,6 +465,8 @@ public class ARDesignScanHUD : MonoBehaviour
                             confirmLabel.text = "Close room";
                         else if (outlineCrosses)
                             confirmLabel.text = "Walls cross";
+                        else if (autoWalls)
+                            confirmLabel.text = "Finding corners…";
                         else
                             confirmLabel.text = measurementOnlyMode ? "Create a node" : "Add corners";
                         confirmLabel.color = canConfirm
@@ -432,11 +496,12 @@ public class ARDesignScanHUD : MonoBehaviour
         {
             topHintLabel.text = phase switch
             {
-                ARDesignSpatialMappingController.Phase.Openings =>
-                    "Mark doors & windows",
+                ARDesignSpatialMappingController.Phase.Openings => spatialMapping.DetectsOpenings
+                    ? StepTitle(3, "Look at each door & window")
+                    : StepTitle(3, "Mark doors & windows"),
                 ARDesignSpatialMappingController.Phase.ExistingFurniture =>
-                    "Mark existing furniture",
-                _ => "Review your room, then tap Scan complete",
+                    StepTitle(4, "Look around at your furniture"),
+                _ => StepTitle(5, "Review your room, then tap Scan complete"),
             };
         }
 
@@ -446,11 +511,14 @@ public class ARDesignScanHUD : MonoBehaviour
             {
                 ARDesignSpatialMappingController.Phase.Openings => spatialMapping.HasPendingOpeningEdge
                     ? $"Now tap the other edge of the {(spatialMapping.OpeningIsDoor ? "door" : "window")} on the same wall"
-                    : $"Tap the floor at one edge of a {(spatialMapping.OpeningIsDoor ? "door" : "window")} · {spatialMapping.OpeningCount} marked",
+                    : spatialMapping.DetectsOpenings
+                        ? $"{spatialMapping.OpeningCount} found · tap a wrong one to remove · " +
+                          $"missed one? tap the floor at both edges ({(spatialMapping.OpeningIsDoor ? "door" : "window")})"
+                        : $"Tap the floor at one edge of a {(spatialMapping.OpeningIsDoor ? "door" : "window")} · {spatialMapping.OpeningCount} marked",
                 ARDesignSpatialMappingController.Phase.ExistingFurniture =>
-                    (spatialMapping.IsFurnitureScanning ? "Scanning furniture… · " : "") +
-                    $"{spatialMapping.PendingSuggestionCount} auto · tap orange to add · " +
-                    $"{spatialMapping.ObstacleCount} saved · manual: {spatialMapping.SelectedObstacleType}",
+                    (spatialMapping.IsFurnitureScanning ? "Scanning… · " : "") +
+                    $"{spatialMapping.ObstacleCount} added · tap one to remove · tap orange to add · " +
+                    $"manual: {spatialMapping.SelectedObstacleType}",
                 _ => BuildReviewSummary(),
             };
         }
@@ -527,6 +595,223 @@ public class ARDesignScanHUD : MonoBehaviour
         }
     }
 
+    /// <summary>Title and detail for the floor, height and walls steps of the automatic scan.</summary>
+    bool TryBuildAutoText(int liveHeightCm, out string title, out string subtitle)
+    {
+        title = null;
+        subtitle = null;
+        if (!AutoEnabled || cornerBuilder == null) return false;
+
+        var holding = autoScan.DwellProgress > 0f;
+        switch (autoScan.CurrentStep)
+        {
+            case ARAutoRoomScan.Step.Floor:
+                title = StepTitle(1, "Point at the floor near a wall");
+                subtitle = holding
+                    ? "Hold still…"
+                    : "It sets itself when you hold still · or tap Start";
+                return true;
+
+            case ARAutoRoomScan.Step.Height:
+                title = StepTitle(1, "Aim up where the wall meets the ceiling");
+                if (holding)
+                    subtitle = $"H = {liveHeightCm} cm · hold still…";
+                else if (liveHeightCm >= 180)
+                    subtitle = $"H = {liveHeightCm} cm · hold still to lock it, or tap Finish";
+                else if (liveHeightCm > 0)
+                    subtitle = $"H = {liveHeightCm} cm · aim higher";
+                else
+                    subtitle = "Tilt the phone up toward the ceiling";
+                return true;
+
+            case ARAutoRoomScan.Step.Walls:
+                if (cornerBuilder.IsOutlineSelfIntersecting)
+                {
+                    title = StepTitle(2, "Outline crosses itself");
+                    subtitle = "Tap a wrong corner to remove it, or tap Undo";
+                }
+                else if (autoScan.OutlineLooksComplete)
+                {
+                    title = StepTitle(2, "Room outline found");
+                    subtitle = $"{autoScan.CornerCount} corners · check it, then tap Close room";
+                }
+                else
+                {
+                    title = StepTitle(2, "Walk slowly along the walls");
+                    if (holding)
+                        subtitle = "Hold still to place the corner…";
+                    else if (autoScan.HasTarget)
+                        subtitle = $"{autoScan.CornerCount} corners · aim at the corner by the orange marker and hold";
+                    else if (autoScan.WallCount == 0)
+                        subtitle = "Point the camera at a wall from about 2 m away";
+                    else
+                        subtitle = $"Walls: {autoScan.WallCount} · corners: {autoScan.CornerCount} · keep going";
+                }
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>When nothing is wrong with tracking, the automatic scan's own "stuck?" help.</summary>
+    bool TryGetAutoHelp(out string title, out string detail)
+    {
+        title = null;
+        detail = null;
+        if (!AutoEnabled || cornerBuilder == null) return false;
+
+        if (autoScan.NeedsHeightHelp)
+        {
+            var useCm = cornerBuilder.LiveHeightMeters >= 1.8f
+                ? Mathf.RoundToInt(cornerBuilder.LiveHeightMeters * 100f)
+                : Mathf.RoundToInt(cornerBuilder.WallHeight * 100f);
+            title = "Ceiling hard to measure?";
+            detail = $"Tap Finish to use {useCm} cm, or aim at the line where wall meets ceiling";
+            return true;
+        }
+
+        if (autoScan.NeedsWallHelp)
+        {
+            title = "Wall not showing up?";
+            detail = "Plain walls are hard to detect. Tap its corner on the floor instead";
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Hold-still ring around what is about to set itself, and an arrow to a missing corner off screen.</summary>
+    void RefreshAutoOverlay()
+    {
+        if (dwellRing == null || targetArrow == null) return;
+
+        var cam = Camera.main;
+        var showRing = AutoOutlineStep && autoScan.HasDwellPoint && autoScan.DwellProgress > 0.02f && cam != null;
+        if (showRing)
+        {
+            var screen = cam.WorldToScreenPoint(autoScan.DwellPoint);
+            var local = Vector2.zero;
+            showRing = screen.z > 0f && TryScreenToCanvas(screen, out local);
+            if (showRing)
+            {
+                dwellRing.rectTransform.anchoredPosition = local;
+                dwellRing.fillAmount = autoScan.DwellProgress;
+            }
+        }
+        if (dwellRing.gameObject.activeSelf != showRing)
+            dwellRing.gameObject.SetActive(showRing);
+
+        var showArrow = false;
+        if (AutoOutlineStep && autoScan.CurrentStep == ARAutoRoomScan.Step.Walls && autoScan.HasTarget && cam != null)
+        {
+            var screen = cam.WorldToScreenPoint(autoScan.TargetPoint);
+            var center = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+            var dir = (Vector2)screen - center;
+            if (screen.z < 0f) dir = -dir;
+            var margin = Screen.width * 0.08f;
+            var onScreen = screen.z > 0f
+                           && screen.x > margin && screen.x < Screen.width - margin
+                           && screen.y > margin && screen.y < Screen.height - margin;
+            if (!onScreen && dir.sqrMagnitude > 1f)
+            {
+                // Pin to an inset rectangle around the screen centre, pointing at the corner.
+                var half = new Vector2(Screen.width * 0.5f - margin * 1.6f, Screen.height * 0.5f - margin * 3f);
+                var scale = Mathf.Min(half.x / Mathf.Max(Mathf.Abs(dir.x), 1e-3f), half.y / Mathf.Max(Mathf.Abs(dir.y), 1e-3f));
+                var pinned = center + dir * scale;
+                if (TryScreenToCanvas(pinned, out var local))
+                {
+                    showArrow = true;
+                    targetArrow.anchoredPosition = local;
+                    var angle = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg;
+                    // The arrow icon points left (180°).
+                    targetArrow.localRotation = Quaternion.Euler(0f, 0f, angle - 180f);
+                }
+            }
+        }
+        if (targetArrow.gameObject.activeSelf != showArrow)
+            targetArrow.gameObject.SetActive(showArrow);
+
+        RefreshAutoToggle();
+        RefreshLightButton();
+    }
+
+    /// <summary>
+    /// The flash, switched on through ARCore so the AR camera keeps running (the phone's own
+    /// flashlight takes the camera away). Shown while scanning, on phones that support it.
+    /// </summary>
+    void RefreshLightButton()
+    {
+        if (lightButton == null) return;
+        if (cameraManager == null) cameraManager = FindFirstObjectByType<UnityEngine.XR.ARFoundation.ARCameraManager>();
+        if (Time.unscaledTime >= nextLightCheckAt)
+        {
+            nextLightCheckAt = Time.unscaledTime + 0.5f;
+            lightSupported = cameraManager != null && cameraManager.DoesCurrentCameraSupportTorch();
+        }
+
+        var show = lightSupported && scanController != null && IsScanning(scanController.Phase);
+        if (lightButton.gameObject.activeSelf != show)
+            lightButton.gameObject.SetActive(show);
+        if (!show) return;
+
+        var on = cameraManager.currentCameraTorchMode == UnityEngine.XR.ARSubsystems.XRCameraTorchMode.On;
+        lightLabel.text = on ? "Light: On" : "Light: Off";
+        lightLabel.color = Ink;
+        if (lightImage != null)
+            lightImage.color = on ? new Color(1f, 0.86f, 0.35f, 0.97f) : Frost;
+    }
+
+    void OnLightClicked()
+    {
+        if (cameraManager == null) return;
+        var on = cameraManager.currentCameraTorchMode == UnityEngine.XR.ARSubsystems.XRCameraTorchMode.On;
+        cameraManager.requestedCameraTorchMode = on
+            ? UnityEngine.XR.ARSubsystems.XRCameraTorchMode.Off
+            : UnityEngine.XR.ARSubsystems.XRCameraTorchMode.On;
+    }
+
+    /// <summary>The light goes off with the scan screen (it isn't needed afterwards and drains the battery).</summary>
+    void TurnLightOff()
+    {
+        if (cameraManager == null) cameraManager = FindFirstObjectByType<UnityEngine.XR.ARFoundation.ARCameraManager>();
+        if (cameraManager != null
+            && cameraManager.requestedCameraTorchMode == UnityEngine.XR.ARSubsystems.XRCameraTorchMode.On)
+            cameraManager.requestedCameraTorchMode = UnityEngine.XR.ARSubsystems.XRCameraTorchMode.Off;
+    }
+
+    bool TryScreenToCanvas(Vector2 screen, out Vector2 local)
+    {
+        local = default;
+        return canvasRect != null
+               && RectTransformUtility.ScreenPointToLocalPointInRectangle(canvasRect, screen, null, out local);
+    }
+
+    /// <summary>The Auto on/off switch shows while outlining (floor, height, walls).</summary>
+    void RefreshAutoToggle()
+    {
+        if (autoToggleButton == null || autoScan == null) return;
+        var outlining = scanController != null && IsScanning(scanController.Phase)
+                        && (spatialMapping == null
+                            || spatialMapping.CurrentPhase == ARDesignSpatialMappingController.Phase.Outline)
+                        && cornerBuilder != null && !cornerBuilder.IsLoopClosed;
+        if (autoToggleButton.gameObject.activeSelf != outlining)
+            autoToggleButton.gameObject.SetActive(outlining);
+        if (!outlining) return;
+
+        autoToggleLabel.text = autoScan.Enabled ? "Auto: On" : "Auto: Off";
+        autoToggleLabel.color = autoScan.Enabled ? Color.white : Ink;
+        if (autoToggleImage != null)
+            autoToggleImage.color = autoScan.Enabled ? AccentReady : Frost;
+    }
+
+    void OnAutoToggleClicked()
+    {
+        if (autoScan == null) return;
+        autoScan.SetEnabled(!autoScan.Enabled);
+        ApplyReticle(scanController != null ? scanController.Phase : RoomScanController.ScanPhase.Scanning);
+        RefreshCornerUi();
+    }
+
     static bool IsScanning(RoomScanController.ScanPhase phase) =>
         phase == RoomScanController.ScanPhase.Scanning || phase == RoomScanController.ScanPhase.ReadyToConfirm;
 
@@ -559,6 +844,8 @@ public class ARDesignScanHUD : MonoBehaviour
         if (cornerBuilder.IsInHeightPhase)
             return cornerBuilder.HasHeightBase ? null : indicatorOnFloor;
         if (cornerBuilder.IsLoopClosed) return null;
+        // Automatic walls: the camera should be on the walls, not the floor.
+        if (AutoEnabled) return null;
         return cornerBuilder.CornerCount > 0 ? cornerBuilder.IsAimOnFloor : indicatorOnFloor;
     }
 
@@ -567,13 +854,17 @@ public class ARDesignScanHUD : MonoBehaviour
         if (coachChip == null || guidance == null) return;
 
         guidance.FloorAim = FloorAimForCurrentStep();
-        var show = guidance.isActiveAndEnabled && guidance.Current != ARScanGuidance.Issue.None;
+        var trackingIssue = guidance.isActiveAndEnabled && guidance.Current != ARScanGuidance.Issue.None;
+        string helpTitle = null;
+        string helpDetail = null;
+        var autoHelp = !trackingIssue && TryGetAutoHelp(out helpTitle, out helpDetail);
+        var show = trackingIssue || autoHelp;
         if (coachChip.gameObject.activeSelf != show)
             coachChip.gameObject.SetActive(show);
         if (!show) return;
 
-        coachTitle.text = guidance.Title;
-        coachDetail.text = guidance.Detail;
+        coachTitle.text = trackingIssue ? guidance.Title : helpTitle;
+        coachDetail.text = trackingIssue ? guidance.Detail : helpDetail;
     }
 
     /// <summary>Rescan appears once there is something to lose, and asks for a second tap.</summary>
@@ -639,6 +930,8 @@ public class ARDesignScanHUD : MonoBehaviour
     /// <summary>Corners 1–3 → Undo (remove last). All 4 placed → Retry (start the outline over).</summary>
     bool IsRetryMode()
     {
+        // The automatic outline isn't built in tap order, so Undo always takes back one corner.
+        if (AutoEnabled) return false;
         return cornerBuilder != null
                && !cornerBuilder.IsInHeightPhase
                && !cornerBuilder.IsLoopClosed
@@ -660,7 +953,13 @@ public class ARDesignScanHUD : MonoBehaviour
         else if (cornerBuilder != null && cornerBuilder.IsLoopClosed)
         {
             cornerBuilder.ReopenLoop();
-            spatialMapping?.ResetToOutline();
+            spatialMapping?.ResetToOutline(keepSightings: true);
+        }
+        else if (AutoEnabled && cornerBuilder != null && cornerBuilder.IsHeightLocked)
+        {
+            // Newest corner first; with none left, back to measuring the height.
+            if (!autoScan.Undo())
+                cornerBuilder.RestartFromHeight();
         }
         else if (IsRetryMode())
             cornerBuilder.ResetCorners();
@@ -673,6 +972,13 @@ public class ARDesignScanHUD : MonoBehaviour
 
     void OnAuxTypeClicked()
     {
+        if (AutoEnabled && autoScan.CurrentStep == ARAutoRoomScan.Step.Walls)
+        {
+            autoScan.StartWallsOver();
+            RefreshCornerUi();
+            return;
+        }
+
         if (spatialMapping == null) return;
         if (spatialMapping.CurrentPhase == ARDesignSpatialMappingController.Phase.Openings)
             spatialMapping.ToggleOpeningKind();
@@ -795,6 +1101,7 @@ public class ARDesignScanHUD : MonoBehaviour
         canvas = root.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 1000;
+        canvasRect = (RectTransform)root.transform;
         var scaler = root.AddComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1080, 1920);
@@ -873,6 +1180,10 @@ public class ARDesignScanHUD : MonoBehaviour
             out rescanLabel);
         rescanLabel.fontSize = 24;
         rescanButton.gameObject.SetActive(false);
+
+        if (autoScan != null)
+            BuildAutoUi(root.transform);
+        BuildLightButton(root.transform, autoScan != null ? -298f : -208f);
 
         startButton = CreateCenterActionButton(
             root.transform,
@@ -991,6 +1302,100 @@ public class ARDesignScanHUD : MonoBehaviour
             OnConfirmClicked,
             out confirmImage,
             out confirmLabel);
+    }
+
+    /// <summary>Auto on/off switch under Rescan, the hold-still ring, and the arrow to a missing corner.</summary>
+    void BuildAutoUi(Transform root)
+    {
+        var toggleHolder = new GameObject("AutoToggleHolder", typeof(RectTransform));
+        toggleHolder.transform.SetParent(root, false);
+        var toggleRt = (RectTransform)toggleHolder.transform;
+        toggleRt.anchorMin = new Vector2(1f, 1f);
+        toggleRt.anchorMax = new Vector2(1f, 1f);
+        toggleRt.pivot = new Vector2(0.5f, 0.5f);
+        toggleRt.anchoredPosition = new Vector2(-100f, -208f);
+        toggleRt.sizeDelta = new Vector2(160f, 72f);
+        autoToggleButton = CreatePillButton(
+            toggleHolder.transform,
+            "Auto: On",
+            Vector2.zero,
+            Vector2.one,
+            AccentReady,
+            Color.white,
+            OnAutoToggleClicked,
+            out autoToggleImage,
+            out autoToggleLabel);
+        autoToggleLabel.fontSize = 22;
+        autoToggleButton.gameObject.SetActive(false);
+
+        dwellRing = ARDesignUiUtil.CreateImage(root, Color.white);
+        dwellRing.sprite = ARDesignUiUtil.CircleRingSprite(128, 0.14f);
+        dwellRing.type = Image.Type.Filled;
+        dwellRing.fillMethod = Image.FillMethod.Radial360;
+        dwellRing.fillOrigin = (int)Image.Origin360.Top;
+        dwellRing.fillClockwise = true;
+        dwellRing.fillAmount = 0f;
+        dwellRing.raycastTarget = false;
+        var ringRt = dwellRing.rectTransform;
+        ringRt.anchorMin = new Vector2(0.5f, 0.5f);
+        ringRt.anchorMax = new Vector2(0.5f, 0.5f);
+        ringRt.pivot = new Vector2(0.5f, 0.5f);
+        ringRt.sizeDelta = new Vector2(150f, 150f);
+        dwellRing.gameObject.SetActive(false);
+
+        var arrowChip = ARDesignUiUtil.CreateImage(root, AutoOrange);
+        ARDesignUiUtil.ApplyCircle(arrowChip);
+        arrowChip.raycastTarget = false;
+        targetArrow = arrowChip.rectTransform;
+        targetArrow.anchorMin = new Vector2(0.5f, 0.5f);
+        targetArrow.anchorMax = new Vector2(0.5f, 0.5f);
+        targetArrow.pivot = new Vector2(0.5f, 0.5f);
+        targetArrow.sizeDelta = new Vector2(96f, 96f);
+        var arrowIcon = ARDesignUiUtil.CreateImage(targetArrow, Color.white);
+        arrowIcon.sprite = LoadArrowSprite();
+        arrowIcon.preserveAspect = true;
+        arrowIcon.raycastTarget = false;
+        var iconRt = arrowIcon.rectTransform;
+        iconRt.anchorMin = new Vector2(0.22f, 0.22f);
+        iconRt.anchorMax = new Vector2(0.78f, 0.78f);
+        iconRt.offsetMin = Vector2.zero;
+        iconRt.offsetMax = Vector2.zero;
+        targetArrow.gameObject.SetActive(false);
+    }
+
+    void BuildLightButton(Transform root, float y)
+    {
+        var holder = new GameObject("LightHolder", typeof(RectTransform));
+        holder.transform.SetParent(root, false);
+        var rt = (RectTransform)holder.transform;
+        rt.anchorMin = new Vector2(1f, 1f);
+        rt.anchorMax = new Vector2(1f, 1f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = new Vector2(-100f, y);
+        rt.sizeDelta = new Vector2(160f, 72f);
+        lightButton = CreatePillButton(
+            holder.transform,
+            "Light: Off",
+            Vector2.zero,
+            Vector2.one,
+            Frost,
+            Ink,
+            OnLightClicked,
+            out lightImage,
+            out lightLabel);
+        lightLabel.fontSize = 22;
+        lightButton.gameObject.SetActive(false);
+    }
+
+    static Sprite LoadArrowSprite()
+    {
+        const string path = "UIIcons/back-arrow";
+        var sprite = Resources.Load<Sprite>(path);
+        if (sprite != null) return sprite;
+        var tex = Resources.Load<Texture2D>(path);
+        return tex == null
+            ? null
+            : Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
     }
 
     static ARDesignSpatialMappingController EnsureSpatialMappingRuntime(GameObject host)

@@ -33,17 +33,18 @@ public static class FurnitureDetectorPhotoTest
             detector.ReleaseModel();
             if (!loaded)
             {
-                Debug.LogError("[FurnitureDetectorPhotoTest] No model loaded. Is Assets/Resources/ML/FurnitureDetector.onnx there?");
+                Debug.LogError("[FurnitureDetectorPhotoTest] No model loaded. Is Assets/Resources/ML/RoomDetector.onnx (or FurnitureDetector.onnx) there?");
                 return;
             }
 
             var log = new StringBuilder($"[FurnitureDetectorPhotoTest] {detections.Count} detection(s) in {Path.GetFileName(path)}:");
             foreach (var (label, confidence, box) in detections)
             {
-                var furniture = CocoFurnitureLabelMap.Map(label);
-                log.Append($"\n  {label} {confidence:P0} -> {furniture ?? "(not furniture)"} ")
+                var furniture = RoomDetectorLabels.MapFurniture(label);
+                var opening = RoomDetectorLabels.MapOpening(label);
+                log.Append($"\n  {label} {confidence:P0} -> {furniture ?? opening ?? "(not used)"} ")
                     .Append($"at x {box.xMin:F2}-{box.xMax:F2}, y {box.yMin:F2}-{box.yMax:F2}");
-                DrawBox(photo, box, furniture != null ? Color.green : Color.yellow);
+                DrawBox(photo, box, opening != null ? Color.cyan : furniture != null ? Color.green : Color.yellow);
             }
 
             var outPath = Path.Combine(

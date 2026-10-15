@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { AppText } from '@/components/ui/Text';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
@@ -31,7 +31,7 @@ import {
   HOME_PRODUCT_CATEGORY_CHIPS,
   type HomeProduct,
 } from '@/types/home-product';
-import { mapHomeCategoryFilter, isOutOfStock } from '@/utils/furnitureCatalogHelpers';
+import { mapHomeCategoryFilter } from '@/utils/furnitureCatalogHelpers';
 import { AppDialog } from '@/components/ui/AppDialog';
 import { savedItemsService } from '@/services/SavedItemsService';
 import { homeProductToSavedItem } from '@/utils/saveItemHelpers';
@@ -90,7 +90,6 @@ const Button = ({
 };
 
 export default function HomeScreen() {
-  const router = useRouter();
   const { colors: t, isDark, toggleTheme, statusBarStyle } = useTheme();
   const [showTip, setShowTip] = useState(true);
   const [filters, setFilters] = useState<ProductFilters>(DEFAULT_FILTERS);
@@ -219,21 +218,6 @@ export default function HomeScreen() {
       setSavingId(null);
     }
   }, [savedIds, savingId]);
-
-  const handleViewInAR = useCallback(
-    (product: HomeProduct) => {
-      if (isOutOfStock(product.quantity)) {
-        Alert.alert('Out of stock', 'This item is currently unavailable and cannot be placed in AR.');
-        return;
-      }
-      setSelectedProduct(null);
-      router.push({
-        pathname: '/ar-view',
-        params: { furniture: product.id },
-      });
-    },
-    [router],
-  );
 
   return (
     <View style={[styles.container, { backgroundColor: t.background }]}>
@@ -440,7 +424,7 @@ export default function HomeScreen() {
                     Pro Tip
                   </AppText>
                   <AppText variant="body" style={[styles.tipDesc, { color: t.textSecondary }]}>
-                    Tap a product for dimensions, save it, or view it in AR
+                    Tap a product for its dimensions, or save it to your Wishlist
                   </AppText>
                 </View>
                 <AnimatedButton onPress={dismissTip} hapticType="light">
@@ -461,7 +445,6 @@ export default function HomeScreen() {
         saving={selectedProduct ? savingId === selectedProduct.id : false}
         onClose={() => setSelectedProduct(null)}
         onToggleSave={handleToggleSave}
-        onViewInAR={handleViewInAR}
       />
 
       <ProductFilterSheet

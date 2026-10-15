@@ -20,8 +20,6 @@ export type ScreenName =
   | 'ar-view'
   | 'layout-3d'
   | 'model-preview'
-  | 'room-view'
-  | 'room-measurements'
   | 'projects'
   | 'about-us'
   | 'help-support'
@@ -152,19 +150,6 @@ export const NAVIGATION_SCREENS: Record<string, ScreenConfig[]> = {
     },
     {
       name: 'model-preview',
-      options: {
-        ...ANIMATION_PRESETS.slideRight,
-      },
-    },
-    {
-      name: 'room-view',
-      options: {
-        ...ANIMATION_PRESETS.slideRight,
-        orientation: 'portrait',
-      },
-    },
-    {
-      name: 'room-measurements',
       options: {
         ...ANIMATION_PRESETS.slideRight,
       },

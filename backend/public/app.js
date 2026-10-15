@@ -47,7 +47,6 @@ function switchSection(sectionId) {
     const titles = {
         dashboard: { title: 'Dashboard', subtitle: 'Welcome to AR Interior Design Studio' },
         design: { title: 'AI Design', subtitle: 'Generate beautiful room designs with AI' },
-        themes: { title: 'Themes', subtitle: 'Discover personalized theme recommendations' },
         ideas: { title: 'Ideas', subtitle: 'Get AI-powered design suggestions' },
         api: { title: 'API', subtitle: 'Explore and test the REST API' }
     };
@@ -492,102 +491,6 @@ function addPreviewStyles() {
 }
 
 // ============================================================================
-// THEME RECOMMENDATIONS
-// ============================================================================
-
-async function getThemeRecommendations() {
-    const resultDiv = document.getElementById('themes-result');
-    
-    resultDiv.innerHTML = `
-        <div class="loading" style="grid-column: 1 / -1;">
-            <div class="spinner"></div>
-            <span>Finding perfect themes for you...</span>
-        </div>
-    `;
-    
-    const preferences = {
-        roomType: document.getElementById('theme-room').value,
-        mood: document.getElementById('theme-mood').value,
-        style: document.getElementById('theme-style').value
-    };
-    
-    try {
-        const response = await fetch(`${API_BASE}/themes/recommendations?roomType=${preferences.roomType}&mood=${preferences.mood}&style=${preferences.style}`);
-        const data = await response.json();
-        
-        displayThemeResults(data.themes || generateMockThemes(preferences));
-        
-    } catch (error) {
-        // Generate mock themes for demo
-        displayThemeResults(generateMockThemes(preferences));
-    }
-}
-
-function generateMockThemes(preferences) {
-    const palettes = [
-        ['#6366F1', '#818CF8', '#C7D2FE', '#EEF2FF'],
-        ['#EC4899', '#F472B6', '#FBCFE8', '#FCE7F3'],
-        ['#10B981', '#34D399', '#A7F3D0', '#D1FAE5'],
-        ['#F59E0B', '#FBBF24', '#FDE68A', '#FEF3C7'],
-        ['#8B5CF6', '#A78BFA', '#DDD6FE', '#EDE9FE'],
-        ['#14B8A6', '#2DD4BF', '#99F6E4', '#CCFBF1']
-    ];
-    
-    return [
-        {
-            name: `${preferences.style} ${preferences.mood}`,
-            description: `A ${preferences.mood.toLowerCase()} ${preferences.style.toLowerCase()} design perfect for your ${preferences.roomType.toLowerCase()}`,
-            colorPalette: palettes[0],
-            confidence: 0.95,
-            materials: ['Wood', 'Fabric', 'Metal']
-        },
-        {
-            name: `Elegant ${preferences.style}`,
-            description: `Sophisticated ${preferences.style.toLowerCase()} aesthetics with a ${preferences.mood.toLowerCase()} atmosphere`,
-            colorPalette: palettes[1],
-            confidence: 0.88,
-            materials: ['Marble', 'Velvet', 'Brass']
-        },
-        {
-            name: `Natural ${preferences.mood}`,
-            description: `Bring nature indoors with organic materials and ${preferences.mood.toLowerCase()} vibes`,
-            colorPalette: palettes[2],
-            confidence: 0.82,
-            materials: ['Rattan', 'Linen', 'Clay']
-        },
-        {
-            name: `Contemporary Fusion`,
-            description: `Blend of modern design with ${preferences.mood.toLowerCase()} elements for your ${preferences.roomType.toLowerCase()}`,
-            colorPalette: palettes[3],
-            confidence: 0.79,
-            materials: ['Glass', 'Steel', 'Concrete']
-        }
-    ];
-}
-
-function displayThemeResults(themes) {
-    const resultDiv = document.getElementById('themes-result');
-    
-    resultDiv.innerHTML = themes.map(theme => `
-        <div class="theme-card">
-            <div class="theme-colors">
-                ${(theme.colorPalette || ['#6366F1', '#818CF8', '#C7D2FE', '#EEF2FF']).map(c => 
-                    `<span style="background: ${c}"></span>`
-                ).join('')}
-            </div>
-            <div class="theme-info">
-                <div class="theme-name">${theme.name}</div>
-                <div class="theme-desc">${theme.description}</div>
-                <div class="theme-meta">
-                    <span>🎯 ${Math.round((theme.confidence || 0.8) * 100)}% match</span>
-                    <span>🪵 ${(theme.materials || ['Wood', 'Fabric']).slice(0, 2).join(', ')}</span>
-                </div>
-            </div>
-        </div>
-    `).join('');
-}
-
-// ============================================================================
 // IDEAS ASSISTANT
 // ============================================================================
 
@@ -752,8 +655,6 @@ function loadApiEndpoints() {
         { method: 'POST', path: '/api/v1/layouts', desc: 'Create a new layout' },
         { method: 'GET', path: '/api/v1/projects', desc: 'List all projects' },
         { method: 'POST', path: '/api/v1/projects', desc: 'Create a new project' },
-        { method: 'GET', path: '/api/v1/themes/recommendations', desc: 'Get theme recommendations' },
-        { method: 'POST', path: '/api/v1/themes/feedback', desc: 'Submit theme feedback' },
         { method: 'POST', path: '/api/v1/images/generate', desc: 'Generate DALL-E image' },
         { method: 'POST', path: '/api/v1/designs/generate', desc: 'Generate AI design' },
         { method: 'POST', path: '/api/v1/ideas/analyze', desc: 'Analyze design prompt' },
@@ -790,7 +691,6 @@ async function testApi() {
 
 // Make switchSection global
 window.switchSection = switchSection;
-window.getThemeRecommendations = getThemeRecommendations;
 window.analyzePrompt = analyzePrompt;
 window.generateDesign = generateDesign;
 window.testApi = testApi;

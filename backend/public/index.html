@@ -25,10 +25,6 @@
                     <span class="nav-icon">🎨</span>
                     AI Design
                 </a>
-                <a href="#" class="nav-item" data-section="themes">
-                    <span class="nav-icon">🎭</span>
-                    Themes
-                </a>
                 <a href="#" class="nav-item" data-section="ideas">
                     <span class="nav-icon">💡</span>
                     Ideas
@@ -78,13 +74,6 @@
                                 <span class="stat-label">Designs Generated</span>
                             </div>
                         </div>
-                        <div class="stat-card" style="--accent: #EC4899">
-                            <div class="stat-icon">🎭</div>
-                            <div class="stat-info">
-                                <span class="stat-value" id="total-themes">12</span>
-                                <span class="stat-label">Theme Templates</span>
-                            </div>
-                        </div>
                         <div class="stat-card" style="--accent: #10B981">
                             <div class="stat-icon">💡</div>
                             <div class="stat-info">
@@ -110,9 +99,6 @@
                                 <button class="action-btn primary" onclick="switchSection('design')">
                                     <span>✨</span> Generate Design
                                 </button>
-                                <button class="action-btn secondary" onclick="switchSection('themes')">
-                                    <span>🎨</span> Browse Themes
-                                </button>
                                 <button class="action-btn secondary" onclick="switchSection('ideas')">
                                     <span>💡</span> Get Ideas
                                 </button>
@@ -124,14 +110,6 @@
                                 <h3>🎯 AI Capabilities</h3>
                             </div>
                             <div class="capabilities-list">
-                                <div class="capability">
-                                    <span class="cap-icon">🧠</span>
-                                    <div class="cap-info">
-                                        <strong>ML Theme Recommendations</strong>
-                                        <p>Personalized themes based on preferences</p>
-                                    </div>
-                                    <span class="cap-status active">Active</span>
-                                </div>
                                 <div class="capability">
                                     <span class="cap-icon">🖼️</span>
                                     <div class="cap-info">
@@ -268,55 +246,6 @@
                                     <span class="empty-icon">🎨</span>
                                     <p>Configure your room and click "Generate Design"</p>
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Themes Section -->
-                <section class="section" id="themes">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>🎭 Theme Recommendations</h3>
-                            <p>Get personalized theme suggestions based on your preferences</p>
-                        </div>
-                        <div class="theme-filters">
-                            <div class="filter-group">
-                                <label>Room Type</label>
-                                <select id="theme-room">
-                                    <option value="Living Room">Living Room</option>
-                                    <option value="Bedroom">Bedroom</option>
-                                    <option value="Kitchen">Kitchen</option>
-                                    <option value="Office">Office</option>
-                                </select>
-                            </div>
-                            <div class="filter-group">
-                                <label>Mood</label>
-                                <select id="theme-mood">
-                                    <option value="Cozy">Cozy</option>
-                                    <option value="Energetic">Energetic</option>
-                                    <option value="Calm">Calm</option>
-                                    <option value="Professional">Professional</option>
-                                    <option value="Playful">Playful</option>
-                                </select>
-                            </div>
-                            <div class="filter-group">
-                                <label>Style</label>
-                                <select id="theme-style">
-                                    <option value="Modern">Modern</option>
-                                    <option value="Minimalist">Minimalist</option>
-                                    <option value="Scandinavian">Scandinavian</option>
-                                    <option value="Industrial">Industrial</option>
-                                </select>
-                            </div>
-                            <button class="submit-btn" onclick="getThemeRecommendations()">
-                                <span>✨</span> Get Recommendations
-                            </button>
-                        </div>
-                        <div id="themes-result" class="themes-grid">
-                            <div class="theme-placeholder">
-                                <span>🎨</span>
-                                <p>Select your preferences and get AI-powered theme recommendations</p>
                             </div>
                         </div>
                     </div>

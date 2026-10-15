@@ -1,7 +1,7 @@
 using System;
 using UnityEngine;
 
-/// <summary>Pending furniture detection — not saved until the user taps to accept.</summary>
+/// <summary>Pending furniture detection — saved when the user taps it, or by itself once seen consistently.</summary>
 [Serializable]
 public struct FurnitureAutoSuggestion
 {
@@ -14,4 +14,6 @@ public struct FurnitureAutoSuggestion
     public float confidence;
     /// <summary>"plane" | "coco"</summary>
     public string source;
+    /// <summary>How many scans have seen it (0 or 1 = once). Seen twice, the furniture step adds it by itself.</summary>
+    public int sightings;
 }

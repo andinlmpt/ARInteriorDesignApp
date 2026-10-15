@@ -1,5 +1,5 @@
 /**
- * Center tab — choose AR Furniture or AR Measurement (plus entry point).
+ * Center tab — start a "Design a room" project (plus entry point).
  */
 
 import React, { useCallback, useState } from 'react';
@@ -7,7 +7,6 @@ import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
   Pressable,
   TextInput,
   Platform,
@@ -22,7 +21,6 @@ import { spacing, radii } from '@/components/ui/theme';
 import { AppDialog } from '@/components/ui/AppDialog';
 import { getHorizontalPadding } from '@/utils/responsive';
 import { projectService } from '@/services/ProjectService';
-import type { ProjectArMode } from '@/types/project';
 
 const MAX_PROJECT_NAME = 50;
 
@@ -33,44 +31,37 @@ export default function CameraScreen() {
   const [nameDraft, setNameDraft] = useState('');
   const [nameError, setNameError] = useState<string | null>(null);
   const [nameModalVisible, setNameModalVisible] = useState(false);
-  const [pendingMode, setPendingMode] = useState<ProjectArMode | null>(null);
   const [starting, setStarting] = useState(false);
 
   // Returning from AR (or re-entering the tab) must not reopen the name dialog.
   useFocusEffect(
     useCallback(() => {
       setNameModalVisible(false);
-      setPendingMode(null);
       setStarting(false);
     }, [])
   );
 
   const startProject = useCallback(
-    async (name: string, mode: ProjectArMode) => {
+    async (name: string) => {
       if (starting) return;
       setStarting(true);
       try {
-        const project = await projectService.createProject({ name, arMode: mode });
-        if (mode === 'design') {
-          const canScan =
-            UNITY_AR_EMBED_ENABLED && (Platform.OS === 'ios' || Platform.OS === 'android');
-          router.push(
-            canScan
-              ? {
-                  pathname: '/ar-view',
-                  params: { mode: 'measure', projectId: project.id, flow: 'design' },
-                }
-              : {
-                  pathname: '/design-preferences',
-                  params: { projectId: project.id, flow: 'design' },
-                },
-          );
-          return;
-        }
-        router.push({ pathname: '/ar-view', params: { mode, projectId: project.id } });
+        const project = await projectService.createProject({ name, arMode: 'design' });
+        const canScan =
+          UNITY_AR_EMBED_ENABLED && (Platform.OS === 'ios' || Platform.OS === 'android');
+        router.push(
+          canScan
+            ? {
+                pathname: '/ar-view',
+                params: { projectId: project.id, flow: 'design' },
+              }
+            : {
+                pathname: '/design-preferences',
+                params: { projectId: project.id, flow: 'design' },
+              },
+        );
       } catch (err) {
         setStarting(false);
-        setPendingMode(mode);
         setNameDraft(name);
         setNameError(err instanceof Error ? err.message : 'Could not create the project.');
         setNameModalVisible(true);
@@ -79,8 +70,7 @@ export default function CameraScreen() {
     [router, starting]
   );
 
-  const openAr = (mode: ProjectArMode) => {
-    setPendingMode(mode);
+  const openNameDialog = () => {
     setNameDraft('');
     setNameError(null);
     setNameModalVisible(true);
@@ -92,17 +82,13 @@ export default function CameraScreen() {
       setNameError('Please enter a project name.');
       return;
     }
-    if (!pendingMode) return;
-    const mode = pendingMode;
     setNameModalVisible(false);
     setNameError(null);
-    setPendingMode(null);
-    void startProject(trimmed, mode);
+    void startProject(trimmed);
   };
 
   const cancelName = () => {
     setNameModalVisible(false);
-    setPendingMode(null);
     setNameError(null);
   };
 
@@ -116,57 +102,7 @@ export default function CameraScreen() {
 
         <View style={styles.list}>
           <Pressable
-            onPress={() => openAr('furniture')}
-            style={({ pressed }) => [
-              styles.card,
-              {
-                backgroundColor: colors.surfacePrimary,
-                borderColor: colors.border,
-                opacity: pressed ? 0.92 : 1,
-              },
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel="AR Furniture"
-          >
-            <View style={[styles.iconBadge, { backgroundColor: colors.accentSoft }]}>
-              <Ionicons name="cube-outline" size={28} color={colors.accent} />
-            </View>
-            <View style={styles.cardCopy}>
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>AR Furniture</Text>
-              <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
-                Place furniture in your room with AR
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-          </Pressable>
-
-          <Pressable
-            onPress={() => openAr('measure')}
-            style={({ pressed }) => [
-              styles.card,
-              {
-                backgroundColor: colors.surfacePrimary,
-                borderColor: colors.border,
-                opacity: pressed ? 0.92 : 1,
-              },
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel="AR Measurement"
-          >
-            <View style={[styles.iconBadge, { backgroundColor: colors.accentSoft }]}>
-              <Ionicons name="resize-outline" size={28} color={colors.accent} />
-            </View>
-            <View style={styles.cardCopy}>
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>AR Measurement</Text>
-              <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
-                Measure rooms with your phone camera
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-          </Pressable>
-
-          <Pressable
-            onPress={() => openAr('design')}
+            onPress={openNameDialog}
             style={({ pressed }) => [
               styles.card,
               {
@@ -190,14 +126,6 @@ export default function CameraScreen() {
             <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
           </Pressable>
         </View>
-
-        <TouchableOpacity
-          style={styles.savedLink}
-          onPress={() => router.push('/room-measurements')}
-          accessibilityRole="button"
-        >
-          <Text style={[styles.savedLinkText, { color: colors.accent }]}>View saved measurements</Text>
-        </TouchableOpacity>
       </SafeAreaView>
 
       <AppDialog
@@ -303,14 +231,5 @@ const styles = StyleSheet.create({
   cardSubtitle: {
     fontSize: 14,
     lineHeight: 20,
-  },
-  savedLink: {
-    marginTop: spacing.xl,
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-  },
-  savedLinkText: {
-    fontSize: 14,
-    fontWeight: '600',
   },
 });

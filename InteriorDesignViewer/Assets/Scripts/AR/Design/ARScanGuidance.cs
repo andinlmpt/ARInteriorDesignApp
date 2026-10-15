@@ -19,6 +19,7 @@ public class ARScanGuidance : MonoBehaviour
         TooFast,
         LowDetail,
         NoFloor,
+        CameraBusy,
     }
 
     [Tooltip("Turning faster than this (degrees per second) shows \"Move slowly\".")]
@@ -48,6 +49,7 @@ public class ARScanGuidance : MonoBehaviour
         Issue.TooFast => "Move slowly",
         Issue.LowDetail => "Point at something with more detail",
         Issue.NoFloor => "Point at the floor",
+        Issue.CameraBusy => "Camera is busy",
         _ => string.Empty,
     };
 
@@ -55,10 +57,11 @@ public class ARScanGuidance : MonoBehaviour
     {
         Issue.Starting => "Move the phone slowly so it can see the room",
         Issue.Relocalizing => "Point back at the area you already scanned",
-        Issue.TooDark => "Turn on a light or open the curtains",
+        Issue.TooDark => "Turn on a light, open the curtains, or tap Light at the top right",
         Issue.TooFast => "Slow, steady sweeps keep the measurements accurate",
         Issue.LowDetail => "Plain walls are hard to track. Include edges, furniture or the floor",
         Issue.NoFloor => "Aim the camera down until the marker is on the floor",
+        Issue.CameraBusy => "Turn off the phone's flashlight, then use Light here instead",
         _ => string.Empty,
     };
 
@@ -128,6 +131,7 @@ public class ARScanGuidance : MonoBehaviour
             case NotTrackingReason.InsufficientFeatures: return Issue.LowDetail;
             case NotTrackingReason.Relocalizing: return Issue.Relocalizing;
             case NotTrackingReason.Initializing: return Issue.Starting;
+            case NotTrackingReason.CameraUnavailable: return Issue.CameraBusy;
         }
 
         if (movingFast)

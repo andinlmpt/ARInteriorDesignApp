@@ -422,13 +422,6 @@ export default function ModelPreviewScreen() {
     router.push(result.href);
   }, [router]);
 
-  const openInRoom = () => {
-    router.push({
-      pathname: '/room-view',
-      params: { furniture: selectedId },
-    });
-  };
-
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={statusBarStyle} />
@@ -561,31 +554,16 @@ export default function ModelPreviewScreen() {
               <Text style={styles.arButtonText}>Done</Text>
             </TouchableOpacity>
           ) : (
-            <>
-              <TouchableOpacity
-                style={[
-                  styles.arButton,
-                  { backgroundColor: colors.accent },
-                  status !== 'ready' && styles.arButtonDisabled,
-                ]}
-                onPress={openInRoom}
-                disabled={status !== 'ready'}
-                accessibilityRole="button"
-                accessibilityLabel="View furniture in room with AR"
-              >
-                <Text style={styles.arButtonText}>View in My Room (AR)</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.secondaryButton, { borderColor: colors.border }]}
-                onPress={openExportedLayout}
-                accessibilityRole="button"
-                accessibilityLabel="Open a Unity exported GLB layout"
-              >
-                <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>
-                  Open Unity export (.glb)
-                </Text>
-              </TouchableOpacity>
-            </>
+            <TouchableOpacity
+              style={[styles.secondaryButton, { borderColor: colors.border }]}
+              onPress={openExportedLayout}
+              accessibilityRole="button"
+              accessibilityLabel="Open a Unity exported GLB layout"
+            >
+              <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>
+                Open Unity export (.glb)
+              </Text>
+            </TouchableOpacity>
           )}
         </View>
       </SafeAreaView>
@@ -719,9 +697,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     borderRadius: radii.md,
     alignItems: 'center',
-  },
-  arButtonDisabled: {
-    opacity: 0.5,
   },
   arButtonText: {
     color: '#FFFFFF',

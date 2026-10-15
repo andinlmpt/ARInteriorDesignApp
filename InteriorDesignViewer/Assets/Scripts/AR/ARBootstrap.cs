@@ -95,6 +95,27 @@ public class ARBootstrap : MonoBehaviour
         StartCoroutine(EnsureSessionRunning(resetTracking: false));
     }
 
+    /// <summary>
+    /// The camera was taken away (e.g. the phone's own flashlight was switched on): pause and
+    /// resume the AR session so ARCore opens the camera again, the same as leaving and
+    /// returning to the app. Tracking is not reset.
+    /// </summary>
+    public void ReacquireCamera()
+    {
+        if (!isActiveAndEnabled || arSession == null || starting) return;
+        StartCoroutine(ReacquireCameraRoutine());
+    }
+
+    IEnumerator ReacquireCameraRoutine()
+    {
+        Debug.LogWarning("[ARBootstrap] Camera unavailable — pausing and resuming the AR session to get it back.");
+        arSession.enabled = false;
+        yield return null;
+        yield return null;
+        arSession.enabled = true;
+        yield return EnsureSessionRunning(resetTracking: false);
+    }
+
     IEnumerator EnsureSessionRunning(bool resetTracking)
     {
         if (starting) yield break;

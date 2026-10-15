@@ -295,7 +295,7 @@ export default function Layout3DScreen() {
                 onPress={() => router.push('/(tabs)/camera')}
                 hapticType="medium"
               >
-                <Text style={styles.loadDesignButtonText}>Start AR Furniture</Text>
+                <Text style={styles.loadDesignButtonText}>Design a room</Text>
               </AnimatedButton>
             </SlideInView>
           </View>

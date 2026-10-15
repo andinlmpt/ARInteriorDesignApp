@@ -3,13 +3,8 @@ import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'rea
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts/ThemeContext';
 import { radii, spacing } from '@/components/ui/theme';
-import type { LayoutViewMode } from '@/types/unity-bridge';
 
 interface LayoutViewControlsProps {
-  view: LayoutViewMode;
-  onSetView: (view: LayoutViewMode) => void;
-  onRealign: () => void;
-  onFlip: () => void;
   /** Asks the AI for a fresh layout with the same preferences and swaps it in place. */
   onRegenerate?: () => void;
   regenerating?: boolean;
@@ -20,27 +15,13 @@ interface LayoutViewControlsProps {
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
 export function LayoutViewControls({
-  view,
-  onSetView,
-  onRealign,
-  onFlip,
   onRegenerate,
   regenerating = false,
   onFinish,
 }: LayoutViewControlsProps) {
   const { colors } = useTheme();
-  const isReal = view === 'real';
 
-  const actions: { key: string; icon: IoniconName; label: string; onPress: () => void; busy?: boolean }[] = [
-    {
-      key: 'view',
-      icon: isReal ? 'cube-outline' : 'camera-outline',
-      label: isReal ? 'Plan' : 'Real room',
-      onPress: () => onSetView(isReal ? 'plan' : 'real'),
-    },
-    { key: 'realign', icon: 'scan-outline', label: 'Realign', onPress: onRealign },
-    { key: 'flip', icon: 'swap-horizontal-outline', label: 'Flip', onPress: onFlip },
-  ];
+  const actions: { key: string; icon: IoniconName; label: string; onPress: () => void; busy?: boolean }[] = [];
   if (onRegenerate) {
     actions.push({
       key: 'regenerate',
