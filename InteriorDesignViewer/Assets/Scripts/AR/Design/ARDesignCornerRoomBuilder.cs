@@ -369,12 +369,35 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     /// Locks wall height and seeds the width outline: the Finish base point becomes
     /// corner 0 so live width measurement starts from that same floor point.
     /// </summary>
-    public bool ConfirmHeight()
+    public bool ConfirmHeight() => LockHeight(null);
+
+    /// <summary>
+    /// Locks the usual ceiling height without measuring (for ceilings that are hard to aim at);
+    /// Review can still change it (<see cref="SetWallHeight"/>).
+    /// </summary>
+    public bool SkipHeight() => LockHeight(defaultWallHeight);
+
+    public float DefaultWallHeight => defaultWallHeight;
+    public float MinWallHeight => minWallHeight;
+    public float MaxWallHeight => maxWallHeight;
+
+    /// <summary>Changes the locked ceiling height (e.g. corrected by the user before saving the room).</summary>
+    public void SetWallHeight(float meters)
+    {
+        if (!heightLocked || roomLocked) return;
+        var height = Mathf.Clamp(meters, minWallHeight, maxWallHeight);
+        if (Mathf.Approximately(height, wallHeight)) return;
+        wallHeight = height;
+        RebuildVisuals();
+        HeightPhaseChanged?.Invoke();
+    }
+
+    bool LockHeight(float? forced)
     {
         if (!CanConfirmHeight) return false;
 
         // The reading held steady (or the last one held before the phone came down to tap Finish).
-        var measured = heightFilter.Resolve(minReliableLockHeight, float.NaN);
+        var measured = forced ?? heightFilter.Resolve(minReliableLockHeight, float.NaN);
         if (float.IsNaN(measured))
         {
             // Too short to be a real ceiling — use default rather than ~70 cm furniture height.
@@ -1200,15 +1223,13 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
             }
         }
 
-        // Fall back to placement reticle, then screen center.
-        if (placementIndicator != null && placementIndicator.isActiveAndEnabled)
+        // A following reticle has the answer (it reaches past the recognized floor, into corners).
+        // Off the floor it keeps its last spot, so that position must not be reused.
+        if (placementIndicator != null && placementIndicator.isActiveAndEnabled && placementIndicator.IsTracking)
         {
-            var indicatorScreen = arCamera.WorldToScreenPoint(placementIndicator.WorldPosition);
-            if (indicatorScreen.z > 0f
-                && TryGetFloorHit(new Vector2(indicatorScreen.x, indicatorScreen.y), out hit))
-            {
-                return true;
-            }
+            if (!placementIndicator.IsLockedOnFloor) return false;
+            hit = placementIndicator.CurrentPose.position;
+            return true;
         }
 
         var center = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
@@ -1475,6 +1496,9 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     bool TryGetFloorHit(Vector2 screenPoint, out Vector3 world)
     {
         world = default;
+        if (placementIndicator != null && placementIndicator.TryResolveAim(screenPoint, out world, out _))
+            return true;
+
         if (raycastManager == null) return false;
 
         hits.Clear();

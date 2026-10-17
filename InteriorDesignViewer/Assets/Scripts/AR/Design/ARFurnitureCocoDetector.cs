@@ -408,6 +408,7 @@ public class ARFurnitureCocoDetector : MonoBehaviour
             {
                 id = $"coco-{nextSuggestionId}-{det.label}",
                 type = mapped,
+                label = det.label,
                 center = center,
                 size = size,
                 yaw = yaw,

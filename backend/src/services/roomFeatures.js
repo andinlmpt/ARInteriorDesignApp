@@ -9,6 +9,7 @@
  */
 
 import { orientedRoomSize, rotateXZ, signedArea, wallAlignmentAngle } from '../utils/roomGeometry.js';
+import { classifyFurniture } from './layoutPlanner.js';
 
 /** Minimum clear depth inside the room in front of a door (metres). */
 const DOOR_MIN_CLEARANCE = 0.9;
@@ -40,11 +41,8 @@ function clipToRoom(rect, room) {
   return { x: x0, z: z0, w: x1 - x0, d: z1 - z0 };
 }
 
-/**
- * Rectangle on the room side of a wall opening.
- * @returns {{x:number,z:number,w:number,d:number}|null}
- */
-function openingZone(polygon, opening, depth, sideMargin) {
+/** The wall an opening is on: start corner, unit direction, inward normal and length. */
+function openingWall(polygon, opening) {
   const n = polygon.length;
   const i = Math.floor(finite(opening.wallIndex, -1));
   if (i < 0 || i >= n) return null;
@@ -58,6 +56,17 @@ function openingZone(polygon, opening, depth, sideMargin) {
   // Inward normal: left of the edge for counter-clockwise outlines.
   const ccw = signedArea(polygon) > 0;
   const inward = ccw ? { x: -dir.z, z: dir.x } : { x: dir.z, z: -dir.x };
+  return { a, dir, inward, len };
+}
+
+/**
+ * Rectangle on the room side of a wall opening.
+ * @returns {{x:number,z:number,w:number,d:number}|null}
+ */
+function openingZone(polygon, opening, depth, sideMargin) {
+  const wall = openingWall(polygon, opening);
+  if (!wall) return null;
+  const { a, dir, inward, len } = wall;
 
   const start = Math.max(0, finite(opening.offsetAlongWall) - sideMargin);
   const end = Math.min(len, finite(opening.offsetAlongWall) + finite(opening.width) + sideMargin);
@@ -71,6 +80,26 @@ function openingZone(polygon, opening, depth, sideMargin) {
     { x: p0.x + inward.x * depth, z: p0.z + inward.z * depth },
     { x: p1.x + inward.x * depth, z: p1.z + inward.z * depth },
   ]);
+}
+
+/** Where the opening sits on its wall, for drawing it: {x1, z1, x2, z2} in room-local metres. */
+function openingSpan(polygon, opening) {
+  const wall = openingWall(polygon, opening);
+  if (!wall) return null;
+  const { a, dir, len } = wall;
+  const start = clamp01(finite(opening.offsetAlongWall), len);
+  const end = clamp01(finite(opening.offsetAlongWall) + finite(opening.width), len);
+  if (end <= start) return null;
+  return {
+    x1: a.x + dir.x * start,
+    z1: a.z + dir.z * start,
+    x2: a.x + dir.x * end,
+    z2: a.z + dir.z * end,
+  };
+}
+
+function clamp01(value, max) {
+  return Math.max(0, Math.min(max, value));
 }
 
 function obstacleRect(obstacle) {
@@ -92,6 +121,8 @@ function obstacleRect(obstacle) {
  * @param {{width:number,length:number}} room planner room size (metres)
  * @param {{floorPolygon?:Array, openings?:Array, obstacles?:Array}} scan world-space scan data
  * @returns {{polygon:Array<{x:number,z:number}>|null, doorZones:Array, windowZones:Array, obstacles:Array}}
+ *   Door and window zones carry `span` (where they sit on the wall); obstacles carry the
+ *   planner `role` of the existing piece (sofa, bed, coffee-table, …).
  */
 export function buildRoomFeatures(room, scan = {}) {
   const empty = { polygon: null, doorZones: [], windowZones: [], obstacles: [] };
@@ -125,7 +156,13 @@ export function buildRoomFeatures(room, scan = {}) {
       const depth = Math.max(DOOR_MIN_CLEARANCE, finite(opening.width));
       const zone = openingZone(polygon, opening, depth, DOOR_SIDE_MARGIN);
       const clipped = zone && clipToRoom(zone, room);
-      if (clipped) doorZones.push({ ...clipped, id: opening.id || `door-${doorZones.length + 1}` });
+      if (clipped) {
+        doorZones.push({
+          ...clipped,
+          id: opening.id || `door-${doorZones.length + 1}`,
+          span: openingSpan(polygon, opening),
+        });
+      }
     } else if (opening?.type === 'window') {
       const zone = openingZone(polygon, opening, WINDOW_ZONE_DEPTH, 0);
       const clipped = zone && clipToRoom(zone, room);
@@ -134,6 +171,7 @@ export function buildRoomFeatures(room, scan = {}) {
           ...clipped,
           id: opening.id || `window-${windowZones.length + 1}`,
           maxHeight: Math.min(TALL_ITEM_HEIGHT, Math.max(0.3, finite(opening.sillHeight, 0.9))),
+          span: openingSpan(polygon, opening),
         });
       }
     }
@@ -148,10 +186,15 @@ export function buildRoomFeatures(room, scan = {}) {
       };
       const rect = clipToRoom(obstacleRect(local), room);
       if (!rect) return null;
+      const type = String(obstacle.type || 'other');
+      // The detector's own label ("Coffee table", "Television") says more than the coarse type.
+      const label = String(obstacle.label || '').trim();
       return {
         ...rect,
         id: obstacle.id || `obstacle-${index + 1}`,
-        type: String(obstacle.type || 'other'),
+        type,
+        label,
+        role: classifyFurniture({ type: `${label} ${type}` }),
         height: Math.max(0, finite(obstacle.size?.y, 0.8)),
       };
     })

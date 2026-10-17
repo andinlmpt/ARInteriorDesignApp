@@ -39,6 +39,9 @@ const PAIRS = {
   stool: [['island'], 'around', 0.05],
 };
 
+// Group members that belong in front of their anchor (a lamp or side table does not)
+const IN_FRONT_ROLES = new Set(['coffee-table', 'desk-chair', 'chair', 'dining-chair', 'stool', 'armchair']);
+
 // Clear floor needed in front of an item (metres)
 const FRONT_CLEARANCE = {
   bed: 0.6, wardrobe: 0.9, dresser: 0.8, desk: 0.7, sofa: 0.6, storage: 0.6, 'tv-stand': 0.5,
@@ -221,22 +224,32 @@ function idealPose(dep, anchor, anchorPose, relation, offset, rng) {
 
 function createScorer(room, items, features) {
   const polygon = features.polygon || null;
-  const obstacles = features.obstacles || [];
   const doorZones = features.doorZones || [];
   const windowZones = features.windowZones || [];
+  // Furniture already in the room: it never moves, but new pieces pair with it and keep its front clear.
+  // Indices past `moving` are these fixed pieces; their footprints leave the plain obstacle list.
+  const fixed = (features.existing || []).filter((f) => f && f.pose && f.width > 0 && f.length > 0);
+  const fixedIds = new Set(fixed.map((f) => f.id));
+  const obstacles = (features.obstacles || []).filter((o) => !fixedIds.has(o.id));
+  const fixedPoses = fixed.map((f) => f.pose);
+  const all = [...items, ...fixed];
+  const moving = items.length;
+  const full = (poses) => (fixed.length === 0 ? poses : [...poses, ...fixedPoses]);
+  /** The piece at index j (moving or fixed) and its pose. */
+  const anchor = (j, poses) => [all[j], j < moving ? poses[j] : fixedPoses[j - moving]];
 
   const pairs = new Map();
   items.forEach((item, i) => {
     const rule = PAIRS[item.role];
     if (!rule) return;
     const [anchorRoles, relation, offset] = rule;
-    const anchors = items.map((o, j) => j).filter((j) => j !== i && anchorRoles.includes(items[j].role));
+    const anchors = all.map((o, j) => j).filter((j) => j !== i && anchorRoles.includes(all[j].role));
     if (anchors.length > 0) pairs.set(i, { anchors, relation, offset });
   });
 
   // Pieces allowed to touch: the planner's furniture groups, dependents and their anchors
-  const partners = items.map((item, i) => new Set(
-    items.map((o, j) => j).filter((j) => j !== i && item.groupKey && items[j].groupKey === item.groupKey),
+  const partners = all.map((item, i) => new Set(
+    all.map((o, j) => j).filter((j) => j !== i && item.groupKey && all[j].groupKey === item.groupKey),
   ));
   pairs.forEach(({ anchors }, i) => anchors.forEach((j) => {
     partners[i].add(j);
@@ -384,16 +397,20 @@ function createScorer(room, items, features) {
     return false;
   }
 
-  function evaluate(poses, explain = false) {
-    const rects = items.map((item, i) => rectOf(item, poses[i]));
+  function evaluate(movingPoses, explain = false) {
+    const poses = full(movingPoses);
+    const rects = all.map((item, i) => rectOf(item, poses[i]));
     const terms = Object.fromEntries(Object.keys(WEIGHTS).map((key) => [key, 0]));
     const checks = [];
 
     // Overlaps (with clearance between unrelated pieces), existing furniture and the outline
     for (let i = 0; i < items.length; i += 1) {
-      for (let j = i + 1; j < items.length; j += 1) {
-        const pad = partners[i].has(j) ? 0 : ITEM_GAP / 2;
-        terms.overlap += intersection(grow(rects[i], pad), grow(rects[j], pad));
+      for (let j = i + 1; j < all.length; j += 1) {
+        // A fixed piece keeps a full gap (as an obstacle did), unless the new piece belongs with it.
+        const pad = partners[i].has(j) ? 0 : j < moving ? ITEM_GAP / 2 : ITEM_GAP;
+        terms.overlap += j < moving
+          ? intersection(grow(rects[i], pad), grow(rects[j], pad))
+          : intersection(grow(rects[i], pad), rects[j]);
       }
       terms.overlap += obstacles.reduce((sum, o) => sum + intersection(grow(rects[i], ITEM_GAP), o), 0);
       terms.overlap += outsideArea(rects[i], room, polygon);
@@ -413,7 +430,7 @@ function createScorer(room, items, features) {
       let bestJ = anchors[0];
       let cost = Infinity;
       anchors.forEach((j) => {
-        const c = relationCost(items[i], poses[i], items[j], poses[j], relation, offset);
+        const c = relationCost(items[i], poses[i], all[j], poses[j], relation, offset);
         if (c < cost) {
           cost = c;
           bestJ = j;
@@ -425,20 +442,23 @@ function createScorer(room, items, features) {
       }
       if (explain) {
         const phrase = { 'beside-head': 'beside', front: 'at', opposite: 'facing', beside: 'beside', around: 'at', near: 'near' }[relation];
-        checks.push({ rule: `${items[i].name} ${phrase} ${items[bestJ].name}`, passed: cost <= 0.35 });
+        checks.push({ rule: `${items[i].name} ${phrase} ${all[bestJ].name}`, passed: cost <= 0.35 });
       }
     });
 
-    // Clear floor in front of pieces
-    items.forEach((item, i) => {
+    // Clear floor in front of pieces (new ones, and the furniture already in the room)
+    all.forEach((item, i) => {
       const depth = FRONT_CLEARANCE[item.role];
       if (!depth) return;
       const zone = frontZone(rects[i], poses[i].rot, depth);
       let blocked = 0;
       rects.forEach((r, j) => {
-        if (j !== i && !partners[i].has(j)) blocked += intersection(zone, r);
+        // Two fixed pieces in each other's way is the room as it is, not the layout's doing.
+        if (j === i || (i >= moving && j >= moving)) return;
+        if (partners[i].has(j) && IN_FRONT_ROLES.has(all[j].role)) return;
+        blocked += intersection(zone, r);
       });
-      blocked += obstacles.reduce((sum, o) => sum + intersection(zone, o), 0);
+      if (i < moving) blocked += obstacles.reduce((sum, o) => sum + intersection(zone, o), 0);
       blocked += outsideArea(zone, room, polygon);
       terms.front += blocked;
       if (explain && ['bed', 'wardrobe', 'dresser', 'desk', 'sofa'].includes(item.role)) {
@@ -446,14 +466,15 @@ function createScorer(room, items, features) {
       }
     });
 
-    // Door swing and windows
+    // Door swing and windows (only new pieces can be moved out of the way)
+    const movingRects = rects.slice(0, moving);
     doorZones.forEach((zone) => {
-      const blocked = rects.reduce((sum, r) => sum + intersection(zone, r), 0);
+      const blocked = movingRects.reduce((sum, r) => sum + intersection(zone, r), 0);
       terms.door += blocked;
       if (explain) checks.push({ rule: 'Door swing kept clear', passed: blocked < 1e-6 });
     });
     windowZones.forEach((zone) => {
-      const blocked = rects.reduce((sum, r, i) => sum + (items[i].height > zone.maxHeight ? intersection(zone, r) : 0), 0);
+      const blocked = movingRects.reduce((sum, r, i) => sum + (items[i].height > zone.maxHeight ? intersection(zone, r) : 0), 0);
       terms.window += blocked;
       if (explain) checks.push({ rule: 'Window not blocked by tall furniture', passed: blocked < 1e-6 });
     });
@@ -487,7 +508,7 @@ function createScorer(room, items, features) {
     let cx = 0;
     let cz = 0;
     rects.forEach((r, i) => {
-      const weight = area(r) * Math.max(0.3, items[i].height);
+      const weight = area(r) * Math.max(0.3, all[i].height);
       const c = center(r);
       total += weight;
       cx += weight * c.x;
@@ -504,9 +525,10 @@ function createScorer(room, items, features) {
   }
 
   /** Hard constraints: no physical overlap, inside the room, doors and existing furniture clear. */
-  function feasible(poses) {
-    const rects = items.map((item, i) => rectOf(item, poses[i]));
-    for (let i = 0; i < rects.length; i += 1) {
+  function feasible(movingPoses) {
+    const poses = full(movingPoses);
+    const rects = all.map((item, i) => rectOf(item, poses[i]));
+    for (let i = 0; i < moving; i += 1) {
       if (outsideArea(rects[i], room, polygon) > 1e-6) return false;
       if (obstacles.some((o) => intersection(rects[i], o) > 1e-6)) return false;
       if (doorZones.some((z) => intersection(rects[i], z) > 1e-6)) return false;
@@ -515,7 +537,7 @@ function createScorer(room, items, features) {
     return true;
   }
 
-  return { room, items, pairs, evaluate, feasible };
+  return { room, items, pairs, anchor, evaluate, feasible };
 }
 
 // ---------------------------------------------------------------- search
@@ -559,9 +581,9 @@ function initialPoses(scorer, rng) {
   order.forEach((i) => {
     const pair = pairs.get(i);
     if (pair) {
-      const j = pick(pair.anchors, rng);
-      if (poses[j]) {
-        poses[i] = clampPose(items[i], idealPose(items[i], items[j], poses[j], pair.relation, pair.offset, rng), room);
+      const [anchorItem, anchorPose] = scorer.anchor(pick(pair.anchors, rng), poses);
+      if (anchorPose) {
+        poses[i] = clampPose(items[i], idealPose(items[i], anchorItem, anchorPose, pair.relation, pair.offset, rng), room);
         return;
       }
     }
@@ -578,8 +600,8 @@ function propose(scorer, poses, rng, temperature) {
   const move = rng();
   const pair = pairs.get(i);
   if (pair && move < 0.35) {
-    const j = pick(pair.anchors, rng);
-    next[i] = idealPose(item, items[j], poses[j], pair.relation, pair.offset, rng);
+    const [anchorItem, anchorPose] = scorer.anchor(pick(pair.anchors, rng), poses);
+    next[i] = idealPose(item, anchorItem, anchorPose, pair.relation, pair.offset, rng);
   } else if (move < 0.55) {
     const step = 0.05 + 0.6 * temperature;
     next[i] = { x: poses[i].x + gauss(rng) * step, z: poses[i].z + gauss(rng) * step, rot: poses[i].rot };
@@ -639,7 +661,9 @@ function anneal(scorer, start, rng, { iterations, tStart, deadline }) {
  * Refine `poses` for `items` with guideline-based simulated annealing.
  * @param {object} args
  * @param {{width:number,length:number,height:number}} args.room
- * @param {{polygon?:Array, doorZones?:Array, windowZones?:Array, obstacles?:Array}} args.features room-local
+ * @param {{polygon?:Array, doorZones?:Array, windowZones?:Array, obstacles?:Array, existing?:Array}} args.features
+ *   room-local; `existing` is furniture already in the room ({id, role, name, width, length, height,
+ *   groupKey, pose}): it never moves, and new pieces pair with it (a coffee table at your sofa).
  * @param {Array<{id:string,role:string,name:string,width:number,length:number,height:number,groupKey?:string}>} args.items
  * @param {Array<{x:number,z:number,rot:number}>} args.poses starting layout
  * @param {() => number} args.rng seeded random source in [0, 1)

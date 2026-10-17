@@ -22,6 +22,8 @@ const WALL_HUG_ROLES = new Set(['bed', 'sofa', 'desk', 'wardrobe', 'dresser', 's
 const NEEDS_FRONT_ROLES = new Set(['bed', 'sofa', 'tv-stand', 'desk', 'wardrobe', 'dresser', 'storage']);
 const SEATING_ROLES = new Set(['sofa', 'armchair', 'bed', 'desk', 'chair']);
 const PRIMARY_ROLES = ['bed', 'sofa', 'dining-table', 'island', 'desk'];
+// Group members that belong in front of their anchor (a lamp or side table does not)
+const IN_FRONT_ROLES = new Set(['coffee-table', 'desk-chair', 'chair', 'dining-chair', 'stool', 'armchair']);
 
 // ----------------------------------------------------------------------------
 // Helpers
@@ -53,7 +55,7 @@ export function classifyFurniture(item) {
   if (/coffee/.test(text)) return 'coffee-table';
   if (/side[- ]?table|end[- ]?table/.test(text)) return 'side-table';
   if (/\btv\b|\btv-|television|media console/.test(text)) return 'tv-stand';
-  if (/dining[- ]?table/.test(text)) return 'dining-table';
+  if (/dining( room)?[- ]?table/.test(text)) return 'dining-table';
   if (/dining[- ]?chair/.test(text)) return 'dining-chair';
   if (/island/.test(text)) return 'island';
   if (/stool/.test(text)) return 'stool';
@@ -105,17 +107,80 @@ function insideRoom(r, room) {
   return r.x >= -0.001 && r.z >= -0.001 && r.x + r.w <= room.width + 0.001 && r.z + r.d <= room.length + 0.001;
 }
 
-const NO_FEATURES = { polygon: null, doorZones: [], windowZones: [], obstacles: [] };
+const NO_FEATURES = { polygon: null, doorZones: [], windowZones: [], obstacles: [], existing: [], existingZones: [] };
 
-function normalizeFeatures(features) {
+/** Existing pieces whose back goes along their long side (a sofa) or their short side (a bed's headboard). */
+const BACK_ON_LONG_SIDE = new Set(['sofa', 'desk', 'tv-stand', 'wardrobe', 'dresser', 'storage']);
+const BACK_ON_SHORT_SIDE = new Set(['bed']);
+const EXISTING_NAMES = {
+  sofa: 'sofa',
+  bed: 'bed',
+  desk: 'desk',
+  'dining-table': 'dining table',
+  table: 'table',
+  'coffee-table': 'coffee table',
+  'tv-stand': 'TV',
+  armchair: 'armchair',
+  island: 'island',
+  wardrobe: 'wardrobe',
+};
+
+/**
+ * Which way an existing piece faces. The scan only sees its footprint, so it is taken to stand
+ * with its back to the nearest wall that suits its shape (a sofa's long side, a bed's head end).
+ */
+function existingRotation(rect, role, room) {
+  const walls = [
+    { rot: 0, gap: rect.z, along: rect.w },
+    { rot: 180, gap: room.length - (rect.z + rect.d), along: rect.w },
+    { rot: 90, gap: rect.x, along: rect.d },
+    { rot: 270, gap: room.width - (rect.x + rect.w), along: rect.d },
+  ];
+  const long = Math.max(rect.w, rect.d);
+  const short = Math.min(rect.w, rect.d);
+  let suitable = walls;
+  if (long > short * 1.2) {
+    if (BACK_ON_LONG_SIDE.has(role)) suitable = walls.filter((wall) => wall.along === long);
+    else if (BACK_ON_SHORT_SIDE.has(role)) suitable = walls.filter((wall) => wall.along === short);
+  }
+  return suitable.reduce((best, wall) => (wall.gap < best.gap ? wall : best)).rot;
+}
+
+function normalizeFeatures(features, room) {
   if (!features) return NO_FEATURES;
   const rects = (list) => (Array.isArray(list) ? list.filter((r) => r && r.w > 0 && r.d > 0) : []);
   const polygon = Array.isArray(features.polygon) && features.polygon.length >= 3 ? features.polygon : null;
+  const obstacles = rects(features.obstacles);
+  const existing = obstacles.map((o, index) => {
+    const id = String(o.id || `existing-${index + 1}`);
+    const role = o.role || classifyFurniture({ type: `${o.label || ''} ${o.type || ''}` });
+    const rotation = existingRotation(o, role, room);
+    const lw = rotation % 180 === 0 ? o.w : o.d;
+    const ld = rotation % 180 === 0 ? o.d : o.w;
+    return {
+      id,
+      role,
+      type: o.type || 'other',
+      label: o.label || '',
+      name: `your ${EXISTING_NAMES[role] || String(o.label || o.type || 'furniture').toLowerCase()}`,
+      rect: { x: o.x, z: o.z, w: o.w, d: o.d },
+      rotation,
+      lw,
+      ld,
+      height: Number(o.height) > 0 ? Number(o.height) : 0.8,
+      groupKey: `existing-${id}`,
+    };
+  });
   return {
     polygon,
     doorZones: rects(features.doorZones),
     windowZones: rects(features.windowZones),
-    obstacles: rects(features.obstacles),
+    obstacles,
+    existing,
+    // New pieces leave a walkway in front of existing ones (except pieces that belong with them).
+    existingZones: existing
+      .filter((e) => NEEDS_FRONT_ROLES.has(e.role))
+      .map((e) => ({ ...frontZone(e.rect, e.rotation), anchorId: e.id })),
   };
 }
 
@@ -343,6 +408,9 @@ function isValidPlacement(candidate, placed, room, strict, features = NO_FEATURE
     if (features.obstacles.some((o) => rectsOverlap(item.rect, o))) return false;
     if (features.doorZones.some((z) => rectsOverlap(item.rect, z))) return false;
     if (strict && features.windowZones.some((z) => blocksWindow(item, z))) return false;
+    if (strict && features.existingZones.some((z) => z.anchorId !== candidate.anchorId && rectsOverlap(item.rect, z))) {
+      return false;
+    }
     for (const other of placed) {
       if (other.items.some((o) => rectsOverlap(item.rect, o.rect))) return false;
       if (strict && other.zones.some((z) => rectsOverlap(item.rect, z))) return false;
@@ -392,6 +460,8 @@ function heuristicScore(candidate, placed, room, ctx, rng) {
   }
 
   if (group.primaryRole === 'tv-stand' && frame.facingSofa) score += 45;
+  // A piece set with furniture already in the room (coffee table at your sofa) beats a spot on its own.
+  if (frame.anchorId) score += 60;
   if (group.primaryRole === 'tv-stand' && ctx.sofaPlacement?.frame.wall && frame.wall) {
     const sofaFrame = ctx.sofaPlacement.frame;
     if (frame.wall === OPPOSITE_WALL[sofaFrame.wall]) {
@@ -427,7 +497,7 @@ function heuristicScore(candidate, placed, room, ctx, rng) {
   }
 
   if (group.primaryRole === 'lamp' || group.primaryRole === 'side-table' || group.primaryRole === 'armchair') {
-    const seating = placed.flatMap((p) => p.items).filter((i) => SEATING_ROLES.has(i.entry.role));
+    const seating = [...placed, ...ctx.existingPlacements].flatMap((p) => p.items).filter((i) => SEATING_ROLES.has(i.entry.role));
     if (seating.length > 0) {
       const nearest = Math.min(...seating.map((s) => rectGap(candidate.items[0].rect, s.rect)));
       score += 20 * (1 - Math.min(1, nearest / 2));
@@ -468,6 +538,69 @@ function facingSofaCandidates(group, sofaPlacement) {
   });
 }
 
+/**
+ * An existing piece as a fixed placement: same shape as a planned group, so dependents can be
+ * laid out around it with the group offsets. It is never moved or returned as new furniture.
+ */
+function existingPlacement(e) {
+  const entry = { id: e.id, role: e.role, existing: true, item: { name: e.name, width: e.lw, length: e.ld, height: e.height } };
+  return {
+    group: { key: e.groupKey, kind: 'wall', primaryRole: e.role, members: [{ entry, u: 0, v: 0, rot: 0, lw: e.lw, ld: e.ld }] },
+    frame: { rot: e.rotation, ox: e.rect.x, oz: e.rect.z, gw: e.lw, gd: e.ld, wall: null },
+    items: [{ entry, groupKey: e.groupKey, rect: e.rect, rotation: e.rotation }],
+    zones: [],
+    existing: e,
+  };
+}
+
+/** Where a piece goes next to the furniture it belongs with, in that furniture's frame (back edge v = 0). */
+const ANCHORED_SPOTS = {
+  'coffee-table': [['sofa'], (a, it) => [{ u: (a.lw - it.width) / 2, v: a.ld + 0.45, rot: 0 }]],
+  'side-table': [['sofa', 'bed', 'armchair'], (a, it) => [{ u: a.lw + 0.05, v: 0, rot: 0 }, { u: -it.width - 0.05, v: 0, rot: 0 }]],
+  nightstand: [['bed'], (a, it) => [{ u: -it.width - 0.05, v: 0, rot: 0 }, { u: a.lw + 0.05, v: 0, rot: 0 }]],
+  lamp: [['sofa', 'armchair', 'bed', 'desk'], (a, it) => [{ u: -it.width - 0.1, v: 0, rot: 0 }, { u: a.lw + 0.1, v: 0, rot: 0 }]],
+  armchair: [['sofa'], (a, it) => [
+    { u: a.lw + 0.45, v: a.ld + 0.3, rot: 270 },
+    { u: -it.length - 0.45, v: a.ld + 0.3, rot: 90 },
+  ]],
+  'desk-chair': [['desk'], (a, it) => [{ u: (a.lw - it.width) / 2, v: a.ld + 0.05, rot: 180 }]],
+  chair: [['desk'], (a, it) => [{ u: (a.lw - it.width) / 2, v: a.ld + 0.05, rot: 180 }]],
+  'dining-chair': [['dining-table', 'table'], (a, it) => [
+    { u: (a.lw - it.width) / 2, v: -it.length - 0.05, rot: 0 },
+    { u: (a.lw - it.width) / 2, v: a.ld + 0.05, rot: 180 },
+    { u: -it.length - 0.05, v: (a.ld - it.width) / 2, rot: 90 },
+    { u: a.lw + 0.05, v: (a.ld - it.width) / 2, rot: 270 },
+  ]],
+  stool: [['island'], (a, it) => [{ u: (a.lw - it.width) / 2, v: a.ld + 0.05, rot: 180 }]],
+};
+
+/** Candidates that put a single piece with an existing piece it belongs with (a coffee table at your sofa). */
+function anchoredCandidates(group, existingPlacements) {
+  if (group.members.length !== 1) return [];
+  const dep = group.members[0].entry;
+  const rule = ANCHORED_SPOTS[dep.role];
+  if (!rule) return [];
+  const [anchorRoles, spots] = rule;
+  const candidates = [];
+  existingPlacements
+    .filter((p) => anchorRoles.includes(p.existing.role))
+    .forEach((anchor) => {
+      const a = anchor.group.members[0];
+      spots(a, dep.item).forEach((spot) => {
+        const rect = transformRect(member(dep, spot.u, spot.v, spot.rot), anchor.frame);
+        const rotation = (spot.rot + anchor.frame.rot) % 360;
+        candidates.push({
+          group,
+          frame: { ...anchor.frame, anchorId: anchor.existing.id },
+          anchorId: anchor.existing.id,
+          items: [{ entry: dep, groupKey: anchor.existing.groupKey, rect, rotation }],
+          zones: NEEDS_FRONT_ROLES.has(dep.role) ? [frontZone(rect, rotation)] : [],
+        });
+      });
+    });
+  return candidates;
+}
+
 function placeRugs(rugs, placedItems, room, primaryPlacement) {
   return rugs.map((rug) => {
     const coffee = placedItems.find((i) => i.entry.role === 'coffee-table');
@@ -505,6 +638,8 @@ function scoreLayout(items, room, features = NO_FEATURES) {
   const solid = items.filter((i) => i.entry.role !== 'rug');
   const floorArea = features.polygon ? Math.max(0.5, polygonArea(features.polygon)) : room.width * room.length;
   const fixedRects = features.obstacles;
+  // Furniture already in the room, as placed items: new pieces are judged against it too.
+  const existing = features.existing.map((e) => existingPlacement(e).items[0]);
 
   let overlaps = 0;
   let outside = 0;
@@ -589,14 +724,15 @@ function scoreLayout(items, room, features = NO_FEATURES) {
     return false;
   };
 
-  const frontItems = solid.filter((i) => NEEDS_FRONT_ROLES.has(i.entry.role));
+  const frontItems = [...solid, ...existing].filter((i) => NEEDS_FRONT_ROLES.has(i.entry.role));
   let frontFree = 0;
   let frontReachable = 0;
   frontItems.forEach((item) => {
     const zone = frontZone(item.rect, item.rotation);
     const blocked = !insideRoom(zone, room)
-      || solid.some((o) => o !== item && o.groupKey !== item.groupKey && rectsOverlap(zone, o.rect))
-      || fixedRects.some((o) => rectsOverlap(zone, o));
+      || solid.some((o) => o !== item && (o.groupKey !== item.groupKey || !IN_FRONT_ROLES.has(o.entry.role))
+        && rectsOverlap(zone, o.rect))
+      || (!item.entry.existing && fixedRects.some((o) => rectsOverlap(zone, o)));
     if (!blocked) frontFree += 1;
     if (reachable(zone)) frontReachable += 1;
   });
@@ -617,24 +753,41 @@ function scoreLayout(items, room, features = NO_FEATURES) {
 
   const byRole = (role) => solid.filter((i) => i.entry.role === role);
   const relationResults = [];
+  // Closest new or existing piece of one of `roles`; `lastAnchor` remembers which, for the pros.
+  let lastAnchor = null;
   const nearest = (item, roles) => {
-    const others = solid.filter((o) => roles.includes(o.entry.role) && o !== item);
-    if (others.length === 0) return null;
-    return Math.min(...others.map((o) => rectGap(item.rect, o.rect)));
+    lastAnchor = null;
+    let best = null;
+    [...solid, ...existing].forEach((o) => {
+      if (o === item || !roles.includes(o.entry.role)) return;
+      const gap = rectGap(item.rect, o.rect);
+      if (best === null || gap < best) {
+        best = gap;
+        lastAnchor = o;
+      }
+    });
+    return best;
   };
+  const relate = (key, ok) => relationResults.push({
+    key,
+    ok,
+    existingName: lastAnchor?.entry.existing ? lastAnchor.entry.item.name : null,
+  });
 
   byRole('nightstand').forEach((n) => {
     const gap = nearest(n, ['bed']);
-    if (gap != null) relationResults.push({ key: 'nightstand', ok: gap <= 0.15 ? 1 : gap <= 0.6 ? 0.5 : 0 });
+    if (gap != null) relate('nightstand', gap <= 0.15 ? 1 : gap <= 0.6 ? 0.5 : 0);
   });
   byRole('coffee-table').forEach((t) => {
     const gap = nearest(t, ['sofa']);
-    if (gap != null) relationResults.push({ key: 'coffee', ok: gap >= 0.3 && gap <= 0.7 ? 1 : gap <= 1.2 ? 0.5 : 0 });
+    if (gap != null) relate('coffee', gap >= 0.3 && gap <= 0.7 ? 1 : gap <= 1.2 ? 0.5 : 0);
   });
-  const sofas = byRole('sofa');
+  const newSofas = byRole('sofa');
+  const sofas = newSofas.length > 0 ? newSofas : existing.filter((i) => i.entry.role === 'sofa');
   byRole('tv-stand').forEach((tv) => {
     if (sofas.length === 0) return;
     const sofa = sofas[0];
+    lastAnchor = sofa;
     const facing = Math.abs(((tv.rotation - sofa.rotation) % 360 + 360) % 360 - 180) < 1;
     const tc = rectCenter(tv.rect);
     const sc = rectCenter(sofa.rect);
@@ -642,31 +795,31 @@ function scoreLayout(items, room, features = NO_FEATURES) {
     const distance = Math.hypot(tc.x - sc.x, tc.z - sc.z);
     let ok = facing ? 0.6 + 0.4 * (1 - Math.min(1, axisOffset / 1.5)) : 0.2;
     if (distance < 1.8 || distance > 5.5) ok *= 0.6;
-    relationResults.push({ key: 'tv', ok });
+    relate('tv', ok);
   });
   byRole('desk-chair').concat(byRole('chair')).forEach((ch) => {
     const gap = nearest(ch, ['desk']);
-    if (gap != null) relationResults.push({ key: 'desk-chair', ok: gap <= 0.2 ? 1 : gap <= 1 ? 0.4 : 0 });
+    if (gap != null) relate('desk-chair', gap <= 0.2 ? 1 : gap <= 1 ? 0.4 : 0);
   });
   byRole('dining-chair').forEach((ch) => {
     const gap = nearest(ch, ['dining-table', 'table']);
-    if (gap != null) relationResults.push({ key: 'dining', ok: gap <= 0.2 ? 1 : 0 });
+    if (gap != null) relate('dining', gap <= 0.2 ? 1 : 0);
   });
   byRole('stool').forEach((st) => {
     const gap = nearest(st, ['island', 'table']);
-    if (gap != null) relationResults.push({ key: 'stool', ok: gap <= 0.2 ? 1 : 0 });
+    if (gap != null) relate('stool', gap <= 0.2 ? 1 : 0);
   });
   byRole('armchair').forEach((a) => {
     const gap = nearest(a, ['sofa', 'coffee-table']);
-    if (gap != null) relationResults.push({ key: 'armchair', ok: gap <= 1.2 ? 1 : gap <= 2.5 ? 0.5 : 0 });
+    if (gap != null) relate('armchair', gap <= 1.2 ? 1 : gap <= 2.5 ? 0.5 : 0);
   });
   byRole('side-table').forEach((s) => {
     const gap = nearest(s, ['sofa', 'armchair', 'bed']);
-    if (gap != null) relationResults.push({ key: 'side-table', ok: gap <= 0.2 ? 1 : gap <= 0.8 ? 0.5 : 0 });
+    if (gap != null) relate('side-table', gap <= 0.2 ? 1 : gap <= 0.8 ? 0.5 : 0);
   });
   byRole('lamp').forEach((l) => {
     const gap = nearest(l, ['sofa', 'armchair', 'bed', 'desk']);
-    if (gap != null) relationResults.push({ key: 'lamp', ok: gap <= 0.6 ? 1 : gap <= 1.5 ? 0.5 : 0 });
+    if (gap != null) relate('lamp', gap <= 0.6 ? 1 : gap <= 1.5 ? 0.5 : 0);
   });
   const relations = relationResults.length > 0
     ? Math.round((100 * relationResults.reduce((sum, r) => sum + r.ok, 0)) / relationResults.length)
@@ -682,7 +835,7 @@ function scoreLayout(items, room, features = NO_FEATURES) {
   let weightSum = 0;
   let cx = 0;
   let cz = 0;
-  solid.forEach((item) => {
+  [...solid, ...existing].forEach((item) => {
     const weight = item.rect.w * item.rect.d * Math.max(0.3, item.entry.item.height);
     const c = rectCenter(item.rect);
     weightSum += weight;
@@ -727,11 +880,26 @@ function scoreLayout(items, room, features = NO_FEATURES) {
   };
 }
 
+/** Pro lines for new pieces set with furniture already in the room ("your sofa"). */
+const EXISTING_PAIR_TEXT = {
+  coffee: (name) => `Coffee table placed in front of ${name}`,
+  tv: (name) => `TV faces ${name}`,
+  nightstand: (name) => `Nightstand beside ${name}`,
+  'desk-chair': (name) => `Chair pulled up to ${name}`,
+  dining: (name) => `Chairs set around ${name}`,
+  stool: (name) => `Stools set at ${name}`,
+  armchair: (name) => `Armchair grouped with ${name}`,
+  'side-table': (name) => `Side table next to ${name}`,
+  lamp: (name) => `Lamp next to ${name}`,
+};
+
 function describeLayout(score, dropped) {
   const pros = [];
   const cons = [];
-  const relationOk = (key) => score.relationResults.filter((r) => r.key === key).every((r) => r.ok >= 0.9)
-    && score.relationResults.some((r) => r.key === key);
+  // Pairs with furniture already in the room get their own lines below.
+  const newRelations = score.relationResults.filter((r) => !r.existingName);
+  const relationOk = (key) => newRelations.filter((r) => r.key === key).every((r) => r.ok >= 0.9)
+    && newRelations.some((r) => r.key === key);
 
   if (relationOk('nightstand')) pros.push('Nightstand sits right beside the bed');
   if (relationOk('coffee')) pros.push('Coffee table is within reach of the sofa');
@@ -745,7 +913,13 @@ function describeLayout(score, dropped) {
   if (f.doorCount > 0 && f.doorAccess === 100) pros.push(f.doorCount > 1 ? 'Doorways are kept clear' : 'Doorway is kept clear');
   if (f.windowCount > 0 && f.windowsBlocked === 0) pros.push('Windows stay unblocked for daylight');
   if (f.deskNearWindow) pros.push('Desk gets natural light from the window');
-  if (f.obstacleCount > 0) pros.push('Works around your existing furniture');
+  const withExisting = new Set();
+  score.relationResults
+    .filter((r) => r.existingName && r.ok >= 0.9 && EXISTING_PAIR_TEXT[r.key])
+    .forEach((r) => withExisting.add(EXISTING_PAIR_TEXT[r.key](r.existingName)));
+  // First, so the layout cards (which show the top few) say how your own furniture was used.
+  pros.unshift(...withExisting);
+  if (f.obstacleCount > 0 && withExisting.size === 0) pros.push('Works around your existing furniture');
 
   if (score.flow < 60) cons.push('Walkways are tight or broken up');
   if (score.clearance < 70) cons.push('Some pieces lack 60 cm of space in front');
@@ -763,9 +937,11 @@ function describeLayout(score, dropped) {
 // Public API
 // ----------------------------------------------------------------------------
 
-function expandQuantities(entries) {
+function expandQuantities(entries, existing = []) {
   const result = [...entries];
-  const hasRole = (role) => result.some((e) => e.role === role);
+  // A dining table or island already in the room still gets a full set of chairs or stools.
+  const hasRole = (role) => result.some((e) => e.role === role)
+    || existing.some((e) => e.role === role || (role === 'dining-table' && e.role === 'table'));
   const cloneUntil = (role, count) => {
     const existing = result.filter((e) => e.role === role);
     if (existing.length === 0) return;
@@ -782,14 +958,20 @@ function expandQuantities(entries) {
 function planSingle(groups, rugs, room, preferredWall, variant, seed, features) {
   const rng = mulberry32(seed);
   const ordered = [...groups].sort((a, b) => groupPriority(b) - groupPriority(a));
+  const existingPlacements = features.existing.map(existingPlacement);
+  const existingOf = (role) => existingPlacements.find((p) => p.existing.role === role) || null;
+  const existingPrimary = PRIMARY_ROLES.map(existingOf).find(Boolean) || null;
+  const newPrimary = ordered.find((g) => PRIMARY_ROLES.includes(g.primaryRole));
   const ctx = {
     preferredWall,
     variant,
     features,
-    primaryGroup: ordered.find((g) => PRIMARY_ROLES.includes(g.primaryRole)) || ordered[0],
-    primaryPlacement: null,
-    sofaPlacement: null,
-    bedPlacement: null,
+    existingPlacements,
+    // With no new main piece, the room's own sofa, bed or desk is what the layout centres on.
+    primaryGroup: newPrimary || (existingPrimary ? null : ordered[0]),
+    primaryPlacement: newPrimary ? null : existingPrimary,
+    sofaPlacement: existingOf('sofa'),
+    bedPlacement: existingOf('bed'),
   };
   const placed = [];
   const dropped = [];
@@ -800,6 +982,7 @@ function planSingle(groups, rugs, room, preferredWall, variant, seed, features) 
     if (group.primaryRole === 'tv-stand' && ctx.sofaPlacement) {
       candidates.push(...facingSofaCandidates(group, ctx.sofaPlacement));
     }
+    candidates.push(...anchoredCandidates(group, existingPlacements));
     let valid = candidates.filter((c) => isValidPlacement(c, placed, room, true, features));
     if (valid.length === 0) valid = candidates.filter((c) => isValidPlacement(c, placed, room, false, features));
     if (valid.length === 0) {
@@ -853,7 +1036,20 @@ function refinePlan(plan, room, features, seed, options) {
   if (solid.length === 0) return plan;
   const result = optimizeLayout({
     room,
-    features,
+    features: {
+      ...features,
+      // Existing pieces stay where they are; new ones can still pair with them.
+      existing: features.existing.map((e) => ({
+        id: e.id,
+        role: e.role,
+        name: e.name,
+        width: e.lw,
+        length: e.ld,
+        height: e.height,
+        groupKey: e.groupKey,
+        pose: { x: e.rect.x, z: e.rect.z, rot: e.rotation },
+      })),
+    },
     items: solid.map((placed) => ({
       id: placed.entry.id,
       role: placed.entry.role,
@@ -912,7 +1108,7 @@ export function planLayouts(room, furniture, options = {}) {
   const count = Math.max(1, options.count || 3);
   const firstVariant = Math.max(0, Math.floor(options.firstVariant || 0));
   const baseSeed = options.seed ?? Date.now();
-  const features = normalizeFeatures(options.features);
+  const features = normalizeFeatures(options.features, room);
 
   const entries = expandQuantities(
     furniture.map((item, index) => ({
@@ -920,6 +1116,7 @@ export function planLayouts(room, furniture, options = {}) {
       role: classifyFurniture(item),
       item,
     })),
+    features.existing,
   );
 
   const results = [];
@@ -970,4 +1167,34 @@ export function planLayouts(room, furniture, options = {}) {
   });
 }
 
-export default { planLayouts, classifyFurniture };
+/**
+ * What the scan found, in the planner's room-local frame, for drawing next to a layout:
+ * existing furniture (facing the way the planner takes it to face) and where doors and windows sit.
+ * @param {{width:number,length:number}} room
+ * @param {object} features same as planLayouts options.features
+ */
+export function describeRoomFeatures(room, features) {
+  const f = normalizeFeatures(features, room);
+  const opening = (zone) => (zone.span ? { id: zone.id, ...roundSpan(zone.span) } : null);
+  return {
+    existingFurniture: f.existing.map((e) => ({
+      id: e.id,
+      type: e.type,
+      label: e.label,
+      role: e.role,
+      name: e.name,
+      width: round2(e.lw),
+      length: round2(e.ld),
+      height: round2(e.height),
+      position: { x: round2(e.rect.x), y: 0, z: round2(e.rect.z), rotation: e.rotation },
+    })),
+    doors: f.doorZones.map(opening).filter(Boolean),
+    windows: f.windowZones.map(opening).filter(Boolean),
+  };
+}
+
+function roundSpan(span) {
+  return { x1: round2(span.x1), z1: round2(span.z1), x2: round2(span.x2), z2: round2(span.z2) };
+}
+
+export default { planLayouts, classifyFurniture, describeRoomFeatures };

@@ -106,6 +106,19 @@ function matchesRole(item, slotRole) {
   return aliases.includes(role);
 }
 
+/**
+ * Slots the room already fills with its own furniture (a scanned sofa fills "sofa"; a scanned
+ * table fills "coffee-table" or "dining-table"). Rugs are never detected, so never owned.
+ */
+function ownedSlots(slots, existingRoles = []) {
+  if (!Array.isArray(existingRoles) || existingRoles.length === 0) return [];
+  return slots.filter((slotRole) => {
+    if (slotRole === 'rug') return false;
+    const aliases = ROLE_ALIASES[slotRole] || [slotRole];
+    return existingRoles.some((role) => aliases.includes(role));
+  });
+}
+
 function rankCandidates(candidates, style, variantIndex) {
   return [...candidates].sort((a, b) => {
     const styleDiff = styleScore(b, style) - styleScore(a, style);
@@ -128,6 +141,8 @@ function pickForRole(pool, slotRole, style, variantIndex, usedIds) {
 
 /**
  * Build one furniture list (catalog SKUs) for a layout variant.
+ * existingRoles: planner roles of furniture already in the room (from the scan); their slots
+ * are left out, so the layout adds what the room is missing.
  */
 export function selectCatalogFurnitureSet(pool, {
   roomType,
@@ -135,6 +150,7 @@ export function selectCatalogFurnitureSet(pool, {
   budgetPhp = 0,
   requiredItemIds = [],
   variantIndex = 0,
+  existingRoles = [],
 }) {
   const normalizedRoom = normalizeRoomType(roomType);
   const usedIds = new Set();
@@ -156,7 +172,9 @@ export function selectCatalogFurnitureSet(pool, {
   });
 
   const slots = ROOM_ROLE_SLOTS[normalizedRoom] || ROOM_ROLE_SLOTS['Living Room'];
+  const owned = ownedSlots(slots, existingRoles);
   slots.forEach((slotRole) => {
+    if (owned.includes(slotRole)) return;
     if (selected.some((item) => matchesRole(item, slotRole))) return;
     const pick = pickForRole(pool, slotRole, style, variantIndex, usedIds);
     if (!pick) return;
@@ -176,8 +194,9 @@ export function selectCatalogFurnitureSet(pool, {
     };
   }
 
+  // Extras never repeat what the room already has (no second sofa next to yours).
   const optionalPool = rankCandidates(
-    pool.filter((item) => !usedIds.has(item.catalogId)),
+    pool.filter((item) => !usedIds.has(item.catalogId) && !owned.some((slotRole) => matchesRole(item, slotRole))),
     style,
     variantIndex,
   );
@@ -221,11 +240,13 @@ export function selectCheapestValidSet(pool, options) {
 
   const normalizedRoom = normalizeRoomType(options.roomType);
   const slots = ROOM_ROLE_SLOTS[normalizedRoom] || ROOM_ROLE_SLOTS['Living Room'];
+  const owned = ownedSlots(slots, options.existingRoles);
   const usedIds = new Set(requiredItems.map((item) => item.catalogId));
   const selected = [...requiredItems];
   let total = requiredCost;
 
   slots.forEach((slotRole) => {
+    if (owned.includes(slotRole)) return;
     if (selected.some((item) => matchesRole(item, slotRole))) return;
     const aliases = ROLE_ALIASES[slotRole] || [slotRole];
     let pick = null;
@@ -283,6 +304,7 @@ export async function buildCatalogLayoutSets({
   budgetPhp = 0,
   requiredItemIds = [],
   variationCount = 3,
+  existingRoles = [],
 }) {
   let pool = await loadEligibleCatalogPool(roomType);
   pool = await ensureRequiredInPool(pool, requiredItemIds);
@@ -296,6 +318,7 @@ export async function buildCatalogLayoutSets({
       budgetPhp,
       requiredItemIds,
       variantIndex: variant,
+      existingRoles,
     });
 
     if (selection.overBudget && budgetPhp > 0) {
@@ -304,6 +327,7 @@ export async function buildCatalogLayoutSets({
         style,
         budgetPhp,
         requiredItemIds,
+        existingRoles,
       });
       if (cheapest.furniture.length > 0) {
         selection = { ...cheapest, usedCheapestFallback: true };
@@ -328,6 +352,7 @@ export async function buildCatalogLayoutSets({
       style,
       budgetPhp: 0,
       requiredItemIds,
+      existingRoles,
     });
     if (fallback.furniture.length > 0) {
       sets.push(fallback.furniture);

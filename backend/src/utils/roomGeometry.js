@@ -186,6 +186,7 @@ export function sanitizeObstacles(obstacles) {
     .map((o, i) => ({
       id: String(o.id || `obstacle-${i + 1}`).slice(0, 64),
       type: String(o.type || 'other').trim().slice(0, 40) || 'other',
+      label: String(o.label || '').trim().slice(0, 60),
       center: toPoint(o.center),
       size: {
         x: Math.max(0, finite(o.size?.x)),

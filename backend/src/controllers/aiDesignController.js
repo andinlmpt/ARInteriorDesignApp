@@ -13,7 +13,7 @@ import { mockPricePhp } from '../utils/furnitureMockPricing.js';
 import { withPublicVisibility } from '../services/catalogVisibility.js';
 import mongoose from 'mongoose';
 import RoomMeasurement from '../models/RoomMeasurement.js';
-import { planLayouts } from '../services/layoutPlanner.js';
+import { describeRoomFeatures, planLayouts } from '../services/layoutPlanner.js';
 import { buildRoomFeatures, resolvePlannerRoom } from '../services/roomFeatures.js';
 import {
   buildCatalogLayoutSets,
@@ -715,6 +715,17 @@ export async function generateDesign(req, res, next) {
 
     console.log(`🎨 [AIDesign] Generating ${requestedLayouts} layouts for ${finalRoomType} (${style})`);
 
+    // The scan comes first: furniture already in the room decides what the layouts still need.
+    const roomScan = await loadRoomScan({ measurementId, floorPolygon, openings, obstacles });
+    roomDims = resolvePlannerRoom(roomDims, roomScan);
+    const roomFeatures = buildRoomFeatures(roomDims, roomScan);
+    const scannedRoom = describeRoomFeatures(roomDims, roomFeatures);
+    const detectedObstacles = [
+      ...roomFeatures.doorZones.map(() => 'door'),
+      ...roomFeatures.windowZones.map(() => 'window'),
+      ...roomFeatures.obstacles.map((o) => o.label || o.type),
+    ];
+
     const requiredIds = Array.isArray(requiredItemIds) ? requiredItemIds : [];
     const { sets: catalogSets, meta: selectionMeta, poolSize } = await buildCatalogLayoutSets({
       roomType: finalRoomType,
@@ -722,6 +733,7 @@ export async function generateDesign(req, res, next) {
       budgetPhp: budgetValue,
       requiredItemIds: requiredIds,
       variationCount: requestedLayouts,
+      existingRoles: roomFeatures.obstacles.map((o) => o.role),
     });
 
     if (catalogSets.length === 0) {
@@ -731,15 +743,6 @@ export async function generateDesign(req, res, next) {
         poolSize,
       });
     }
-
-    const roomScan = await loadRoomScan({ measurementId, floorPolygon, openings, obstacles });
-    roomDims = resolvePlannerRoom(roomDims, roomScan);
-    const roomFeatures = buildRoomFeatures(roomDims, roomScan);
-    const detectedObstacles = [
-      ...roomFeatures.doorZones.map(() => 'door'),
-      ...roomFeatures.windowZones.map(() => 'window'),
-      ...roomFeatures.obstacles.map((o) => o.type),
-    ];
 
     const scoredLayouts = [];
     for (let variant = 0; variant < catalogSets.length; variant += 1) {
@@ -856,6 +859,7 @@ export async function generateDesign(req, res, next) {
         },
         floorPolygon: roomScan.floorPolygon,
         detectedObstacles,
+        scannedRoom,
         preferences: {
           roomType: finalRoomType,
           style,
@@ -886,6 +890,7 @@ export async function generateDesign(req, res, next) {
         height: roomDims.height,
         depth: roomDims.length,
       },
+      scannedRoom,
       proposals,
       bestFitRecommendation: proposals[0],
       alternativeOptions: proposals.slice(1),
@@ -942,6 +947,7 @@ export async function getDesignSession(req, res, next) {
       measurementId: session.measurementId || '',
       projectId: session.projectId || '',
       roomDimensions: session.roomDimensions,
+      scannedRoom: session.scannedRoom || null,
       preferences: session.preferences,
       proposals,
       selectedProposalId: session.selectedProposalId || '',

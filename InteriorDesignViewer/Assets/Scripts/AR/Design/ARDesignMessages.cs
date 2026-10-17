@@ -150,6 +150,8 @@ public class RoomObstaclePayload
 {
     public string id;
     public string type;
+    /// <summary>The detector's label ("Coffee table", "Television"), so layouts know what the piece is; empty when added by hand.</summary>
+    public string label;
     public ARDesignVec3 center;
     public ARDesignVec3 size;
     public float yaw;

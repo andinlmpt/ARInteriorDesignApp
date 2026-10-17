@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -44,6 +45,38 @@ public static class AutoOpeningResolver
         public float Center => (start + end) * 0.5f;
     }
 
+    /// <summary>A straight piece of wall on the floor, from <see cref="a"/> to <see cref="b"/>.</summary>
+    public struct WallSegment
+    {
+        public Vector3 a;
+        public Vector3 b;
+
+        public WallSegment(Vector3 a, Vector3 b)
+        {
+            this.a = a;
+            this.b = b;
+        }
+
+        public float Length => new Vector2(b.x - a.x, b.z - a.z).magnitude;
+
+        /// <summary>The point <paramref name="along"/> metres from <see cref="a"/>, on the floor.</summary>
+        public Vector3 PointAt(float along)
+        {
+            var length = Length;
+            return length < 1e-4f ? a : Vector3.Lerp(a, b, along / length);
+        }
+    }
+
+    /// <summary>The walls of a floor outline: wall i runs from corner i to corner i + 1 (the last closes it).</summary>
+    public static List<WallSegment> OutlineWalls(IReadOnlyList<Vector3> corners)
+    {
+        var walls = new List<WallSegment>();
+        if (corners == null) return walls;
+        for (var i = 0; i < corners.Count; i++)
+            walls.Add(new WallSegment(corners[i], corners[(i + 1) % corners.Count]));
+        return walls;
+    }
+
     /// <summary>
     /// Puts a sighting on the wall its bottom-centre (or, failing that, top-centre) ray hits first,
     /// and sizes it from where the other rays meet that wall. False when it doesn't look like a
@@ -58,22 +91,39 @@ public static class AutoOpeningResolver
     {
         placement = default;
         if (corners == null || corners.Count < 3) return false;
+        return TryPlace(s, OutlineWalls(corners), floorY, wallHeight, out placement);
+    }
 
-        if (!TryFirstWall(s.origin, s.bottomCenter, corners, floorY, wallHeight, out var wall)
-            && !TryFirstWall(s.origin, s.topCenter, corners, floorY, wallHeight, out wall))
+    /// <summary>
+    /// The same on any set of wall segments (e.g. the walls found so far, before the room is
+    /// closed); <see cref="Placement.wall"/> is then an index into <paramref name="walls"/>.
+    /// </summary>
+    public static bool TryPlace(
+        Sighting s,
+        IReadOnlyList<WallSegment> walls,
+        float floorY,
+        float wallHeight,
+        out Placement placement)
+    {
+        placement = default;
+        if (walls == null || walls.Count == 0) return false;
+
+        if (!TryFirstWall(s.origin, s.bottomCenter, walls, floorY, wallHeight, out var wall)
+            && !TryFirstWall(s.origin, s.topCenter, walls, floorY, wallHeight, out wall))
             return false;
 
-        if (!TryHitWallPlane(s.origin, s.bottomLeft, corners, wall, out var left, out _)
-            || !TryHitWallPlane(s.origin, s.bottomRight, corners, wall, out var right, out _))
+        var segment = walls[wall];
+        if (!TryHitWall(s.origin, s.bottomLeft, segment, out var left, out _, out _)
+            || !TryHitWall(s.origin, s.bottomRight, segment, out var right, out _, out _))
             return false;
 
-        var length = WallLength(corners, wall);
+        var length = segment.Length;
         var start = Mathf.Clamp(Mathf.Min(left, right), 0f, length);
         var end = Mathf.Clamp(Mathf.Max(left, right), 0f, length);
         var width = end - start;
 
-        var hasBottom = TryHitWallPlane(s.origin, s.bottomCenter, corners, wall, out _, out var bottomY);
-        var hasTop = TryHitWallPlane(s.origin, s.topCenter, corners, wall, out _, out var topY);
+        var hasBottom = TryHitWall(s.origin, s.bottomCenter, segment, out _, out var bottomY, out _);
+        var hasTop = TryHitWall(s.origin, s.topCenter, segment, out _, out var topY, out _);
         var bottom = hasBottom && !s.bottomCut ? bottomY - floorY : float.NaN;
         var top = hasTop && !s.topCut ? topY - floorY : float.NaN;
 
@@ -118,14 +168,22 @@ public static class AutoOpeningResolver
         IReadOnlyList<Vector3> corners,
         float floorY,
         float wallHeight,
+        out int wall) => TryFirstWall(origin, direction, OutlineWalls(corners), floorY, wallHeight, out wall);
+
+    public static bool TryFirstWall(
+        Vector3 origin,
+        Vector3 direction,
+        IReadOnlyList<WallSegment> walls,
+        float floorY,
+        float wallHeight,
         out int wall)
     {
         wall = -1;
         var bestT = float.MaxValue;
-        for (var i = 0; i < corners.Count; i++)
+        for (var i = 0; i < walls.Count; i++)
         {
-            if (!TryHitWallPlane(origin, direction, corners, i, out var along, out var y, out var t)) continue;
-            if (along < -0.1f || along > WallLength(corners, i) + 0.1f) continue;
+            if (!TryHitWall(origin, direction, walls[i], out var along, out var y, out var t)) continue;
+            if (along < -0.1f || along > walls[i].Length + 0.1f) continue;
             if (y < floorY - 0.5f || y > floorY + wallHeight + 0.5f) continue;
             if (t < bestT)
             {
@@ -156,11 +214,15 @@ public static class AutoOpeningResolver
         int wall,
         out float along,
         out float y,
-        out float t)
+        out float t) =>
+        TryHitWall(origin, direction, new WallSegment(corners[wall], corners[(wall + 1) % corners.Count]), out along, out y, out t);
+
+    /// <summary>Where a ray meets the (infinite, vertical) plane through a wall segment.</summary>
+    public static bool TryHitWall(Vector3 origin, Vector3 direction, WallSegment wall, out float along, out float y, out float t)
     {
         along = y = t = 0f;
-        var a = corners[wall];
-        var b = corners[(wall + 1) % corners.Count];
+        var a = wall.a;
+        var b = wall.b;
         var u = new Vector3(b.x - a.x, 0f, b.z - a.z);
         var length = u.magnitude;
         if (length < 1e-3f) return false;
@@ -178,12 +240,85 @@ public static class AutoOpeningResolver
         return true;
     }
 
-    public static float WallLength(IReadOnlyList<Vector3> corners, int wall)
+    public static float WallLength(IReadOnlyList<Vector3> corners, int wall) =>
+        new WallSegment(corners[wall], corners[(wall + 1) % corners.Count]).Length;
+
+    /// <summary>A door or window shown while the room is still being walked: where it is in the room.</summary>
+    public struct LiveOpening
     {
-        var a = corners[wall];
-        var b = corners[(wall + 1) % corners.Count];
-        return new Vector2(b.x - a.x, b.z - a.z).magnitude;
+        public string kind;
+        /// <summary>Its two edges on the floor.</summary>
+        public Vector3 a;
+        public Vector3 b;
+        public float sill;
+        public float top;
+        public int sightings;
+        public float confidence;
+
+        public Vector3 Center => (a + b) * 0.5f;
+        public float Width => new Vector2(b.x - a.x, b.z - a.z).magnitude;
     }
+
+    /// <summary>
+    /// Every sighting placed on the walls found so far, with repeat sightings of the same door or
+    /// window (same kind, centres within <paramref name="mergeDistance"/>) merged. Only the ones
+    /// seen <paramref name="confirmAfter"/> times, or once with <paramref name="confirmConfidence"/>,
+    /// are returned. <paramref name="skip"/> drops spots the user removed (kind, centre).
+    /// </summary>
+    public static List<LiveOpening> PlaceLive(
+        IReadOnlyList<Sighting> sightings,
+        IReadOnlyList<WallSegment> walls,
+        float floorY,
+        float wallHeight,
+        Func<string, Vector3, bool> skip = null,
+        int confirmAfter = 2,
+        float confirmConfidence = 0.5f,
+        float mergeDistance = 0.45f)
+    {
+        var merged = new List<LiveOpening>();
+        if (sightings == null || walls == null || walls.Count == 0) return merged;
+
+        foreach (var s in sightings)
+        {
+            if (!TryPlace(s, walls, floorY, wallHeight, out var p)) continue;
+            var wall = walls[p.wall];
+            var spot = new LiveOpening
+            {
+                kind = p.kind,
+                a = wall.PointAt(p.start),
+                b = wall.PointAt(p.end),
+                sill = p.sill,
+                top = p.top,
+                sightings = 1,
+                confidence = p.confidence,
+            };
+            if (skip != null && skip(spot.kind, spot.Center)) continue;
+
+            var index = merged.FindIndex(o => o.kind == spot.kind && FlatDistance(o.Center, spot.Center) <= mergeDistance);
+            if (index < 0)
+            {
+                merged.Add(spot);
+                continue;
+            }
+
+            // Running average, pairing each edge with its nearest counterpart.
+            var known = merged[index];
+            var k = 1f / (known.sightings + 1);
+            var sameOrder = FlatDistance(known.a, spot.a) <= FlatDistance(known.a, spot.b);
+            known.a = Vector3.Lerp(known.a, sameOrder ? spot.a : spot.b, k);
+            known.b = Vector3.Lerp(known.b, sameOrder ? spot.b : spot.a, k);
+            known.sill = Mathf.Lerp(known.sill, spot.sill, k);
+            known.top = Mathf.Lerp(known.top, spot.top, k);
+            known.sightings++;
+            known.confidence = Mathf.Max(known.confidence, spot.confidence);
+            merged[index] = known;
+        }
+
+        merged.RemoveAll(o => o.sightings < confirmAfter && o.confidence < confirmConfidence);
+        return merged;
+    }
+
+    static float FlatDistance(Vector3 p, Vector3 q) => new Vector2(p.x - q.x, p.z - q.z).magnitude;
 
     /// <summary>
     /// Merges placements of the same door/window seen again (same wall, same kind, overlapping),

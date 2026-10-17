@@ -156,6 +156,12 @@ public class ARAutoRoomScan : MonoBehaviour
     List<AutoWallGeometry.OpenEnd> openEnds = new();
     bool[] innerWalls = Array.Empty<bool>();
 
+    readonly ScanFloorAim.Settings aimSettings = ScanFloorAim.Settings.Default;
+    readonly List<AutoWallGeometry.WallPiece> aimPieces = new();
+    readonly List<Vector2> aimCorners = new();
+    List<AutoWallGeometry.Wall> aimWalls = new();
+    float nextAimRefreshAt;
+
     Transform root;
     Material wallMaterial;
     Material wallPanelMaterial;
@@ -264,12 +270,15 @@ public class ARAutoRoomScan : MonoBehaviour
     {
         if (builder != null) builder.AutoTapped += OnTapped;
         if (scanController != null) scanController.PhaseChanged += OnScanPhase;
+        // By hand or automatic, the floor aim reaches into corners.
+        if (indicator != null) indicator.ExtendedAim = ResolveAim;
     }
 
     void OnDisable()
     {
         if (builder != null) builder.AutoTapped -= OnTapped;
         if (scanController != null) scanController.PhaseChanged -= OnScanPhase;
+        if (indicator != null) indicator.ExtendedAim = null;
     }
 
     void OnDestroy()
@@ -407,6 +416,53 @@ public class ARAutoRoomScan : MonoBehaviour
 
         if (step != Step.Walls) HideVisuals();
         Changed?.Invoke();
+    }
+
+    // ── Floor aim ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The scan's floor aim (see <see cref="ScanFloorAim"/>): it follows the floor past the part ARCore
+    /// recognized, stops at the bottom of walls and snaps to corners where two walls meet.
+    /// </summary>
+    bool ResolveAim(Ray ray, float floorY, out Vector3 point, out ARPlacementIndicator.AimKind kind)
+    {
+        RefreshAimGeometry(floorY);
+        var result = ScanFloorAim.Resolve(ray.origin, ray.direction, floorY, aimWalls, aimCorners, aimSettings, out point);
+        kind = result switch
+        {
+            ScanFloorAim.Kind.Corner => ARPlacementIndicator.AimKind.Corner,
+            ScanFloorAim.Kind.WallBase => ARPlacementIndicator.AimKind.WallBase,
+            _ => ARPlacementIndicator.AimKind.Floor,
+        };
+        return result != ScanFloorAim.Kind.None;
+    }
+
+    /// <summary>
+    /// Walls and corners the aim stops at and snaps to. The walk keeps its own up to date; before
+    /// it (the floor point, or scanning by hand) they are worked out here a few times a second.
+    /// </summary>
+    void RefreshAimGeometry(float floorY)
+    {
+        if (Time.unscaledTime < nextAimRefreshAt) return;
+        nextAimRefreshAt = Time.unscaledTime + evaluateInterval;
+        aimCorners.Clear();
+
+        if (CurrentStep == Step.Walls)
+        {
+            aimWalls = walls;
+            foreach (var t in tracked)
+            {
+                if (t.matched || t.confirmed) aimCorners.Add(t.point);
+            }
+            aimCorners.AddRange(placed);
+            return;
+        }
+
+        aimPieces.Clear();
+        CollectPieces(floorY, aimPieces);
+        aimWalls = AutoWallGeometry.MergeWalls(aimPieces, settings);
+        foreach (var corner in AutoWallGeometry.FindCorners(aimWalls, settings))
+            aimCorners.Add(corner.point);
     }
 
     // ── Floor and height ──────────────────────────────────────────────────────

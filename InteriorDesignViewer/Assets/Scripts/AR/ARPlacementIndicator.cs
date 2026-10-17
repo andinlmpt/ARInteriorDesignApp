@@ -58,7 +58,28 @@ public class ARPlacementIndicator : MonoBehaviour
     [SerializeField] private float floorSurfaceInset = 0.002f;
     [SerializeField] private Camera arCamera;
 
+    /// <summary>How the aim landed when an <see cref="ExtendedAim"/> resolver is set.</summary>
+    public enum AimKind
+    {
+        Floor,
+        /// <summary>At the bottom of a wall (the floor point was behind it).</summary>
+        WallBase,
+        Corner,
+    }
+
+    /// <summary>Works out the floor point under <paramref name="ray"/> on a floor at <paramref name="floorY"/>; false when the aim isn't on the floor.</summary>
+    public delegate bool FloorAimResolver(Ray ray, float floorY, out Vector3 point, out AimKind kind);
+
     // ── Public state ──────────────────────────────────────────────────────────
+    /// <summary>
+    /// Optional (room scan): once a floor is known, the aim follows the flat floor instead of only the
+    /// part ARCore has recognized, which stops short of the walls and rarely reaches into a corner.
+    /// </summary>
+    public FloorAimResolver ExtendedAim { get; set; }
+    /// <summary>How the current aim landed (always <see cref="AimKind.Floor"/> without <see cref="ExtendedAim"/>).</summary>
+    public AimKind  CurrentAimKind  { get; private set; }
+    /// <summary>True while the reticle follows the aim (between <see cref="StartTracking()"/> and <see cref="StopTracking()"/>).</summary>
+    public bool     IsTracking      => isTracking;
     /// <summary>True when the reticle is hitting a plane that passes ALL floor checks.</summary>
     public bool     IsLockedOnFloor { get; private set; }
     /// <summary>World-space pose of the last valid floor hit (updated every frame while tracking).</summary>
@@ -73,6 +94,7 @@ public class ARPlacementIndicator : MonoBehaviour
 
     // ── Private ───────────────────────────────────────────────────────────────
     private readonly List<ARRaycastHit> hits     = new();
+    private ARPlaneManager              planeManager;
     private bool                        isTracking;
     private bool                        visualSuppressed;
     private bool                        overlayLocked;
@@ -119,10 +141,31 @@ public class ARPlacementIndicator : MonoBehaviour
             return;
         }
 
-        var screenPoint = screenPointOverride.x >= 0f
-            ? screenPointOverride
-            : new Vector2(Screen.width * 0.5f, Screen.height * screenY);
+        var screenPoint = AimScreenPoint;
 
+        if (ExtendedAim != null && TryKnownFloor(out var floorPlane))
+        {
+            if (TryResolveAim(floorPlane, screenPoint, out var aimPose, out var aimKind))
+            {
+                IsLockedOnFloor = true;
+                CurrentPlane    = floorPlane;
+                CurrentPose     = aimPose;
+                CurrentAimKind  = aimKind;
+                ApplyIndicatorPose(aimPose, true);
+            }
+            else
+            {
+                IsLockedOnFloor = false;
+                CurrentPlane    = null;
+                SetVisible(false, false);
+            }
+
+            UpdateScale();
+            UpdateOverlayPresentation();
+            return;
+        }
+
+        CurrentAimKind = AimKind.Floor;
         if (!raycastManager.Raycast(screenPoint, hits, TrackableType.PlaneWithinPolygon))
         {
             IsLockedOnFloor = false;
@@ -200,11 +243,71 @@ public class ARPlacementIndicator : MonoBehaviour
             SetVisible(false, false);
         }
 
+        UpdateScale();
+        UpdateOverlayPresentation();
+    }
+
+    /// <summary>Screen point the reticle aims through.</summary>
+    public Vector2 AimScreenPoint => screenPointOverride.x >= 0f
+        ? screenPointOverride
+        : new Vector2(Screen.width * 0.5f, Screen.height * screenY);
+
+    /// <summary>
+    /// The floor point under any screen point (e.g. a tap) through <see cref="ExtendedAim"/>.
+    /// False without a resolver, before any floor is known, or when the aim isn't on the floor.
+    /// </summary>
+    public bool TryResolveAim(Vector2 screenPoint, out Vector3 point, out AimKind kind)
+    {
+        point = default;
+        kind = AimKind.Floor;
+        if (ExtendedAim == null || !TryKnownFloor(out var floorPlane)) return false;
+        if (!TryResolveAim(floorPlane, screenPoint, out var pose, out kind)) return false;
+        point = pose.position;
+        return true;
+    }
+
+    bool TryResolveAim(ARPlane floorPlane, Vector2 screenPoint, out Pose pose, out AimKind kind)
+    {
+        pose = default;
+        kind = AimKind.Floor;
+        if (arCamera == null) arCamera = Camera.main;
+        if (arCamera == null) return false;
+
+        var floorY = floorPlane.transform.position.y;
+        if (!ExtendedAim(arCamera.ScreenPointToRay(screenPoint), floorY, out var point, out kind)) return false;
+        pose = new Pose(new Vector3(point.x, floorY, point.z), floorPlane.transform.rotation);
+        return true;
+    }
+
+    /// <summary>The floor: the lowest recognized level plane big enough and far enough below the camera.</summary>
+    bool TryKnownFloor(out ARPlane floor)
+    {
+        floor = null;
+        if (planeManager == null) planeManager = FindFirstObjectByType<ARPlaneManager>();
+        if (planeManager == null) return false;
+        if (arCamera == null) arCamera = Camera.main;
+        var cameraY = arCamera != null ? arCamera.transform.position.y : float.PositiveInfinity;
+
+        var lowest = float.PositiveInfinity;
+        foreach (var plane in planeManager.trackables)
+        {
+            if (plane == null || plane.alignment != PlaneAlignment.HorizontalUp) continue;
+            if (plane.subsumedBy != null || plane.trackingState != TrackingState.Tracking) continue;
+            if (plane.size.x * plane.size.y < minFloorArea) continue;
+            var y = plane.transform.position.y;
+            if (y > cameraY - minDepthBelowCamera || y >= lowest) continue;
+            lowest = y;
+            floor = plane;
+        }
+
+        return floor != null;
+    }
+
+    void UpdateScale()
+    {
         var targetMultiplier   = IsLockedOnFloor ? lockedScale : searchingScale;
         currentScaleMultiplier = Mathf.Lerp(currentScaleMultiplier, targetMultiplier, Time.deltaTime * scaleSmoothing);
         transform.localScale   = baseScale * currentScaleMultiplier;
-
-        UpdateOverlayPresentation();
     }
 
     void UpdateOverlayPresentation()

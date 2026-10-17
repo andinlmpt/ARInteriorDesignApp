@@ -4,15 +4,18 @@ using UnityEngine.UI;
 
 /// <summary>
 /// Scan chrome for the room scan, ARPlan-inspired frosted cards:
-///   • an instruction card (what to do now, one detail line) with a five-step bar
-///     (Height · Walls · Doors · Furniture · Review) so the user always knows where they are;
+///   • an instruction card (what to do now, one detail line) with a three-step bar
+///     (Start · Walk around · Review) so the user always knows where they are; the walk finds
+///     walls, doors, windows and furniture together, with a running count;
 ///   • live coaching from tracking problems ("Move slowly", "Too dark");
 ///   • a tool rail (Rescan with a second-tap confirm, Auto on/off, Light, Help);
 ///   • a mini floor plan of what's been mapped (large, with wall lengths, on the review step);
 ///   • short notes with a buzz when something sets itself (floor, height, corner, door, sofa);
 ///   • a first-run "how it works" card, which Help reopens;
 ///   • the floor dots and aiming circle for the height step;
-///   • Undo, which becomes Back on the doors/furniture/review steps and keeps what was found.
+///   • a Review panel: ceiling height (+/−), everything found (× removes it), + Add;
+///   • Skip on the height step (uses the usual ceiling height);
+///   • Undo, which becomes Back in Review (back to walking, keeping everything found).
 /// With the automatic scan (<see cref="ARAutoRoomScan"/>) it also shows the hold-still ring and an
 /// arrow to a missing corner.
 /// </summary>
@@ -51,6 +54,8 @@ public class ARDesignScanHUD : MonoBehaviour
     static readonly Color MapFurniture = new(0.55f, 0.35f, 0.20f, 0.55f);
     static readonly Color MapSuggestion = new(1f, 0.55f, 0.12f, 0.40f);
     static readonly Color MapUser = new(0.10f, 0.45f, 0.95f, 1f);
+    static readonly Color MaybeChip = new(1f, 0.93f, 0.85f, 0.97f);
+    static readonly Color AutoOrangeInk = new(0.75f, 0.35f, 0.05f, 1f);
 
     const int RetryCornerCount = 4;
     const float RescanConfirmSeconds = 3f;
@@ -81,8 +86,14 @@ public class ARDesignScanHUD : MonoBehaviour
     const float MapLargeMax = 760f;
     const float MapGap = 20f;
 
-    static readonly string[] SpatialStepNames = { "Height", "Walls", "Doors", "Furniture", "Review" };
+    static readonly string[] SpatialStepNames = { "Start", "Walk around", "Review" };
     static readonly string[] OutlineStepNames = { "Height", "Walls" };
+    /// <summary>Share of a full turn to count as having looked across the room (24 directions).</summary>
+    const float SweepNeeded = 0.75f;
+    const int SweepBuckets = 24;
+    const float ReviewChipHeight = 56f;
+    const float ReviewChipGap = 10f;
+    const int ReviewColumns = 3;
 
     Canvas canvas;
     RectTransform canvasRect;
@@ -99,9 +110,7 @@ public class ARDesignScanHUD : MonoBehaviour
     Button confirmButton;
     Button undoButton;
     Button auxTypeButton;
-    Button auxSwingButton;
     Text auxTypeLabel;
-    Text auxSwingLabel;
     Text confirmLabel;
     Text undoLabel;
     Image confirmImage;
@@ -110,6 +119,7 @@ public class ARDesignScanHUD : MonoBehaviour
     Button startButton;
     Button finishButton;
     Button heightUndoButton;
+    Button skipHeightButton;
     Text startLabel;
     Text finishLabel;
     Text heightUndoLabel;
@@ -185,14 +195,33 @@ public class ARDesignScanHUD : MonoBehaviour
     bool lastLoopClosed;
     int lastCornerCount;
     int lastMapStep = -1;
+    bool heightSkipped;
+
+    readonly bool[] sweepBuckets = new bool[SweepBuckets];
+
+    struct ReviewChip
+    {
+        public Button button;
+        public Image image;
+        public Text label;
+    }
+
+    RectTransform reviewPanel;
+    Text reviewHeightValue;
+    Text reviewListTitle;
+    Text reviewEmptyLabel;
+    RectTransform reviewGrid;
+    readonly List<ReviewChip> reviewChips = new();
+    string reviewSignature = string.Empty;
+    bool choosingToAdd;
 
     bool AutoEnabled => autoScan != null && autoScan.Enabled;
 
     /// <summary>Automatic scan is driving the floor, height or walls step right now.</summary>
     bool AutoOutlineStep => AutoEnabled && autoScan.IsActive;
 
-    bool InSpatialStep =>
-        spatialMapping != null && spatialMapping.CurrentPhase != ARDesignSpatialMappingController.Phase.Outline;
+    /// <summary>Checking and fixing what the walk found (the outline is closed).</summary>
+    bool InReview => spatialMapping != null && spatialMapping.IsReviewing;
 
     bool HelpVisible => helpOverlay != null && helpOverlay.activeSelf;
 
@@ -323,6 +352,8 @@ public class ARDesignScanHUD : MonoBehaviour
     {
         if (!active || cornerBuilder == null) return;
         TrackMilestones();
+        TrackSweep();
+        TrackCornerSnap();
 
         // Live height / width readouts (and the automatic scan's hold progress) change all the
         // time; about 12 refreshes a second reads the same and rebuilds the UI far less.
@@ -412,19 +443,10 @@ public class ARDesignScanHUD : MonoBehaviour
 
     // ── Which step ────────────────────────────────────────────────────────────
 
-    /// <summary>0 Height, 1 Walls, 2 Doors, 3 Furniture, 4 Review.</summary>
+    /// <summary>0 Start (floor point and ceiling height), 1 Walk around, 2 Review.</summary>
     int CurrentStepIndex()
     {
-        if (InSpatialStep)
-        {
-            return spatialMapping.CurrentPhase switch
-            {
-                ARDesignSpatialMappingController.Phase.Openings => 2,
-                ARDesignSpatialMappingController.Phase.ExistingFurniture => 3,
-                _ => 4,
-            };
-        }
-
+        if (InReview) return 2;
         return cornerBuilder != null && cornerBuilder.IsInHeightPhase ? 0 : 1;
     }
 
@@ -447,28 +469,29 @@ public class ARDesignScanHUD : MonoBehaviour
         }
     }
 
-    // ── Floor, height and walls ───────────────────────────────────────────────
+    // ── Start and walk ────────────────────────────────────────────────────────
 
     void RefreshCornerUi()
     {
-        if (InSpatialStep)
+        if (InReview)
         {
-            RefreshSpatialUi();
+            RefreshReviewUi();
             RefreshStepBar();
             ApplyDockLayout();
             return;
         }
 
+        choosingToAdd = false;
+        if (reviewPanel != null && reviewPanel.gameObject.activeSelf)
+            reviewPanel.gameObject.SetActive(false);
         var autoWalls = AutoEnabled && autoScan.CurrentStep == ARAutoRoomScan.Step.Walls;
         if (auxTypeButton != null)
         {
-            // Automatic walls step: "Start over" drops every corner and looks at the walls again.
+            // Automatic walk: "Start over" drops every corner and looks at the walls again.
             auxTypeButton.gameObject.SetActive(autoWalls);
             if (autoWalls && auxTypeLabel != null)
                 auxTypeLabel.text = "Start over";
         }
-        if (auxSwingButton != null)
-            auxSwingButton.gameObject.SetActive(false);
 
         var inHeightPhase = cornerBuilder != null && cornerBuilder.IsInHeightPhase;
         var count = cornerBuilder != null ? cornerBuilder.CornerCount : 0;
@@ -487,7 +510,7 @@ public class ARDesignScanHUD : MonoBehaviour
 
         if (undoButton != null)
         {
-            // Automatic walls step: Undo takes back a corner, or with none goes back to the height.
+            // Automatic walk: Undo takes back a corner, or with none goes back to the height.
             var canUndo = inHeightPhase ? cornerBuilder.HasHeightBase : count > 0 || autoWalls;
             undoButton.interactable = canUndo;
             if (undoImage != null)
@@ -537,8 +560,12 @@ public class ARDesignScanHUD : MonoBehaviour
             }
         }
 
+        // Undo and Skip sit either side of Finish once the floor point is set.
+        var showHeightSides = useStartFinish && cornerBuilder.HasHeightBase;
         if (heightUndoButton != null)
-            heightUndoButton.gameObject.SetActive(useStartFinish && cornerBuilder.HasHeightBase);
+            heightUndoButton.gameObject.SetActive(showHeightSides);
+        if (skipHeightButton != null)
+            skipHeightButton.gameObject.SetActive(showHeightSides);
 
         if (confirmButton != null)
         {
@@ -562,7 +589,7 @@ public class ARDesignScanHUD : MonoBehaviour
                         if (canConfirmWidth)
                             confirmLabel.text = measurementOnlyMode ? "Continue" : "Done";
                         else if (canCloseWidth)
-                            confirmLabel.text = "Close room";
+                            confirmLabel.text = spatialMapping != null ? "Finish" : "Close room";
                         else if (outlineCrosses)
                             confirmLabel.text = "Walls cross";
                         else if (autoWalls)
@@ -585,11 +612,99 @@ public class ARDesignScanHUD : MonoBehaviour
 
     const string FindFloorHint = "Move the phone slowly until dots appear on the floor";
 
+    /// <summary>Setting the floor point, and the aim has snapped onto a room corner.</summary>
+    bool AimOnCorner =>
+        cornerBuilder != null && cornerBuilder.IsInHeightPhase && !cornerBuilder.HasHeightBase
+        && placementIndicator != null && placementIndicator.IsLockedOnFloor
+        && placementIndicator.CurrentAimKind == ARPlacementIndicator.AimKind.Corner;
+
+    bool wasAimOnCorner;
+
+    /// <summary>A light tick when the floor point's aim snaps onto a corner.</summary>
+    void TrackCornerSnap()
+    {
+        var onCorner = AimOnCorner;
+        if (onCorner && !wasAimOnCorner) ARScanHaptics.Play(ARScanHaptics.Kind.Tick);
+        wasAimOnCorner = onCorner;
+    }
+
     int LiveHeightCm() => cornerBuilder != null && cornerBuilder.HasLiveHeightPreview
         ? Mathf.RoundToInt(cornerBuilder.LiveHeightMeters * 100f)
         : 0;
 
-    /// <summary>Title (what to do now) and one detail line for the height and walls steps.</summary>
+    static string Plural(int n, string one, string many) => n == 1 ? $"1 {one}" : $"{n} {many}";
+
+    /// <summary>"3 corners · 1 door · 2 windows · 2 furniture items" — what the walk has found so far.</summary>
+    string FoundSummary(int corners)
+    {
+        var parts = new List<string> { Plural(corners, "corner", "corners") };
+        if (spatialMapping != null)
+        {
+            if (spatialMapping.DoorCount > 0) parts.Add(Plural(spatialMapping.DoorCount, "door", "doors"));
+            if (spatialMapping.WindowCount > 0) parts.Add(Plural(spatialMapping.WindowCount, "window", "windows"));
+            if (spatialMapping.ObstacleCount > 0) parts.Add(Plural(spatialMapping.ObstacleCount, "furniture item", "furniture items"));
+        }
+
+        return string.Join(" · ", parts);
+    }
+
+    // ── Looking across the room once the outline is complete ─────────────────
+
+    /// <summary>The outline has every corner, so the walk could end.</summary>
+    bool WalkOutlineComplete()
+    {
+        if (cornerBuilder == null || !cornerBuilder.IsHeightLocked || cornerBuilder.IsLoopClosed) return false;
+        if (cornerBuilder.IsOutlineSelfIntersecting) return false;
+        return AutoEnabled ? autoScan.OutlineLooksComplete : cornerBuilder.CanClose;
+    }
+
+    /// <summary>
+    /// After the outline is complete, the user is asked to turn once across the room (furniture in
+    /// the middle is missed when the camera only looked at the walls). Tracked by the directions
+    /// the camera has faced since.
+    /// </summary>
+    void TrackSweep()
+    {
+        if (!Scanning || !cornerBuilder.IsHeightLocked)
+        {
+            System.Array.Clear(sweepBuckets, 0, sweepBuckets.Length);
+            return;
+        }
+
+        if (!WalkOutlineComplete()) return;
+        var cam = Camera.main;
+        if (cam == null) return;
+        var forward = cam.transform.forward;
+        if (new Vector2(forward.x, forward.z).sqrMagnitude < 1e-4f) return;
+        var yaw = Mathf.Repeat(Mathf.Atan2(forward.x, forward.z) * Mathf.Rad2Deg, 360f);
+        sweepBuckets[Mathf.Clamp(Mathf.FloorToInt(yaw / (360f / SweepBuckets)), 0, SweepBuckets - 1)] = true;
+    }
+
+    float SweepProgress()
+    {
+        var seen = 0;
+        foreach (var b in sweepBuckets)
+            if (b) seen++;
+        return Mathf.Clamp01(seen / (SweepBuckets * SweepNeeded));
+    }
+
+    /// <summary>Title and detail once the outline is complete: look across the room, then Finish.</summary>
+    void WalkCompleteTexts(int corners, out string title, out string subtitle)
+    {
+        var sweep = SweepProgress();
+        if (sweep < 1f)
+        {
+            title = "Room outline found";
+            subtitle = $"Now turn slowly to look across the whole room ({Mathf.RoundToInt(sweep * 100f)}%)";
+        }
+        else
+        {
+            title = "All done walking";
+            subtitle = $"{FoundSummary(corners)} · tap Finish";
+        }
+    }
+
+    /// <summary>Title (what to do now) and one detail line for the start and the walk.</summary>
     void BuildOutlineTexts(out string title, out string subtitle)
     {
         if (TryBuildAutoText(out title, out subtitle)) return;
@@ -603,6 +718,7 @@ public class ARDesignScanHUD : MonoBehaviour
                 title = "Point at a corner of the room, on the floor";
                 var onFloor = placementIndicator != null && placementIndicator.IsLockedOnFloor;
                 subtitle = !onFloor ? FindFloorHint
+                    : AimOnCorner ? (measurementOnlyMode ? "Corner found · tap Start" : "Corner found · tap to set it")
                     : measurementOnlyMode ? "Tap Start · this is your first corner"
                     : "Tap to set it · this is your first corner";
                 return;
@@ -611,13 +727,11 @@ public class ARDesignScanHUD : MonoBehaviour
             title = "Aim up that corner to the ceiling";
             var cm = LiveHeightCm();
             subtitle = cm >= 180 ? $"{cm} cm · tap Finish when the line reaches the ceiling"
-                : cm > 0 ? $"{cm} cm · aim higher"
-                : "Tilt the phone up slowly";
+                : cm > 0 ? $"{cm} cm · aim higher, or tap Skip"
+                : "Tilt the phone up slowly, or tap Skip";
             return;
         }
 
-        var spotted = spatialMapping != null ? spatialMapping.EarlySightingCount : 0;
-        var spottedSuffix = spotted > 0 ? $" · {spotted} furniture spotted" : string.Empty;
         title = "Tap each corner of the room on the floor";
         if (cornerBuilder.IsOutlineSelfIntersecting)
         {
@@ -628,27 +742,33 @@ public class ARDesignScanHUD : MonoBehaviour
         {
             subtitle = $"{count} walls · room closed";
         }
-        else if (cornerBuilder.CanClose)
+        else if (spatialMapping != null && WalkOutlineComplete())
         {
-            subtitle = $"{count} corners · tap Close room when every corner is marked{spottedSuffix}";
+            WalkCompleteTexts(count, out title, out subtitle);
+            if (SweepProgress() >= 1f)
+            {
+                // Tapping corners by hand: the outline can close before the last corner is tapped.
+                title = "Every corner tapped?";
+                subtitle = $"{FoundSummary(count)} · then tap Finish";
+            }
         }
         else if (count <= 1)
         {
             subtitle = measurementOnlyMode
-                ? "Your floor point is corner 1 · tap the next corner"
+                ? "Your floor point is corner 1 · walk to the next corner and tap it"
                 : "Aim at a floor corner and tap";
         }
         else if (cornerBuilder.HasLivePreview)
         {
-            subtitle = $"{count} corners · {Mathf.RoundToInt(cornerBuilder.LivePreviewDistanceMeters * 100f)} cm to here{spottedSuffix}";
+            subtitle = $"{FoundSummary(count)} · {Mathf.RoundToInt(cornerBuilder.LivePreviewDistanceMeters * 100f)} cm to here";
         }
         else
         {
-            subtitle = $"{count} corners · keep going{spottedSuffix}";
+            subtitle = $"{FoundSummary(count)} · keep going";
         }
     }
 
-    /// <summary>Title and detail for the floor, height and walls steps of the automatic scan.</summary>
+    /// <summary>Title and detail for the floor point, height and walk of the automatic scan.</summary>
     bool TryBuildAutoText(out string title, out string subtitle)
     {
         title = null;
@@ -662,7 +782,8 @@ public class ARDesignScanHUD : MonoBehaviour
             {
                 title = "Point at the floor next to a wall";
                 var onFloor = placementIndicator != null && placementIndicator.IsLockedOnFloor;
-                subtitle = holding ? "Hold still…"
+                subtitle = holding ? (AimOnCorner ? "Corner found · hold still…" : "Hold still…")
+                    : AimOnCorner ? "Corner found · hold still to set it"
                     : onFloor ? "Hold still to set it · or tap Start"
                     : FindFloorHint;
                 return true;
@@ -677,9 +798,9 @@ public class ARDesignScanHUD : MonoBehaviour
                 else if (cm >= 180)
                     subtitle = $"{cm} cm · hold still to set it, or tap Finish";
                 else if (cm > 0)
-                    subtitle = $"{cm} cm · aim higher";
+                    subtitle = $"{cm} cm · aim higher, or tap Skip";
                 else
-                    subtitle = "Tilt the phone up slowly";
+                    subtitle = "Tilt the phone up slowly, or tap Skip";
                 return true;
             }
 
@@ -691,20 +812,19 @@ public class ARDesignScanHUD : MonoBehaviour
                 }
                 else if (autoScan.OutlineLooksComplete)
                 {
-                    title = "All corners found";
-                    subtitle = $"{autoScan.CornerCount} corners · check the outline, then tap Close room";
+                    WalkCompleteTexts(autoScan.CornerCount, out title, out subtitle);
                 }
                 else
                 {
-                    title = "Walk slowly along the walls";
+                    title = "Walk slowly around the room";
                     if (holding)
                         subtitle = "Hold still to place the corner…";
-                    else if (autoScan.HasTarget)
-                        subtitle = $"{autoScan.CornerCount} corners · aim at the orange marker and hold";
                     else if (autoScan.WallCount == 0)
-                        subtitle = "Point the camera at a wall from about 2 m away";
+                        subtitle = "Point the phone at a wall about 2 m away";
+                    else if (autoScan.HasTarget)
+                        subtitle = $"{FoundSummary(autoScan.CornerCount)} · follow the orange marker";
                     else
-                        subtitle = $"{autoScan.CornerCount} corners · keep going around the room";
+                        subtitle = $"{FoundSummary(autoScan.CornerCount)} · keep going along the walls";
                 }
                 return true;
         }
@@ -712,9 +832,10 @@ public class ARDesignScanHUD : MonoBehaviour
         return false;
     }
 
-    // ── Doors, furniture and review ───────────────────────────────────────────
+    // ── Review ────────────────────────────────────────────────────────────────
 
-    void RefreshSpatialUi()
+    /// <summary>Check and fix what the walk found, then save the room.</summary>
+    void RefreshReviewUi()
     {
         if (spatialMapping == null) return;
 
@@ -723,116 +844,245 @@ public class ARDesignScanHUD : MonoBehaviour
         if (startButton != null) startButton.gameObject.SetActive(false);
         if (finishButton != null) finishButton.gameObject.SetActive(false);
         if (heightUndoButton != null) heightUndoButton.gameObject.SetActive(false);
+        if (skipHeightButton != null) skipHeightButton.gameObject.SetActive(false);
+        if (auxTypeButton != null) auxTypeButton.gameObject.SetActive(false);
 
-        var phase = spatialMapping.CurrentPhase;
-        var kind = spatialMapping.OpeningIsDoor ? "door" : "window";
+        var mode = spatialMapping.CurrentAddMode;
+        var adding = mode != ARDesignSpatialMappingController.AddMode.None;
+        var thing = mode switch
+        {
+            ARDesignSpatialMappingController.AddMode.Door => "door",
+            ARDesignSpatialMappingController.AddMode.Window => "window",
+            _ => spatialMapping.AddingFurnitureType,
+        };
+
         if (topHintLabel != null)
         {
-            topHintLabel.text = phase switch
-            {
-                ARDesignSpatialMappingController.Phase.Openings => spatialMapping.DetectsOpenings
-                    ? "Look at each door and window"
-                    : "Mark each door and window",
-                ARDesignSpatialMappingController.Phase.ExistingFurniture => "Look around at your furniture",
-                _ => "Check your room",
-            };
+            topHintLabel.text = adding ? $"Adding a {thing}"
+                : choosingToAdd ? "What did the scan miss?"
+                : "Check your room";
         }
 
         if (subtitleLabel != null)
         {
-            subtitleLabel.text = phase switch
-            {
-                ARDesignSpatialMappingController.Phase.Openings => spatialMapping.HasPendingOpeningEdge
-                    ? $"Now tap the floor at the other edge of the {kind}"
-                    : spatialMapping.DetectsOpenings
-                        ? $"{spatialMapping.OpeningCount} found · tap a wrong one to remove it · missed one? tap both edges"
-                        : $"{spatialMapping.OpeningCount} marked · tap the floor at both edges of a {kind}",
-                ARDesignSpatialMappingController.Phase.ExistingFurniture =>
-                    (spatialMapping.IsFurnitureScanning ? "Looking… · " : "") +
-                    $"{spatialMapping.ObstacleCount} added · tap one to remove it · tap the floor to add a {spatialMapping.SelectedObstacleType}",
-                _ => BuildReviewSummary(),
-            };
-        }
-
-        if (auxTypeButton != null)
-        {
-            auxTypeButton.gameObject.SetActive(
-                phase == ARDesignSpatialMappingController.Phase.Openings
-                || phase == ARDesignSpatialMappingController.Phase.ExistingFurniture);
-            if (auxTypeLabel != null)
-            {
-                auxTypeLabel.text = phase switch
-                {
-                    ARDesignSpatialMappingController.Phase.Openings => $"Marking: {Capitalize(kind)}",
-                    ARDesignSpatialMappingController.Phase.ExistingFurniture =>
-                        $"Add: {Capitalize(spatialMapping.SelectedObstacleType)}",
-                    _ => "Type",
-                };
-            }
-        }
-
-        if (auxSwingButton != null)
-        {
-            var showSwing = phase == ARDesignSpatialMappingController.Phase.Openings
-                            && spatialMapping.OpeningIsDoor;
-            var showScan = phase == ARDesignSpatialMappingController.Phase.ExistingFurniture;
-            auxSwingButton.gameObject.SetActive(showSwing || showScan);
-            if (auxSwingLabel != null)
-            {
-                if (showScan)
-                    auxSwingLabel.text = spatialMapping.IsFurnitureScanning ? "Looking…" : "Look again";
-                else if (showSwing)
-                    auxSwingLabel.text = $"Opens: {spatialMapping.OpeningSwing}";
-            }
+            if (mode == ARDesignSpatialMappingController.AddMode.Furniture)
+                subtitleLabel.text = $"Tap the floor where the {thing} stands";
+            else if (adding)
+                subtitleLabel.text = spatialMapping.HasPendingOpeningEdge
+                    ? "Now tap the floor at its other edge"
+                    : $"Tap the floor at one edge of the {thing}";
+            else if (choosingToAdd)
+                subtitleLabel.text = "Pick it below, then tap where it is";
+            else
+                subtitleLabel.text = BuildReviewSummary();
         }
 
         if (undoButton != null)
         {
-            // Nothing to undo here: go back a step instead (doors → walls reopens the outline).
             var canUndo = spatialMapping.CanUndo();
-            undoButton.interactable = true;
-            if (undoImage != null) undoImage.color = Frost;
-            undoLabel.text = canUndo ? "Undo" : "Back";
-            undoLabel.color = Ink;
+            // Nothing to undo: Back returns to the walk (everything found is kept).
+            var showBack = !adding && !canUndo;
+            undoButton.interactable = canUndo || showBack;
+            if (undoImage != null) undoImage.color = undoButton.interactable ? Frost : FrostSoft;
+            undoLabel.text = showBack ? "Back" : "Undo";
+            undoLabel.color = undoButton.interactable ? Ink : InkMuted;
         }
 
         if (confirmButton != null)
         {
             confirmButton.gameObject.SetActive(true);
-            confirmButton.interactable = phase != ARDesignSpatialMappingController.Phase.ExistingFurniture
-                || !spatialMapping.IsFurnitureScanning;
-            confirmLabel.text = phase switch
-            {
-                ARDesignSpatialMappingController.Phase.Openings => "Next: Furniture",
-                ARDesignSpatialMappingController.Phase.ExistingFurniture => "Next: Review",
-                _ => "Scan complete",
-            };
-            confirmLabel.color = confirmButton.interactable ? Color.white : InkMuted;
+            confirmButton.interactable = true;
+            var cancel = adding || choosingToAdd;
+            confirmLabel.text = cancel ? "Cancel" : "Scan complete";
+            confirmLabel.color = cancel ? Ink : Color.white;
             if (confirmImage != null)
-                confirmImage.color = confirmButton.interactable ? AccentReady : StepTodo;
+                confirmImage.color = cancel ? StepTodo : AccentReady;
         }
+
+        RefreshReviewPanel();
     }
 
-    /// <summary>"L 4.2m × W 3.1m × H 2.5m · 2 doors & windows · 3 furniture items" for the review step.</summary>
+    /// <summary>"L 4.2m × W 3.1m × H 2.5m" for the review step (the list below names everything found).</summary>
     string BuildReviewSummary()
     {
-        var parts = new List<string>();
-        if (cornerBuilder != null && cornerBuilder.CornerCount >= 3)
-        {
-            RoomMeasurementUtil.ComputePolygonExtents(cornerBuilder.Corners, out var width, out var depth);
-            var size = RoomMeasurementUtil.FormatDimensionLabel(width, depth, cornerBuilder.WallHeight);
-            if (!string.IsNullOrEmpty(size)) parts.Add(size);
-        }
-
-        var openings = spatialMapping.OpeningCount;
-        var furniture = spatialMapping.ObstacleCount;
-        parts.Add(openings == 1 ? "1 door or window" : $"{openings} doors & windows");
-        parts.Add(furniture == 1 ? "1 furniture item" : $"{furniture} furniture items");
-        return string.Join(" · ", parts);
+        if (cornerBuilder == null || cornerBuilder.CornerCount < 3) return string.Empty;
+        RoomMeasurementUtil.ComputePolygonExtents(cornerBuilder.Corners, out var width, out var depth);
+        var size = RoomMeasurementUtil.FormatDimensionLabel(width, depth, cornerBuilder.WallHeight);
+        return string.IsNullOrEmpty(size) ? "Your room" : size;
     }
 
     static string Capitalize(string s) =>
         string.IsNullOrEmpty(s) ? s : char.ToUpperInvariant(s[0]) + s.Substring(1);
+
+    /// <summary>
+    /// The panel above the floor plan: ceiling height with − / +, then either everything found
+    /// (tap a chip to remove it, a "?" chip to add a maybe, + Add for something missed) or, while
+    /// choosing, the kinds of things that can be added.
+    /// </summary>
+    void RefreshReviewPanel()
+    {
+        if (reviewPanel == null) return;
+        var show = InReview && Scanning && !HelpVisible;
+        if (reviewPanel.gameObject.activeSelf != show)
+            reviewPanel.gameObject.SetActive(show);
+        if (!show) return;
+
+        reviewHeightValue.text = $"{cornerBuilder.WallHeight:0.00} m";
+
+        var items = new List<(string key, string label, Color bg, Color text, UnityEngine.Events.UnityAction onClick)>();
+        var adding = spatialMapping.CurrentAddMode != ARDesignSpatialMappingController.AddMode.None;
+        if (adding)
+        {
+            reviewListTitle.text = "Adding";
+            items.Add(("cancel", "Cancel", StepTodo, Ink, OnCancelAdding));
+        }
+        else if (choosingToAdd)
+        {
+            reviewListTitle.text = "Add";
+            items.Add(("add-door", "Door", Frost, Ink, () => OnChooseToAdd(ARDesignSpatialMappingController.AddMode.Door, null)));
+            items.Add(("add-window", "Window", Frost, Ink, () => OnChooseToAdd(ARDesignSpatialMappingController.AddMode.Window, null)));
+            foreach (var type in ARDesignSpatialMappingController.FurnitureTypes)
+            {
+                var t = type;
+                items.Add(($"add-{t}", Capitalize(t), Frost, Ink, () => OnChooseToAdd(ARDesignSpatialMappingController.AddMode.Furniture, t)));
+            }
+
+            items.Add(("cancel", "Cancel", StepTodo, Ink, OnCancelAdding));
+        }
+        else
+        {
+            reviewListTitle.text = "In this room · tap one to remove it";
+            foreach (var o in spatialMapping.Openings)
+            {
+                var id = o.id;
+                items.Add(($"o:{id}", $"{Capitalize(o.type)}  ×", Frost, Ink, () => OnRemoveOpening(id)));
+            }
+
+            foreach (var o in spatialMapping.Obstacles)
+            {
+                var id = o.id;
+                items.Add(($"f:{id}", $"{Capitalize(o.type)}  ×", Frost, Ink, () => OnRemoveObstacle(id)));
+            }
+
+            // Only what the camera recognised; flat-surface guesses stay as faint boxes in the room.
+            foreach (var s in spatialMapping.PendingSuggestions)
+            {
+                if (s.source != "coco") continue;
+                var id = s.id;
+                items.Add(($"m:{id}", $"{Capitalize(s.type)}?  +", MaybeChip, AutoOrangeInk, () => OnAcceptMaybe(id)));
+            }
+
+            items.Add(("add", "+ Add", AccentReady, Color.white, OnAddClicked));
+        }
+
+        var nothingFound = !adding && !choosingToAdd && items.Count == 1;
+        if (reviewEmptyLabel.gameObject.activeSelf != nothingFound)
+            reviewEmptyLabel.gameObject.SetActive(nothingFound);
+
+        // Rebuild the chips only when what they show changes (their click handlers capture ids).
+        var signature = string.Join("|", items.ConvertAll(i => i.key + i.label));
+        if (signature != reviewSignature)
+        {
+            reviewSignature = signature;
+            while (reviewChips.Count < items.Count)
+                reviewChips.Add(CreateReviewChip());
+            for (var i = 0; i < reviewChips.Count; i++)
+            {
+                var chip = reviewChips[i];
+                var visible = i < items.Count;
+                chip.button.gameObject.SetActive(visible);
+                if (!visible) continue;
+                var item = items[i];
+                chip.label.text = item.label;
+                chip.label.color = item.text;
+                chip.image.color = item.bg;
+                chip.button.onClick.RemoveAllListeners();
+                chip.button.onClick.AddListener(item.onClick);
+            }
+        }
+
+        LayoutReviewPanel(items.Count, nothingFound);
+    }
+
+    void LayoutReviewPanel(int chipCount, bool showEmpty)
+    {
+        var rows = Mathf.Max(1, Mathf.CeilToInt(chipCount / (float)ReviewColumns));
+        var gridHeight = rows * ReviewChipHeight + (rows - 1) * ReviewChipGap;
+        const float heightRow = 64f;
+        const float titleRow = 40f;
+        var emptyRow = showEmpty ? 48f : 0f;
+        var panelHeight = 18f + heightRow + 8f + titleRow + emptyRow + gridHeight + 18f;
+
+        reviewGrid.anchoredPosition = new Vector2(0f, 18f);
+        reviewGrid.sizeDelta = new Vector2(reviewGrid.sizeDelta.x, gridHeight);
+        reviewEmptyLabel.rectTransform.anchoredPosition = new Vector2(0f, 18f + gridHeight + 4f);
+
+        var width = ReviewWidth();
+        reviewPanel.sizeDelta = new Vector2(width, panelHeight);
+        var grid = reviewGrid.GetComponent<GridLayoutGroup>();
+        grid.cellSize = new Vector2((width - 36f - ReviewChipGap * (ReviewColumns - 1)) / ReviewColumns, ReviewChipHeight);
+
+        // Sits on top of the floor plan (which makes room for it, see ApplyMapLayout).
+        var mapTop = mapPanel != null && mapPanel.gameObject.activeSelf
+            ? mapPanel.anchoredPosition.y + mapPanel.sizeDelta.y
+            : DockTop();
+        reviewPanel.anchoredPosition = new Vector2(0f, mapTop + 12f);
+    }
+
+    float ReviewWidth()
+    {
+        var canvasWidth = canvasRect != null && canvasRect.rect.width > 0f ? canvasRect.rect.width : 1080f;
+        return Mathf.Min(canvasWidth - 48f, MapLargeMax);
+    }
+
+    /// <summary>Height the review panel takes, so the floor plan can shrink to fit under it.</summary>
+    float ReviewPanelHeight() =>
+        reviewPanel != null && reviewPanel.gameObject.activeSelf ? reviewPanel.sizeDelta.y + 12f : 0f;
+
+    void OnAddClicked()
+    {
+        choosingToAdd = true;
+        RefreshCornerUi();
+    }
+
+    void OnChooseToAdd(ARDesignSpatialMappingController.AddMode mode, string furnitureType)
+    {
+        choosingToAdd = false;
+        spatialMapping.StartAdding(mode, furnitureType);
+        RefreshCornerUi();
+    }
+
+    void OnCancelAdding()
+    {
+        choosingToAdd = false;
+        spatialMapping.CancelAdding();
+        RefreshCornerUi();
+    }
+
+    void OnRemoveOpening(string id)
+    {
+        spatialMapping.RemoveOpening(id);
+        RefreshCornerUi();
+    }
+
+    void OnRemoveObstacle(string id)
+    {
+        spatialMapping.RemoveObstacle(id);
+        RefreshCornerUi();
+    }
+
+    void OnAcceptMaybe(string id)
+    {
+        spatialMapping.AcceptSuggestion(id);
+        RefreshCornerUi();
+    }
+
+    void OnHeightStep(float delta)
+    {
+        if (cornerBuilder == null) return;
+        cornerBuilder.SetWallHeight(Mathf.Round((cornerBuilder.WallHeight + delta) * 100f) / 100f);
+        RefreshCornerUi();
+    }
 
     // ── Notes and milestones ──────────────────────────────────────────────────
 
@@ -862,9 +1112,13 @@ public class ARDesignScanHUD : MonoBehaviour
         if (baseSet && !lastBaseSet && !locked)
             ShowToast("floor", "Floor point set", ARScanHaptics.Kind.Tick);
         if (locked && !lastHeightLocked)
-            ShowToast("height", $"Height set · {Mathf.RoundToInt(cornerBuilder.WallHeight * 100f)} cm", ARScanHaptics.Kind.Success);
+        {
+            var cm = Mathf.RoundToInt(cornerBuilder.WallHeight * 100f);
+            ShowToast("height", heightSkipped ? $"Using {cm} cm · you can change it in Review" : $"Height set · {cm} cm", ARScanHaptics.Kind.Success);
+            heightSkipped = false;
+        }
         if (closed && !lastLoopClosed)
-            ShowToast("closed", $"Room outline done · {corners} walls", ARScanHaptics.Kind.Success);
+            ShowToast("closed", spatialMapping != null ? "Walk done · now check your room" : $"Room outline done · {corners} walls", ARScanHaptics.Kind.Success);
         // Corners tapped by hand: a buzz is enough, the corner appears where the finger is.
         if (!AutoEnabled && locked && lastHeightLocked && !closed && corners > lastCornerCount)
             ARScanHaptics.Play(ARScanHaptics.Kind.Tick);
@@ -1020,11 +1274,13 @@ public class ARDesignScanHUD : MonoBehaviour
         }
 
         toastGroup.alpha = Mathf.Clamp01(left / 0.25f);
-        var mapShown = mapPanel != null && mapPanel.gameObject.activeSelf;
-        var y = mapShown && mapExpanded ? mapPanel.anchoredPosition.y + mapPanel.sizeDelta.y + 50f
-            : mapShown ? Mathf.Max(DockTop() + 60f, mapPanel.anchoredPosition.y + mapPanel.sizeDelta.y + 50f)
-            : DockTop() + 60f;
-        toastRect.anchoredPosition = new Vector2(0f, y);
+        // Just above whatever is highest at the bottom: the dock, the floor plan or the review panel.
+        var top = DockTop() + 10f;
+        if (mapPanel != null && mapPanel.gameObject.activeSelf)
+            top = Mathf.Max(top, mapPanel.anchoredPosition.y + mapPanel.sizeDelta.y);
+        if (reviewPanel != null && reviewPanel.gameObject.activeSelf)
+            top = Mathf.Max(top, reviewPanel.anchoredPosition.y + reviewPanel.sizeDelta.y);
+        toastRect.anchoredPosition = new Vector2(0f, top + 50f);
     }
 
     // ── Help card ─────────────────────────────────────────────────────────────
@@ -1070,24 +1326,27 @@ public class ARDesignScanHUD : MonoBehaviour
     void FillHelpTexts()
     {
         var auto = AutoEnabled;
-        var detectsOpenings = spatialMapping != null && spatialMapping.DetectsOpenings;
-        var titles = new[] { "Height", "Walls", "Doors & windows", "Furniture", "Review" };
-        var bodies = new[]
-        {
-            auto
-                ? "Point at the floor next to a wall and hold still. Then aim the circle where the wall meets the ceiling."
-                : "Point at a floor corner of the room and tap Start. Aim up that corner to the ceiling and tap Finish.",
-            auto
-                ? "Walk slowly along the walls. Corners appear by themselves; tap the floor to add one, or a corner to remove it."
-                : "Tap each floor corner of the room in turn, then tap Close room.",
-            detectsOpenings
-                ? "Look at each door and window so they're found. Tap a wrong one to remove it."
-                : "Tap the floor at both edges of each door and window.",
-            "Look around at your furniture so it's added. Tap one to remove it, or tap the floor to add one.",
-            "Check the floor plan and sizes, then tap Scan complete.",
-        };
+        var titles = spatialMapping != null
+            ? new[] { "Start", "Walk around the room", "Check and fix" }
+            : new[] { "Height", "Walls" };
+        var bodies = spatialMapping != null
+            ? new[]
+            {
+                auto
+                    ? "Point at the floor next to a wall and hold still. Then aim the circle where the wall meets the ceiling, or tap Skip."
+                    : "Point at a floor corner of the room and tap Start. Aim up that corner to the ceiling and tap Finish, or tap Skip.",
+                auto
+                    ? "Walk slowly along the walls. Corners, doors, windows and furniture appear by themselves. When the outline is complete, look across the room once and tap Finish."
+                    : "Walk to each corner and tap it on the floor. Doors, windows and furniture are found as you go. Tap Finish when every corner is marked.",
+                "Check the floor plan. Tap anything wrong to remove it, use + Add for anything missed, then tap Scan complete.",
+            }
+            : new[]
+            {
+                "Point at a floor corner of the room and tap. Aim up that corner to the ceiling and tap Finish.",
+                "Tap each floor corner of the room in turn, then tap Close room.",
+            };
 
-        for (var i = 0; i < helpStepTitles.Length; i++)
+        for (var i = 0; i < helpStepTitles.Length && i < titles.Length; i++)
         {
             helpStepTitles[i].text = titles[i];
             helpStepBodies[i].text = bodies[i];
@@ -1219,7 +1478,7 @@ public class ARDesignScanHUD : MonoBehaviour
         if (!show) return;
 
         // Large on the review step unless the user shrank it; small elsewhere unless they enlarged it.
-        if (!mapUserToggled) mapExpanded = step == 4;
+        if (!mapUserToggled) mapExpanded = InReview;
         ApplyMapLayout();
 
         var cam = Camera.main;
@@ -1263,7 +1522,7 @@ public class ARDesignScanHUD : MonoBehaviour
         if (!closed && mapScratch.Count >= 3)
             map.AddLine(mapScratch[^1], mapScratch[0], 2f, new Color(Ink.r, Ink.g, Ink.b, 0.3f));
 
-        if (closed && spatialMapping != null) AddSpatialToMap(corners);
+        if (spatialMapping != null) AddSpatialToMap(corners, closed);
 
         if (!closed)
         {
@@ -1288,18 +1547,29 @@ public class ARDesignScanHUD : MonoBehaviour
 
         // Where the user is; on the review step it doesn't widen the map.
         if (cam != null)
-            map.AddMarker(XZ(cam.transform.position), XZ(cam.transform.forward), MapUser, fit: step < 4);
+            map.AddMarker(XZ(cam.transform.position), XZ(cam.transform.forward), MapUser, fit: !InReview);
 
         map.End(0.25f);
     }
 
-    void AddSpatialToMap(IReadOnlyList<Vector3> corners)
+    void AddSpatialToMap(IReadOnlyList<Vector3> corners, bool closed)
     {
-        var phase = spatialMapping.CurrentPhase;
-        if (phase == ARDesignSpatialMappingController.Phase.ExistingFurniture)
+        if (!closed)
+        {
+            // During the walk: what has been found so far, placed in the room.
+            foreach (var o in spatialMapping.LiveOpenings)
+                map.AddLine(XZ(o.a), XZ(o.b), 9f, o.kind == "door" ? MapDoor : MapWindow, fit: false);
+            foreach (var s in spatialMapping.LiveFurniture)
+                map.AddBox(new Vector2(s.center.x, s.center.z), new Vector2(s.size.x, s.size.z), s.yaw, MapFurniture, fit: false);
+        }
+        else if (InReview)
         {
             foreach (var s in spatialMapping.PendingSuggestions)
-                map.AddBox(new Vector2(s.center.x, s.center.z), new Vector2(s.size.x, s.size.z), s.yaw, MapSuggestion, fit: false);
+            {
+                var center = new Vector2(s.center.x, s.center.z);
+                map.AddBox(center, new Vector2(s.size.x, s.size.z), s.yaw, MapSuggestion, fit: false);
+                if (mapExpanded) map.AddLabel(center, Vector2.zero, $"{Capitalize(s.type)}?");
+            }
         }
 
         foreach (var o in spatialMapping.Obstacles)
@@ -1307,9 +1577,10 @@ public class ARDesignScanHUD : MonoBehaviour
             if (o?.center == null || o.size == null) continue;
             var center = new Vector2(o.center.x, o.center.z);
             map.AddBox(center, new Vector2(o.size.x, o.size.z), o.yaw, MapFurniture, fit: false);
-            if (mapExpanded) map.AddLabel(center, Vector2.zero, Capitalize(o.type));
+            if (mapExpanded && closed) map.AddLabel(center, Vector2.zero, Capitalize(o.type));
         }
 
+        if (!closed) return;
         foreach (var opening in spatialMapping.Openings)
         {
             var i = opening.wallIndex;
@@ -1373,6 +1644,13 @@ public class ARDesignScanHUD : MonoBehaviour
         {
             var width = canvasRect != null && canvasRect.rect.width > 0f ? canvasRect.rect.width : 1080f;
             var size = Mathf.Min(width - 48f, MapLargeMax);
+            if (InReview)
+            {
+                // Under the instruction card, the review panel and above the dock.
+                var height = canvasRect != null && canvasRect.rect.height > 0f ? canvasRect.rect.height : 1920f;
+                var room = height - (CardTop + CardHeight + CoachGap + CoachHeight + 24f) - dockTop - MapGap - ReviewPanelHeight();
+                size = Mathf.Clamp(room, 260f, size);
+            }
             mapPanel.anchorMin = mapPanel.anchorMax = mapPanel.pivot = new Vector2(0.5f, 0f);
             mapPanel.sizeDelta = new Vector2(size, size);
             mapPanel.anchoredPosition = new Vector2(0f, dockTop + MapGap);
@@ -1400,8 +1678,7 @@ public class ARDesignScanHUD : MonoBehaviour
     void ApplyDockLayout()
     {
         if (bottomDock == null) return;
-        var auxShown = (auxTypeButton != null && auxTypeButton.gameObject.activeSelf)
-                       || (auxSwingButton != null && auxSwingButton.gameObject.activeSelf);
+        var auxShown = auxTypeButton != null && auxTypeButton.gameObject.activeSelf;
         var height = auxShown ? DockFullHeight : DockCompactHeight;
         if (Mathf.Approximately(height, dockHeight)) return;
         dockHeight = height;
@@ -1477,7 +1754,7 @@ public class ARDesignScanHUD : MonoBehaviour
     void RefreshAutoToggle()
     {
         if (autoToggleButton == null || autoScan == null) return;
-        var outlining = Scanning && !InSpatialStep && cornerBuilder != null && !cornerBuilder.IsLoopClosed;
+        var outlining = Scanning && !InReview && cornerBuilder != null && !cornerBuilder.IsLoopClosed;
         if (autoToggleButton.gameObject.activeSelf != outlining)
             autoToggleButton.gameObject.SetActive(outlining);
         if (!outlining) return;
@@ -1507,7 +1784,7 @@ public class ARDesignScanHUD : MonoBehaviour
     bool? FloorAimForCurrentStep()
     {
         if (scanController == null || cornerBuilder == null || !IsScanning(scanController.Phase)) return null;
-        if (InSpatialStep) return null;
+        if (InReview) return null;
 
         var indicatorOnFloor = placementIndicator != null && placementIndicator.IsLockedOnFloor;
         if (cornerBuilder.IsInHeightPhase)
@@ -1548,8 +1825,11 @@ public class ARDesignScanHUD : MonoBehaviour
             var useCm = cornerBuilder.LiveHeightMeters >= 1.8f
                 ? Mathf.RoundToInt(cornerBuilder.LiveHeightMeters * 100f)
                 : Mathf.RoundToInt(cornerBuilder.WallHeight * 100f);
+            var skipCm = Mathf.RoundToInt(cornerBuilder.DefaultWallHeight * 100f);
             title = "Ceiling hard to measure?";
-            detail = $"Tap Finish to use {useCm} cm, or aim at the line where wall meets ceiling";
+            detail = useCm >= 180 && Mathf.Abs(useCm - skipCm) > 2
+                ? $"Tap Finish to use {useCm} cm, or Skip to use {skipCm} cm"
+                : $"Tap Skip to use {skipCm} cm · you can change it in Review";
             return true;
         }
 
@@ -1569,7 +1849,7 @@ public class ARDesignScanHUD : MonoBehaviour
         if (rescanButton == null || cornerBuilder == null) return;
 
         var hasProgress = Scanning
-                          && (cornerBuilder.HasHeightBase || cornerBuilder.CornerCount > 0 || InSpatialStep);
+                          && (cornerBuilder.HasHeightBase || cornerBuilder.CornerCount > 0 || InReview);
         if (rescanButton.gameObject.activeSelf != hasProgress)
             rescanButton.gameObject.SetActive(hasProgress);
 
@@ -1618,23 +1898,27 @@ public class ARDesignScanHUD : MonoBehaviour
 
     void OnUndoClicked()
     {
-        if (InSpatialStep)
+        if (InReview)
         {
-            if (spatialMapping.CanUndo())
+            if (spatialMapping.CurrentAddMode != ARDesignSpatialMappingController.AddMode.None)
+            {
+                // While adding, Undo only takes back the first edge of a door/window.
+                if (spatialMapping.HasPendingOpeningEdge) spatialMapping.UndoLast();
+            }
+            else if (spatialMapping.CanUndo())
             {
                 spatialMapping.UndoLast();
-                RefreshCornerUi();
-                return;
             }
-
-            // Review → furniture → doors, keeping what was found.
-            if (spatialMapping.TryStepBack())
+            else
             {
-                RefreshCornerUi();
-                return;
+                // Back to the walk, keeping everything found.
+                choosingToAdd = false;
+                spatialMapping.BackToWalk();
+                ShowToast("back", "Back to walking · everything found is kept");
             }
 
-            // Doors step with nothing to undo: reopen the outline (handled below).
+            RefreshCornerUi();
+            return;
         }
 
         if (cornerBuilder != null && cornerBuilder.IsInHeightPhase)
@@ -1642,7 +1926,6 @@ public class ARDesignScanHUD : MonoBehaviour
         else if (cornerBuilder != null && cornerBuilder.IsLoopClosed)
         {
             cornerBuilder.ReopenLoop();
-            spatialMapping?.ResetToOutline(keepSightings: true);
             ShowToast("reopen", "Back to the walls · fix a corner, then close the room again");
         }
         else if (AutoEnabled && cornerBuilder != null && cornerBuilder.IsHeightLocked)
@@ -1660,33 +1943,28 @@ public class ARDesignScanHUD : MonoBehaviour
         RefreshCornerUi();
     }
 
+    /// <summary>"Start over" during the automatic walk: drops every corner and looks at the walls again.</summary>
     void OnAuxTypeClicked()
     {
-        if (AutoEnabled && autoScan.CurrentStep == ARAutoRoomScan.Step.Walls)
-        {
-            autoScan.StartWallsOver();
-            ShowToast("walls-over", "Corners cleared · looking at the walls again", ARScanHaptics.Kind.Tick);
-            RefreshCornerUi();
-            return;
-        }
-
-        if (spatialMapping == null) return;
-        if (spatialMapping.CurrentPhase == ARDesignSpatialMappingController.Phase.Openings)
-            spatialMapping.ToggleOpeningKind();
-        else if (spatialMapping.CurrentPhase == ARDesignSpatialMappingController.Phase.ExistingFurniture)
-            spatialMapping.CycleObstacleType();
+        if (!AutoEnabled || autoScan.CurrentStep != ARAutoRoomScan.Step.Walls) return;
+        autoScan.StartWallsOver();
+        ShowToast("walls-over", "Corners cleared · looking at the walls again", ARScanHaptics.Kind.Tick);
         RefreshCornerUi();
     }
 
-    void OnAuxSwingClicked()
+    /// <summary>Skip measuring: the usual ceiling height is used (Review can change it).</summary>
+    void OnSkipHeightClicked()
     {
-        if (spatialMapping == null)
+        if (cornerBuilder == null) return;
+        heightSkipped = true;
+        if (!cornerBuilder.SkipHeight())
+        {
+            heightSkipped = false;
             return;
-        if (spatialMapping.CurrentPhase == ARDesignSpatialMappingController.Phase.ExistingFurniture)
-            spatialMapping.RunFurnitureAutoScan();
-        else if (spatialMapping.CurrentPhase == ARDesignSpatialMappingController.Phase.Openings
-                 && spatialMapping.OpeningIsDoor)
-            spatialMapping.CycleOpeningSwing();
+        }
+
+        if (scanController != null)
+            OnStatus(scanController.GetScanStatus());
         RefreshCornerUi();
     }
 
@@ -1730,22 +2008,26 @@ public class ARDesignScanHUD : MonoBehaviour
             return;
         }
 
-        if (cornerBuilder != null && cornerBuilder.CanClose)
+        if (InReview)
         {
-            cornerBuilder.CloseLoop();
+            // While choosing or adding something, the main button cancels that.
+            if (choosingToAdd || spatialMapping.CurrentAddMode != ARDesignSpatialMappingController.AddMode.None)
+            {
+                OnCancelAdding();
+                return;
+            }
+
+            if (spatialMapping.TryPrimaryAction(out var confirmedRoom) && confirmedRoom)
+                FinalizeRoomScan();
             RefreshCornerUi();
             return;
         }
 
-        if (InSpatialStep)
+        // Finish the walk (or close the room): Review comes next.
+        if (cornerBuilder != null && cornerBuilder.CanClose)
         {
-            if (spatialMapping.TryPrimaryAction(out var confirmedRoom))
-            {
-                if (confirmedRoom)
-                    FinalizeRoomScan();
-                RefreshCornerUi();
-            }
-
+            cornerBuilder.CloseLoop();
+            RefreshCornerUi();
             return;
         }
 
@@ -1812,6 +2094,8 @@ public class ARDesignScanHUD : MonoBehaviour
         BuildCoachChip(root.transform);
         BuildRail(root.transform);
         BuildMap(root.transform);
+        if (spatialMapping != null)
+            BuildReviewPanel(root.transform);
         BuildDock(root.transform);
         BuildHeightButtons(root.transform);
         BuildToast(root.transform);
@@ -2046,15 +2330,10 @@ public class ARDesignScanHUD : MonoBehaviour
         bottomShadow.gameObject.SetActive(false);
         bottomDock.gameObject.SetActive(false);
 
-        auxTypeButton = CreatePillButton(bottomDock, "Door", Vector2.zero, Vector2.zero, FrostSoft, Ink, OnAuxTypeClicked, out _, out auxTypeLabel);
+        auxTypeButton = CreatePillButton(bottomDock, "Start over", Vector2.zero, Vector2.zero, FrostSoft, Ink, OnAuxTypeClicked, out _, out auxTypeLabel);
         PlaceInDock(auxTypeButton, 0.05f, 0.48f, 100f, 164f);
         auxTypeLabel.fontSize = 24;
         auxTypeButton.gameObject.SetActive(false);
-
-        auxSwingButton = CreatePillButton(bottomDock, "Swing", Vector2.zero, Vector2.zero, FrostSoft, Ink, OnAuxSwingClicked, out _, out auxSwingLabel);
-        PlaceInDock(auxSwingButton, 0.52f, 0.95f, 100f, 164f);
-        auxSwingLabel.fontSize = 24;
-        auxSwingButton.gameObject.SetActive(false);
 
         undoButton = CreatePillButton(bottomDock, "Undo", Vector2.zero, Vector2.zero, Frost, Ink, OnUndoClicked, out undoImage, out undoLabel);
         PlaceInDock(undoButton, 0.05f, 0.30f, 16f, 88f);
@@ -2090,6 +2369,93 @@ public class ARDesignScanHUD : MonoBehaviour
             OnUndoClicked, out heightUndoImage, out heightUndoLabel);
         heightUndoLabel.color = Ink;
         heightUndoButton.gameObject.SetActive(false);
+
+        // Skip on the other side: use the usual ceiling height (Review can change it).
+        skipHeightButton = CreateCenterActionButton(
+            root, "Skip", new Vector2(0.5f, 0f), new Vector2(220f, 160f), 112f, Frost,
+            OnSkipHeightClicked, out _, out var skipLabel);
+        skipLabel.color = Ink;
+        skipHeightButton.gameObject.SetActive(false);
+    }
+
+    /// <summary>Review panel: ceiling height row, a short title, and a grid of chips.</summary>
+    void BuildReviewPanel(Transform root)
+    {
+        var panel = ARDesignUiUtil.CreateRoundedImage(root, Frost, 32);
+        reviewPanel = panel.rectTransform;
+        reviewPanel.anchorMin = reviewPanel.anchorMax = new Vector2(0.5f, 0f);
+        reviewPanel.pivot = new Vector2(0.5f, 0f);
+        reviewPanel.sizeDelta = new Vector2(ReviewWidth(), 260f);
+
+        // Ceiling height:  − 2.50 m +
+        var heightTitle = ARDesignUiUtil.CreateText(reviewPanel, "Ceiling height", 24, FontStyle.Bold, TextAnchor.MiddleLeft);
+        heightTitle.color = Ink;
+        heightTitle.raycastTarget = false;
+        PlaceFromTop(heightTitle.rectTransform, 18f, 64f, 22f, 300f);
+
+        var minus = CreatePillButton(reviewPanel, "−", Vector2.zero, Vector2.zero, StepTodo, Ink, () => OnHeightStep(-0.05f), out _, out _);
+        PlaceTopRight((RectTransform)minus.transform, 18f + 4f, 64f, 56f, 210f);
+        reviewHeightValue = ARDesignUiUtil.CreateText(reviewPanel, "2.50 m", 26, FontStyle.Bold, TextAnchor.MiddleCenter);
+        reviewHeightValue.color = Ink;
+        reviewHeightValue.raycastTarget = false;
+        PlaceTopRight(reviewHeightValue.rectTransform, 18f, 120f, 64f, 88f);
+        var plus = CreatePillButton(reviewPanel, "+", Vector2.zero, Vector2.zero, StepTodo, Ink, () => OnHeightStep(0.05f), out _, out _);
+        PlaceTopRight((RectTransform)plus.transform, 18f + 4f, 64f, 56f, 22f);
+
+        reviewListTitle = ARDesignUiUtil.CreateText(reviewPanel, "In this room", 20, FontStyle.Bold, TextAnchor.MiddleLeft);
+        reviewListTitle.color = InkMuted;
+        reviewListTitle.raycastTarget = false;
+        PlaceFromTop(reviewListTitle.rectTransform, 18f + 64f + 8f, 40f, 22f, 22f);
+
+        // Grid of chips, anchored to the bottom so the panel can grow upward.
+        var gridGo = new GameObject("ReviewChips", typeof(RectTransform), typeof(GridLayoutGroup));
+        gridGo.transform.SetParent(reviewPanel, false);
+        reviewGrid = (RectTransform)gridGo.transform;
+        reviewGrid.anchorMin = new Vector2(0f, 0f);
+        reviewGrid.anchorMax = new Vector2(1f, 0f);
+        reviewGrid.pivot = new Vector2(0.5f, 0f);
+        reviewGrid.offsetMin = new Vector2(18f, 18f);
+        reviewGrid.offsetMax = new Vector2(-18f, 18f + ReviewChipHeight);
+        var grid = gridGo.GetComponent<GridLayoutGroup>();
+        grid.spacing = new Vector2(ReviewChipGap, ReviewChipGap);
+        grid.startCorner = GridLayoutGroup.Corner.UpperLeft;
+        grid.startAxis = GridLayoutGroup.Axis.Horizontal;
+        grid.childAlignment = TextAnchor.UpperLeft;
+        grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+        grid.constraintCount = ReviewColumns;
+
+        reviewEmptyLabel = ARDesignUiUtil.CreateText(
+            reviewPanel,
+            "Nothing found yet. Point the phone at it, or tap + Add.",
+            20, FontStyle.Italic, TextAnchor.MiddleLeft);
+        reviewEmptyLabel.color = InkMuted;
+        reviewEmptyLabel.raycastTarget = false;
+        var emptyRt = reviewEmptyLabel.rectTransform;
+        emptyRt.anchorMin = new Vector2(0f, 0f);
+        emptyRt.anchorMax = new Vector2(1f, 0f);
+        emptyRt.pivot = new Vector2(0.5f, 0f);
+        emptyRt.offsetMin = new Vector2(22f, 0f);
+        emptyRt.offsetMax = new Vector2(-22f, 44f);
+        reviewEmptyLabel.gameObject.SetActive(false);
+
+        reviewPanel.gameObject.SetActive(false);
+    }
+
+    ReviewChip CreateReviewChip()
+    {
+        var button = CreatePillButton(reviewGrid, "Chip", Vector2.zero, Vector2.one, Frost, Ink, () => { }, out var image, out var label);
+        label.fontSize = 22;
+        ShrinkToFit(label, 14);
+        return new ReviewChip { button = button, image = image, label = label };
+    }
+
+    /// <summary>Top-right anchored box inside a card: <paramref name="right"/> in from the right edge.</summary>
+    static void PlaceTopRight(RectTransform rt, float top, float width, float height, float right)
+    {
+        rt.anchorMin = rt.anchorMax = new Vector2(1f, 1f);
+        rt.pivot = new Vector2(1f, 1f);
+        rt.anchoredPosition = new Vector2(-right, -top);
+        rt.sizeDelta = new Vector2(width, height);
     }
 
     void BuildToast(Transform root)
@@ -2112,7 +2478,7 @@ public class ARDesignScanHUD : MonoBehaviour
         toastRect.gameObject.SetActive(false);
     }
 
-    /// <summary>"How it works": the five steps and a few tips, over a dark scrim that blocks the camera taps.</summary>
+    /// <summary>"How it works": the steps and a few tips, over a dark scrim that blocks the camera taps.</summary>
     void BuildHelpCard(Transform root)
     {
         var scrim = ARDesignUiUtil.CreateImage(root, Scrim);
@@ -2122,8 +2488,7 @@ public class ARDesignScanHUD : MonoBehaviour
 
         const float rowHeight = 132f;
         const float rowsTop = 196f;
-        var stepCount = SpatialStepNames.Length;
-        var visibleSteps = spatialMapping != null ? stepCount : OutlineStepNames.Length;
+        var visibleSteps = stepNames.Length;
         var cardHeight = rowsTop + rowHeight * visibleSteps + 260f;
 
         var card = ARDesignUiUtil.CreateRoundedImage(scrim.rectTransform, Color.white, 40);

@@ -320,6 +320,7 @@ export default function DesignFinalScreen() {
                 widthM={layout.room.width}
                 lengthM={layout.room.length}
                 items={layout.items}
+                scannedRoom={generation?.scannedRoom}
                 maxHeight={200}
               />
 

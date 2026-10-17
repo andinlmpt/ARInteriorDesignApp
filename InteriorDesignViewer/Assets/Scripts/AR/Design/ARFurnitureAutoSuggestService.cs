@@ -4,9 +4,8 @@ using UnityEngine.XR.ARFoundation;
 
 /// <summary>
 /// Merges AR plane + object-detector detections into pending furniture suggestions, and keeps the
-/// detector's door/window sightings. The detector also runs while the user is still outlining the
-/// room ("early sightings") and while marking doors and windows, so later steps start with what
-/// the camera has already seen.
+/// detector's door/window sightings. The detector runs during the walk around the room ("early
+/// sightings", shown live) and again during Review, so whatever the camera sees is picked up.
 /// </summary>
 [DisallowMultipleComponent]
 public class ARFurnitureAutoSuggestService : MonoBehaviour
@@ -16,10 +15,8 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
     [SerializeField] private ARDesignCornerRoomBuilder cornerBuilder;
     [SerializeField] private ARFurnitureCocoDetector cocoDetector;
     [SerializeField] private float autoScanIntervalSeconds = 2.0f;
-    [Tooltip("How often the detector looks while the room is being outlined.")]
-    [SerializeField] private float earlyScanIntervalSeconds = 2.5f;
-    [Tooltip("How often the detector looks while doors and windows are being marked.")]
-    [SerializeField] private float openingScanIntervalSeconds = 2.0f;
+    [Tooltip("How often the detector looks during the walk around the room.")]
+    [SerializeField] private float earlyScanIntervalSeconds = 2.0f;
     [SerializeField] private int maxSuggestions = 12;
     [SerializeField] private int maxEarlySightings = 16;
     [SerializeField] private int maxOpeningSightings = 200;
@@ -29,12 +26,14 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
     readonly List<AutoOpeningResolver.Sighting> newOpeningSightings = new();
     float nextAutoScan;
     float nextEarlyScan;
-    float nextOpeningScan;
     public bool IsScanning => cocoDetector != null && cocoDetector.IsScanning;
     public int Revision { get; private set; }
 
     /// <summary>Furniture spotted so far while the room outline is still open.</summary>
     public int EarlySightingCount => earlySightings.Count;
+
+    /// <summary>The furniture spotted during the walk (each with how often it was seen).</summary>
+    public IReadOnlyList<FurnitureAutoSuggestion> EarlySightings => earlySightings;
 
     public void DiscardResults() => cocoDetector?.DiscardResults();
 
@@ -70,10 +69,11 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
     }
 
     /// <summary>
-    /// Runs the detector while the outline is still open. The room shape isn't known yet,
-    /// so sightings are kept wherever they touch the floor and filtered when the room closes.
+    /// Runs the detector during the walk. The room shape isn't known yet, so sightings are kept
+    /// wherever they touch the floor and filtered when the room closes. <paramref name="existing"/>
+    /// (furniture already in the room, or removed by the user) isn't picked up again.
     /// </summary>
-    public void TickEarlyScan(float floorY)
+    public void TickEarlyScan(float floorY, IReadOnlyList<RoomObstaclePayload> existing = null)
     {
         if (Time.unscaledTime < nextEarlyScan && (cocoDetector == null || !cocoDetector.HasResults))
             return;
@@ -82,32 +82,13 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
         cocoDetector = ARFurnitureCocoDetector.EnsureOn(gameObject);
         if (cocoDetector == null) return;
 
-        var found = cocoDetector.TryDetect(null, floorY, raycastManager, null, requireInsideRoom: false);
+        var found = cocoDetector.TryDetect(null, floorY, raycastManager, existing, requireInsideRoom: false);
         CollectOpeningSightings();
         foreach (var sighting in found)
         {
             if (AddOrRefine(earlySightings, sighting, maxEarlySightings))
                 Revision++;
         }
-    }
-
-    /// <summary>
-    /// While doors and windows are marked: keeps the detector looking (door/window sightings), and
-    /// files the furniture it sees for the next step.
-    /// </summary>
-    public void TickOpeningScan(IReadOnlyList<RoomObstaclePayload> existing, List<FurnitureAutoSuggestion> pending)
-    {
-        if (cornerBuilder == null || cornerBuilder.CornerCount < 3) return;
-        if (Time.unscaledTime < nextOpeningScan && (cocoDetector == null || !cocoDetector.HasResults))
-            return;
-        nextOpeningScan = Time.unscaledTime + openingScanIntervalSeconds;
-
-        cocoDetector = ARFurnitureCocoDetector.EnsureOn(gameObject);
-        if (cocoDetector == null) return;
-        var corners = cornerBuilder.Corners;
-        var found = cocoDetector.TryDetect(corners, EstimateFloorY(corners), raycastManager, existing);
-        CollectOpeningSightings();
-        MergeIntoPending(found, pending);
     }
 
     /// <summary>
@@ -166,13 +147,9 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
         cocoDetector = ARFurnitureCocoDetector.EnsureOn(gameObject);
     }
 
-    public void TickAutoScan(
-        ARDesignSpatialMappingController.Phase phase,
-        IReadOnlyList<RoomObstaclePayload> obstacles,
-        List<FurnitureAutoSuggestion> pending)
+    /// <summary>Keeps the detector looking during Review (furniture and doors/windows).</summary>
+    public void TickAutoScan(IReadOnlyList<RoomObstaclePayload> obstacles, List<FurnitureAutoSuggestion> pending)
     {
-        if (phase != ARDesignSpatialMappingController.Phase.ExistingFurniture)
-            return;
         if (Time.unscaledTime < nextAutoScan && (cocoDetector == null || !cocoDetector.HasResults))
             return;
         nextAutoScan = Time.unscaledTime + autoScanIntervalSeconds;
