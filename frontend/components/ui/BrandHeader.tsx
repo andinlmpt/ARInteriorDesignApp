@@ -1,5 +1,5 @@
 /**
- * Centered Maharlika brand title + tagline block.
+ * Centered VisionSpace brand title + tagline block.
  */
 
 import React from 'react';

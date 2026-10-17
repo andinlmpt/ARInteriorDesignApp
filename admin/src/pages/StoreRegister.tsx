@@ -64,9 +64,9 @@ export function StoreRegisterPage() {
 
         <div className="login-brand-content">
           <div className="login-logo-frame">
-            <img src="/maharlika-logo.png" alt="Maharlika Furniture" className="login-logo" />
+            <img src="/visionspace-mark.png" alt="VisionSpace" className="login-logo" />
           </div>
-          <h1>Sell on Maharlika</h1>
+          <h1>Sell on VisionSpace</h1>
           <p>Show your furniture in customers' rooms with AR</p>
         </div>
       </aside>

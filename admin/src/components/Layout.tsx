@@ -70,15 +70,16 @@ export function Layout() {
   }, [refreshPendingStores]);
 
   const navItems = isStore ? STORE_NAV : ADMIN_NAV;
-  const logo = isStore && store?.logoUrl ? resolveAssetUrl(store.logoUrl) : '/maharlika-logo.png';
-  const brandName = isStore ? store?.name || 'Your store' : 'Maharlika Furniture';
+  const storeLogo = isStore && store?.logoUrl ? resolveAssetUrl(store.logoUrl) : '';
+  const logo = storeLogo || '/visionspace-mark.png';
+  const brandName = isStore ? store?.name || 'Your store' : 'VisionSpace';
   const outletContext: ConsoleOutletContext = { refreshPendingStores };
 
   return (
     <div className="admin-shell">
       <aside className="sidebar">
         <div className="brand">
-          <img src={logo} alt={brandName} className="brand-logo" />
+          <img src={logo} alt={brandName} className={storeLogo ? 'brand-logo' : 'brand-logo brand-logo--mark'} />
           <div className="brand-copy">
             <strong>{brandName}</strong>
             <span>{isStore ? 'Store console' : 'Admin console'}</span>

@@ -1,9 +1,8 @@
 /**
- * Maharlika Furniture logo used across splash, auth, and home screens.
+ * VisionSpace logo mark (the framed cube) used across splash, auth, and home screens.
  *
- * The PNG seal includes the navy/orange rings. The `circular` prop only controls
- * an extra white round plate + clip around that seal — keep it false so only the
- * logo’s own rings show.
+ * The `circular` prop only adds a white round plate + clip around the mark — keep it
+ * false to show the mark on its own.
  */
 
 import React from 'react';
@@ -13,8 +12,8 @@ import { BRAND_LOGO } from '@/constants/branding';
 interface AppLogoProps {
   size?: number;
   /**
-   * Extra white circular plate + clip around the seal.
-   * Leave false (default) so the navy/orange rings from the logo are the only circle.
+   * Extra white circular plate + clip around the mark.
+   * Leave false (default) to show the mark on its own.
    */
   circular?: boolean;
   /** Soft drop shadow (usually paired with circular plate). */
@@ -30,7 +29,7 @@ export function AppLogo({
   style,
   imageStyle,
 }: AppLogoProps) {
-  // Only zoom when filling the extra round plate; otherwise show the full seal.
+  // Only zoom when filling the extra round plate; otherwise show the whole mark.
   const zoom = circular ? 1.52 : 1;
   const imageSize = size * zoom;
 
@@ -60,7 +59,7 @@ export function AppLogo({
         ]}
         resizeMode="contain"
         accessibilityRole="image"
-        accessibilityLabel="Maharlika Furniture and Home Furnishing logo"
+        accessibilityLabel="VisionSpace logo"
       />
     </View>
   );

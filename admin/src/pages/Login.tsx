@@ -89,9 +89,9 @@ export function LoginPage() {
 
         <div className="login-brand-content">
           <div className="login-logo-frame">
-            <img src="/maharlika-logo.png" alt="Maharlika Furniture" className="login-logo" />
+            <img src="/visionspace-mark.png" alt="VisionSpace" className="login-logo" />
           </div>
-          <h1>Maharlika Furniture</h1>
+          <h1>VisionSpace</h1>
           <p>Your vision, our craft</p>
         </div>
       </aside>

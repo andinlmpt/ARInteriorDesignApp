@@ -4,6 +4,7 @@
  */
 
 import { callApi } from './apiClient';
+import type { ProductStore } from '@/types/home-product';
 
 export interface RemoteFurnitureItem {
   id: string;
@@ -24,6 +25,8 @@ export interface RemoteFurnitureItem {
   styles?: string[];
   rooms?: string[];
   roomTypes?: string[];
+  /** The store that sells it (null when the product isn't linked to a store). */
+  store?: ProductStore | null;
 }
 
 export interface FurnitureCatalogResponse {

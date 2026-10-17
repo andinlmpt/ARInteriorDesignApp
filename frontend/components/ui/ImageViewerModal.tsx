@@ -21,6 +21,7 @@ import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system/legacy';
 import { AppText } from '@/components/ui/Text';
 import { spacing, radii } from '@/components/ui/theme';
+import { BRAND } from '@/constants/branding';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -33,7 +34,7 @@ export interface ImageViewerModalProps {
 }
 
 function safeFileName(title?: string | null): string {
-  const base = (title || `Maharlika_AR_${Date.now()}`)
+  const base = (title || `${BRAND.name}_AR_${Date.now()}`)
     .replace(/[^\w.\-]+/g, '_')
     .replace(/_+/g, '_')
     .slice(0, 80);
@@ -114,12 +115,12 @@ export function ImageViewerModal({
         Platform.OS === 'ios'
           ? {
               url: localUri,
-              message: title ? `Maharlika Furniture — ${title}` : 'Maharlika Furniture',
+              message: title ? `${BRAND.name} — ${title}` : BRAND.name,
             }
           : {
               // Android attaches best when the path is in `message` for many share targets;
               // `url` is also passed for apps that accept it.
-              title: title || 'Maharlika Furniture',
+              title: title || BRAND.name,
               message: localUri,
               url: localUri,
             }

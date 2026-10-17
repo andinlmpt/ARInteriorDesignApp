@@ -5,7 +5,6 @@ import { PageHeader } from '../components/PageHeader';
 import { SearchBar } from '../components/SearchBar';
 import { resolveAssetUrl } from '../utils/assetUrl';
 import { compareModelSize, modelSizeWarning } from '../utils/modelSize';
-import { productVisibility } from '../utils/productVisibility';
 
 const UNASSIGNED = 'unassigned';
 
@@ -194,13 +193,11 @@ export function ProductsOverviewPage() {
                   <th>Category</th>
                   <th>Price</th>
                   <th>Qty</th>
-                  <th>In the app</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((item) => {
-                  const visibility = productVisibility(item);
                   const sizeWarning = modelSizeWarning(compareModelSize(item.modelSize, item));
                   return (
                     <tr key={item.id}>
@@ -226,16 +223,6 @@ export function ProductsOverviewPage() {
                       <td>{item.category}</td>
                       <td>{formatPhp(item.pricePhp)}</td>
                       <td>{item.quantity}</td>
-                      <td>
-                        <span className={`badge badge-${visibility.tone}`} title={visibility.detail}>
-                          {visibility.label}
-                        </span>
-                        {item.takenDown && item.takenDownReason ? (
-                          <div className="muted small" style={{ maxWidth: 200 }}>
-                            {item.takenDownReason}
-                          </div>
-                        ) : null}
-                      </td>
                       <td>
                         <div className="table-actions">
                           {item.takenDown ? (

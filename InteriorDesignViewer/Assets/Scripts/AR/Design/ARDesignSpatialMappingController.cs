@@ -26,6 +26,17 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         ConfirmReview,
     }
 
+    /// <summary>A door, window or piece of furniture appeared or went (the HUD shows a short note).</summary>
+    public enum Note
+    {
+        OpeningFound,
+        OpeningAdded,
+        OpeningRemoved,
+        FurnitureFound,
+        FurnitureAdded,
+        FurnitureRemoved,
+    }
+
     [SerializeField] private RoomScanController scanController;
     [SerializeField] private ARDesignCornerRoomBuilder cornerBuilder;
     [SerializeField] private ARRaycastManager raycastManager;
@@ -84,9 +95,15 @@ public class ARDesignSpatialMappingController : MonoBehaviour
     public bool OpeningIsDoor => openingIsDoor;
     public string OpeningSwing => openingSwing;
     public string SelectedObstacleType => ObstacleTypes[Mathf.Clamp(obstacleTypeIndex, 0, ObstacleTypes.Length - 1)];
+    public IReadOnlyList<RoomOpeningPayload> Openings => openings;
+    public IReadOnlyList<RoomObstaclePayload> Obstacles => obstacles;
+    /// <summary>Review and furniture can go back one step and keep everything found.</summary>
+    public bool CanStepBack => CurrentPhase == Phase.ConfirmReview || CurrentPhase == Phase.ExistingFurniture;
 
     public event Action PhaseChanged;
     public event Action DataChanged;
+    /// <summary>What changed and its type ("door", "window", "sofa", …).</summary>
+    public event Action<Note, string> Noted;
 
     void Awake() => ResolveReferences();
 
@@ -233,6 +250,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
             openings.Add(existing);
             Debug.Log($"[ARDesignSpatialMapping] Auto {c.kind} on wall {c.wall}: " +
                       $"{c.start:F2}–{c.end:F2} m, sill {c.sill:F2} m, top {c.top:F2} m ({c.sightings} sightings).");
+            Noted?.Invoke(Note.OpeningFound, c.kind);
         }
 
         existing.wallIndex = c.wall;
@@ -282,6 +300,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
             openingTracker.Suppress(opening.wallIndex, opening.offsetAlongWall + opening.width * 0.5f, opening.type);
         RebuildVisuals();
         DataChanged?.Invoke();
+        Noted?.Invoke(Note.OpeningRemoved, opening.type);
     }
 
     /// <summary>Furniture the detector has seen twice (or once, confidently) is added without a tap.</summary>
@@ -294,6 +313,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
             if (s.source != "coco") continue;
             if (s.sightings < AutoAcceptSightings && s.confidence < AutoAcceptConfidence) continue;
             AcceptSuggestionAtIndex(i, AutoPrefix);
+            Noted?.Invoke(Note.FurnitureFound, s.type);
             accepted = true;
         }
 
@@ -317,6 +337,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
             removedObstacles.Add(o);
             RebuildVisuals();
             DataChanged?.Invoke();
+            Noted?.Invoke(Note.FurnitureRemoved, o.type);
             return true;
         }
 
@@ -422,6 +443,22 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         DataChanged?.Invoke();
     }
 
+    /// <summary>Review → furniture → doors and windows, keeping everything found. False at the doors step.</summary>
+    public bool TryStepBack()
+    {
+        switch (CurrentPhase)
+        {
+            case Phase.ConfirmReview:
+                SetPhase(Phase.ExistingFurniture);
+                return true;
+            case Phase.ExistingFurniture:
+                SetPhase(Phase.Openings);
+                return true;
+            default:
+                return false;
+        }
+    }
+
     /// <summary>Primary action button on the scan HUD (advance or confirm map).</summary>
     public bool TryPrimaryAction(out bool confirmedRoom)
     {
@@ -469,6 +506,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
             if (IsAuto(last.id)) removedObstacles.Add(last);
             RebuildVisuals();
             DataChanged?.Invoke();
+            Noted?.Invoke(Note.FurnitureRemoved, last.type);
         }
     }
 
@@ -535,6 +573,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         ClearPendingEdge();
         RebuildVisuals();
         DataChanged?.Invoke();
+        Noted?.Invoke(Note.OpeningAdded, openingIsDoor ? "door" : "window");
     }
 
     void SetPendingEdge(int wallIndex, float offset, Vector3 point)
@@ -576,6 +615,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
 
         RebuildVisuals();
         DataChanged?.Invoke();
+        Noted?.Invoke(Note.FurnitureAdded, type);
     }
 
     static Vector3 DefaultObstacleSize(string type) => type switch
@@ -667,7 +707,9 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         }
 
         if (best < 0) return false;
+        var type = pendingSuggestions[best].type;
         AcceptSuggestionAtIndex(best);
+        Noted?.Invoke(Note.FurnitureAdded, type);
         return true;
     }
 
@@ -697,7 +739,9 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         {
             if (pendingSuggestions[i].confidence < minConfidence)
                 continue;
+            var type = pendingSuggestions[i].type;
             AcceptSuggestionAtIndex(i);
+            Noted?.Invoke(Note.FurnitureFound, type);
         }
     }
 

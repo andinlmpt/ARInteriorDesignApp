@@ -607,7 +607,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ARDesignSpatialMappingVisualizer
   doorColor: {r: 0.2, g: 0.55, b: 0.95, a: 0.85}
   windowColor: {r: 0.95, g: 0.85, b: 0.2, a: 0.85}
-  obstacleColor: {r: 0.55, g: 0.35, b: 0.2, a: 0.55}
+  obstacleColor: {r: 0.55, g: 0.35, b: 0.2, a: 0.35}
 --- !u!114 &521325928
 MonoBehaviour:
   m_ObjectHideFlags: 0

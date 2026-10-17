@@ -5,6 +5,8 @@
 
 import React, { useState } from 'react';
 import {
+  Alert,
+  Linking,
   Modal,
   View,
   StyleSheet,
@@ -19,7 +21,7 @@ import { AppText } from '@/components/ui/Text';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, radii } from '@/components/ui/theme';
 import { BRAND } from '@/constants/branding';
-import { formatHomeProductCategoryLabel, type HomeProduct } from '@/types/home-product';
+import { formatHomeProductCategoryLabel, type HomeProduct, type ProductStore } from '@/types/home-product';
 import { formatPhp } from '@/utils/designFlowFormat';
 import {
   formatHomeProductInches,
@@ -27,6 +29,31 @@ import {
   isOutOfStock,
   resolveAvailableColorHex,
 } from '@/utils/furnitureCatalogHelpers';
+
+type StoreLink = {
+  key: string;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  url: string;
+};
+
+/** The store's links that can be opened, in the order shoppers most often use them. */
+function storeLinks(store: ProductStore): StoreLink[] {
+  const web = (url?: string) => (url && /^https?:\/\//i.test(url) ? url : '');
+  const links: StoreLink[] = [];
+  if (web(store.facebook)) links.push({ key: 'facebook', label: 'Facebook', icon: 'logo-facebook', url: store.facebook! });
+  if (web(store.instagram)) links.push({ key: 'instagram', label: 'Instagram', icon: 'logo-instagram', url: store.instagram! });
+  if (web(store.website)) links.push({ key: 'website', label: 'Website', icon: 'globe-outline', url: store.website! });
+  if (store.phone) links.push({ key: 'phone', label: 'Call', icon: 'call-outline', url: `tel:${store.phone}` });
+  if (store.email) links.push({ key: 'email', label: 'Email', icon: 'mail-outline', url: `mailto:${store.email}` });
+  return links;
+}
+
+function openStoreLink(link: StoreLink) {
+  Linking.openURL(link.url).catch(() => {
+    Alert.alert('Couldn’t open link', link.key === 'phone' ? `Call ${link.url.slice(4)}` : link.url);
+  });
+}
 
 interface ProductDetailSheetProps {
   product: HomeProduct | null;
@@ -60,6 +87,8 @@ export function ProductDetailSheet({
       ? meters
       : null;
   const outOfStock = isOutOfStock(product.quantity);
+  const store = product.store;
+  const links = store ? storeLinks(store) : [];
 
   return (
     <Modal
@@ -82,7 +111,14 @@ export function ProductDetailSheet({
         >
           <View style={[styles.handle, { backgroundColor: colors.border }]} />
 
-          <View style={[styles.imageWrap, { backgroundColor: colors.surfaceSecondary }]}>
+          <View
+            style={[
+              styles.imageWrap,
+              // Room for the "Where to buy" block while still fitting on one screen.
+              store && styles.imageWrapCompact,
+              { backgroundColor: colors.surfaceSecondary },
+            ]}
+          >
             {showImage ? (
               <Image
                 source={{ uri: product.thumbnailUrl }}
@@ -216,6 +252,59 @@ export function ProductDetailSheet({
                 </View>
               </>
             ) : null}
+
+            {store ? (
+              <>
+                <View style={[styles.divider, { backgroundColor: colors.border }]} />
+                <View style={styles.detailBlock}>
+                  <AppText
+                    variant="caption"
+                    weight="600"
+                    style={[styles.sectionLabel, { color: colors.textSecondary }]}
+                  >
+                    Where to buy
+                  </AppText>
+                  <View style={styles.storeRow}>
+                    <Ionicons name="storefront-outline" size={16} color={colors.textSecondary} />
+                    <AppText
+                      variant="body"
+                      weight="600"
+                      numberOfLines={1}
+                      style={[styles.storeName, { color: colors.textPrimary }]}
+                    >
+                      {store.name}
+                      {store.city ? (
+                        <AppText variant="caption" style={{ color: colors.textMuted }}>
+                          {`  ·  ${store.city}`}
+                        </AppText>
+                      ) : null}
+                    </AppText>
+                  </View>
+                  {links.length > 0 ? (
+                    <View style={styles.storeLinks}>
+                      {links.map((link) => (
+                        <TouchableOpacity
+                          key={link.key}
+                          style={[
+                            styles.storeLink,
+                            { backgroundColor: colors.surfacePrimary, borderColor: colors.border },
+                          ]}
+                          activeOpacity={0.8}
+                          onPress={() => openStoreLink(link)}
+                          accessibilityRole="link"
+                          accessibilityLabel={`${link.label} — ${store.name}`}
+                        >
+                          <Ionicons name={link.icon} size={15} color={colors.accent} />
+                          <AppText variant="caption" weight="700" style={{ color: colors.accent }}>
+                            {link.label}
+                          </AppText>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  ) : null}
+                </View>
+              </>
+            ) : null}
           </View>
 
           <View style={styles.actions}>
@@ -290,6 +379,9 @@ const styles = StyleSheet.create({
   image: {
     width: '100%',
     height: '100%',
+  },
+  imageWrapCompact: {
+    aspectRatio: 1.25,
   },
   imageDimmed: {
     opacity: 0.45,
@@ -377,6 +469,30 @@ const styles = StyleSheet.create({
     height: 14,
     borderRadius: 7,
     borderWidth: 1,
+  },
+  storeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  storeName: {
+    flexShrink: 1,
+  },
+  storeLinks: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  storeLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    minHeight: 34,
   },
   stockRow: {
     flexDirection: 'row',

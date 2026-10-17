@@ -39,8 +39,8 @@ const userSchema = new mongoose.Schema({
     type: String, // URL to avatar image
   },
   profilePicture: {
-    type: String, // base64 data URL from device camera/gallery
-    select: false, // exclude from default queries to avoid large payloads
+    type: String, // link to the profile photo (Cloudinary, GCS or /uploads/profile-pictures)
+    select: false, // left out of default queries (older records held whole photos here)
   },
   /** user = mobile app customer, store = furniture store (sells products), admin = runs the platform. */
   role: {

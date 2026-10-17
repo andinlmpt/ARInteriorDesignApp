@@ -291,19 +291,28 @@ export function StoreProfilePage() {
             {visibleSections.has('online') ? (
               <div className="card">
                 <h2 className="section-title">Online presence</h2>
+                <p className="muted small" style={{ marginTop: -4 }}>
+                  Shoppers see these links, your phone and email under “Where to buy” on each of your products in
+                  the app.
+                </p>
                 <div className="field">
-                  <label htmlFor="website">Website</label>
+                  <label htmlFor="website">Website or online shop</label>
                   <input
                     id="website"
                     value={form.website}
                     onChange={(e) => updateField('website', e.target.value)}
-                    placeholder="https://"
+                    placeholder="e.g. yourshop.ph or a Shopee / Lazada store link"
                   />
                 </div>
                 <div className="form-grid-2">
                   <div className="field">
                     <label htmlFor="facebook">Facebook</label>
-                    <input id="facebook" value={form.facebook} onChange={(e) => updateField('facebook', e.target.value)} />
+                    <input
+                      id="facebook"
+                      value={form.facebook}
+                      onChange={(e) => updateField('facebook', e.target.value)}
+                      placeholder="Page link or @name"
+                    />
                   </div>
                   <div className="field">
                     <label htmlFor="instagram">Instagram</label>
@@ -311,6 +320,7 @@ export function StoreProfilePage() {
                       id="instagram"
                       value={form.instagram}
                       onChange={(e) => updateField('instagram', e.target.value)}
+                      placeholder="@name"
                     />
                   </div>
                 </div>

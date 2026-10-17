@@ -8,8 +8,8 @@ public class ARDesignSpatialMappingVisualizer : MonoBehaviour
 {
     [SerializeField] private Color doorColor = new(0.2f, 0.55f, 0.95f, 0.85f);
     [SerializeField] private Color windowColor = new(0.95f, 0.85f, 0.2f, 0.85f);
-    [SerializeField] private Color obstacleColor = new(0.55f, 0.35f, 0.2f, 0.55f);
-    [SerializeField] private Color suggestionColor = new(1f, 0.55f, 0.12f, 0.45f);
+    [SerializeField] private Color obstacleColor = new(0.55f, 0.35f, 0.2f, 0.35f);
+    [SerializeField] private Color suggestionColor = new(1f, 0.55f, 0.12f, 0.35f);
     [SerializeField] private Color edgeMarkerColor = new(1f, 1f, 1f, 0.95f);
 
     Transform root;

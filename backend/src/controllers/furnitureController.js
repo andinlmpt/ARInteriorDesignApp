@@ -11,6 +11,7 @@ import {
 import { inferFurnitureCategory } from '../utils/furnitureCategory.js';
 import { mockPricePhp, mockStyles, suitableRooms } from '../utils/furnitureMockPricing.js';
 import { withPublicVisibility } from '../services/catalogVisibility.js';
+import { PUBLIC_STORE_FIELDS, toPublicStore } from '../services/storeLinks.js';
 
 const inferCategory = (doc) =>
   inferFurnitureCategory(doc.id, doc.displayName, doc.glbUrl) || 'other';
@@ -48,6 +49,8 @@ const toPublicItem = (doc, req) => ({
   styles: mockStyles(doc),
   rooms: suitableRooms({ ...doc, category: doc.category || inferCategory(doc) }),
   roomTypes: getPublicRoomTypes(doc),
+  /** Where to buy it (null for products not yet linked to a store). */
+  store: toPublicStore(doc.store, req),
 });
 
 function getPublicRoomTypes(doc) {
@@ -75,6 +78,7 @@ const furnitureController = {
 
       const items = await Furniture.find(await withPublicVisibility(filter))
         .sort({ sortOrder: 1, displayName: 1 })
+        .populate('store', PUBLIC_STORE_FIELDS)
         .lean();
 
       res.json({
@@ -97,7 +101,9 @@ const furnitureController = {
       }
 
       const id = String(req.params.id || '').trim().toLowerCase();
-      const item = await Furniture.findOne(await withPublicVisibility({ id, active: true })).lean();
+      const item = await Furniture.findOne(await withPublicVisibility({ id, active: true }))
+        .populate('store', PUBLIC_STORE_FIELDS)
+        .lean();
 
       if (!item) {
         return res.status(404).json({
