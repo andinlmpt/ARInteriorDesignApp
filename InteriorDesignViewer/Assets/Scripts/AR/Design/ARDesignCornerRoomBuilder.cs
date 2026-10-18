@@ -48,6 +48,8 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     [Tooltip("If Finish is pressed with a peak below this, fall back to defaultWallHeight.")]
     [SerializeField] private float minReliableLockHeight = 1.8f;
     [SerializeField] private float heightAimScreenY = 0.62f;
+    [Tooltip("A detected wall this close to the floor point is the wall the height is read on (m).")]
+    [SerializeField] private float baseWallMaxDistance = 0.5f;
     [SerializeField] private float heightPlacementIconSize = 0.32f;
     [SerializeField] private string measurementIconResourcePath = "MeasurementIcons/measurement-icon";
     [SerializeField] private float cornerMarkerSize = 0.06f;
@@ -100,7 +102,8 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     Text heightMeasureText;
     int lastPreviewCm = int.MinValue;
     int lastHeightPreviewCm = int.MinValue;
-    float peakLiveHeight;
+    /// <summary>Follows the aim while looking up and keeps the last steady ceiling reading (see <see cref="ScanHeightFilter"/>).</summary>
+    readonly ScanHeightFilter heightFilter = new();
 
     public IReadOnlyList<Vector3> Corners => corners;
     public int CornerCount => corners.Count;
@@ -134,6 +137,12 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
 
     /// <summary>True while the vertical height preview line is visible.</summary>
     public bool HasLiveHeightPreview { get; private set; }
+
+    /// <summary>Seconds the live height has stayed put while aiming up (the automatic scan locks it after a while).</summary>
+    public float HeightSteadySeconds => heightFilter.SteadyFor;
+
+    /// <summary>Where on screen (0–1) the height is aimed from when no finger is down.</summary>
+    public Vector2 HeightAimViewportPoint => new(0.5f, heightAimScreenY);
 
     /// <summary>True once the floor base is placed — Finish does not wait for a 1 m live reading.</summary>
     public bool CanConfirmHeight => IsInHeightPhase && heightBaseSet;
@@ -360,21 +369,41 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     /// Locks wall height and seeds the width outline: the Finish base point becomes
     /// corner 0 so live width measurement starts from that same floor point.
     /// </summary>
-    public bool ConfirmHeight()
+    public bool ConfirmHeight() => LockHeight(null);
+
+    /// <summary>
+    /// Locks the usual ceiling height without measuring (for ceilings that are hard to aim at);
+    /// Review can still change it (<see cref="SetWallHeight"/>).
+    /// </summary>
+    public bool SkipHeight() => LockHeight(defaultWallHeight);
+
+    public float DefaultWallHeight => defaultWallHeight;
+    public float MinWallHeight => minWallHeight;
+    public float MaxWallHeight => maxWallHeight;
+
+    /// <summary>Changes the locked ceiling height (e.g. corrected by the user before saving the room).</summary>
+    public void SetWallHeight(float meters)
+    {
+        if (!heightLocked || roomLocked) return;
+        var height = Mathf.Clamp(meters, minWallHeight, maxWallHeight);
+        if (Mathf.Approximately(height, wallHeight)) return;
+        wallHeight = height;
+        RebuildVisuals();
+        HeightPhaseChanged?.Invoke();
+    }
+
+    bool LockHeight(float? forced)
     {
         if (!CanConfirmHeight) return false;
 
-        // Prefer peak while aiming — avoids locking a short mid-wall / furniture hit.
-        var candidate = Mathf.Max(peakLiveHeight, LiveHeightMeters);
-        float measured;
-        if (candidate >= minReliableLockHeight)
-            measured = candidate;
-        else
+        // The reading held steady (or the last one held before the phone came down to tap Finish).
+        var measured = forced ?? heightFilter.Resolve(minReliableLockHeight, float.NaN);
+        if (float.IsNaN(measured))
         {
             // Too short to be a real ceiling — use default rather than ~70 cm furniture height.
             Debug.LogWarning(
-                $"[ARDesignCornerRoomBuilder] Height peak {candidate:F2}m below reliable " +
-                $"{minReliableLockHeight:F2}m — using default {defaultWallHeight:F2}m.");
+                $"[ARDesignCornerRoomBuilder] Height {heightFilter.Display:F2}m (peak {heightFilter.Peak:F2}m) below " +
+                $"reliable {minReliableLockHeight:F2}m — using default {defaultWallHeight:F2}m.");
             measured = defaultWallHeight;
         }
 
@@ -430,7 +459,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         ReleaseHeightBaseAnchor();
         LiveHeightMeters = 0f;
         HasLiveHeightPreview = false;
-        peakLiveHeight = 0f;
+        heightFilter.Reset();
         lastHeightPreviewCm = int.MinValue;
 
         if (heightLine != null) heightLine.enabled = false;
@@ -561,7 +590,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         ReleaseHeightBaseAnchor();
         LiveHeightMeters = 0f;
         HasLiveHeightPreview = false;
-        peakLiveHeight = 0f;
+        heightFilter.Reset();
         lastHeightPreviewCm = int.MinValue;
 
         if (heightLine != null) heightLine.enabled = false;
@@ -587,7 +616,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         heightBaseSet = true;
         ReleaseHeightBaseAnchor();
         heightBaseAnchor = PinWorldPoint(worldPoint);
-        peakLiveHeight = 0f;
+        heightFilter.Reset();
         LiveHeightMeters = 0f;
         HasLiveHeightPreview = false;
         lastHeightPreviewCm = int.MinValue;
@@ -788,21 +817,13 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         {
             heightMeters = wallHeight;
         }
-        else if (TryEstimateLiveHeight(out var topPoint))
-        {
-            heightMeters = topPoint.y - heightFloorBase.y;
-            // Keep the highest good reading so furniture / mid-wall dips don't erase ceiling.
-            if (heightMeters >= minWallHeight)
-                peakLiveHeight = Mathf.Max(peakLiveHeight, heightMeters);
-            heightMeters = Mathf.Max(heightMeters, peakLiveHeight);
-        }
-        else if (peakLiveHeight >= minWallHeight)
-        {
-            heightMeters = peakLiveHeight;
-        }
         else
         {
-            heightMeters = 0.15f;
+            // Follows the aim while looking up (so an overshoot can be corrected) and keeps the
+            // last steady ceiling reading once the phone comes down.
+            var measured = TryEstimateLiveHeight(out var topPoint, out var lookingUp);
+            heightFilter.Feed(Time.unscaledTime, measured, topPoint.y - heightFloorBase.y, lookingUp);
+            heightMeters = heightFilter.HasReading ? heightFilter.Display : 0.15f;
         }
 
         heightMeters = Mathf.Clamp(heightMeters, 0f, maxWallHeight);
@@ -837,14 +858,25 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         }
     }
 
-    bool TryEstimateLiveHeight(out Vector3 topPoint)
+    bool TryEstimateLiveHeight(out Vector3 topPoint, out bool lookingUp)
     {
         topPoint = heightFloorBase + Vector3.up * wallHeight;
+        lookingUp = false;
         if (arCamera == null) return false;
 
         var screen = GetHeightAimScreenPoint();
         var ray = arCamera.ScreenPointToRay(screen);
         var camPos = arCamera.transform.position;
+        lookingUp = ray.direction.y > 0.2f;
+
+        // Exact readings first: the aim on a detected ceiling, or crossing the wall the floor point
+        // is on (right even when that point is a little in front of the wall).
+        if (TryGetCeilingPlaneHeight(screen, out var exact)
+            || (lookingUp && TryGetBaseWallCrossing(ray, out exact)))
+        {
+            topPoint = heightFloorBase + Vector3.up * Mathf.Clamp(exact, 0.08f, maxWallHeight);
+            return true;
+        }
 
         var pitchHeight = EstimateHeightFromCameraPitch(ray, heightFloorBase, camPos);
         var columnHeight = EstimateHeightAtVerticalColumn(ray, heightFloorBase);
@@ -852,7 +884,6 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         var cameraClearance = camPos.y - heightFloorBase.y;
 
         // Strong upward look: trust pitch (ceiling aim). Column alone often stops mid-wall.
-        var lookingUp = ray.direction.y > 0.2f;
         float bestHeight;
         if (lookingUp)
         {
@@ -876,6 +907,98 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         bestHeight = Mathf.Clamp(bestHeight, 0.08f, maxWallHeight);
         topPoint = heightFloorBase + Vector3.up * bestHeight;
         return true;
+    }
+
+    /// <summary>The aim lands on a detected ceiling (a downward-facing plane high enough to be one).</summary>
+    bool TryGetCeilingPlaneHeight(Vector2 screenPoint, out float height)
+    {
+        height = 0f;
+        if (raycastManager == null || planeManager == null) return false;
+
+        hits.Clear();
+        if (!raycastManager.Raycast(screenPoint, hits, TrackableType.PlaneWithinPolygon)) return false;
+
+        // A ceiling is flat, so any detected piece of it along the aim gives its height.
+        foreach (var hit in hits)
+        {
+            var plane = planeManager.GetPlane(hit.trackableId);
+            if (plane == null || plane.alignment != PlaneAlignment.HorizontalDown) continue;
+            var h = hit.pose.position.y - heightFloorBase.y;
+            if (h < minCeilingHeightAboveBase || h > maxWallHeight) continue;
+            height = h;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Where the aim crosses the detected wall the floor point sits against (its plane carries on
+    /// above the part ARCore found, so plain upper walls still count).
+    /// </summary>
+    bool TryGetBaseWallCrossing(Ray ray, out float height)
+    {
+        height = 0f;
+        if (planeManager == null) return false;
+
+        var basePoint = new Vector2(heightFloorBase.x, heightFloorBase.z);
+        var found = false;
+        var bestDistance = baseWallMaxDistance;
+        Vector2 wallOrigin = default, wallNormal = default;
+        float wallMin = 0f, wallMax = 0f;
+        foreach (var plane in planeManager.trackables)
+        {
+            if (plane == null || plane.alignment != PlaneAlignment.Vertical) continue;
+            if (plane.subsumedBy != null || plane.trackingState != TrackingState.Tracking) continue;
+
+            var normal = new Vector2(plane.normal.x, plane.normal.z);
+            if (normal.sqrMagnitude < 0.5f) continue;
+            normal.Normalize();
+            var origin = new Vector2(plane.center.x, plane.center.z);
+            var distance = Mathf.Abs(Vector2.Dot(basePoint - origin, normal));
+            if (distance > bestDistance) continue;
+            if (!TryGetPlaneSpan(plane, origin, normal, out var tMin, out var tMax)) continue;
+
+            // The floor point must be in front of this wall, not far off to one side of it.
+            var along = Vector2.Dot(basePoint - origin, new Vector2(-normal.y, normal.x));
+            if (along < tMin - 1f || along > tMax + 1f) continue;
+
+            found = true;
+            bestDistance = distance;
+            wallOrigin = origin;
+            wallNormal = normal;
+            wallMin = tMin;
+            wallMax = tMax;
+        }
+
+        if (!found) return false;
+        if (!ScanHeightFilter.TryWallCrossingHeight(
+                ray.origin, ray.direction, wallOrigin, wallNormal, wallMin, wallMax,
+                heightFloorBase.y, 1.5f, 10f, out height))
+            return false;
+
+        return height >= minWallHeight && height <= maxWallHeight;
+    }
+
+    /// <summary>The part of a vertical plane ARCore has seen, along its floor-plan line (tangent = (−n.y, n.x)).</summary>
+    static bool TryGetPlaneSpan(ARPlane plane, Vector2 origin, Vector2 normal, out float tMin, out float tMax)
+    {
+        tMin = float.MaxValue;
+        tMax = float.MinValue;
+        var boundary = plane.boundary;
+        if (!boundary.IsCreated || boundary.Length < 3) return false;
+
+        var tangent = new Vector2(-normal.y, normal.x);
+        var tr = plane.transform;
+        for (var i = 0; i < boundary.Length; i++)
+        {
+            var w = tr.TransformPoint(new Vector3(boundary[i].x, 0f, boundary[i].y));
+            var t = Vector2.Dot(new Vector2(w.x, w.z) - origin, tangent);
+            tMin = Mathf.Min(tMin, t);
+            tMax = Mathf.Max(tMax, t);
+        }
+
+        return tMax > tMin;
     }
 
     float TryGetDetectedCeilingHeight(Vector2 screenPoint)
@@ -1100,15 +1223,13 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
             }
         }
 
-        // Fall back to placement reticle, then screen center.
-        if (placementIndicator != null && placementIndicator.isActiveAndEnabled)
+        // A following reticle has the answer (it reaches past the recognized floor, into corners).
+        // Off the floor it keeps its last spot, so that position must not be reused.
+        if (placementIndicator != null && placementIndicator.isActiveAndEnabled && placementIndicator.IsTracking)
         {
-            var indicatorScreen = arCamera.WorldToScreenPoint(placementIndicator.WorldPosition);
-            if (indicatorScreen.z > 0f
-                && TryGetFloorHit(new Vector2(indicatorScreen.x, indicatorScreen.y), out hit))
-            {
-                return true;
-            }
+            if (!placementIndicator.IsLockedOnFloor) return false;
+            hit = placementIndicator.CurrentPose.position;
+            return true;
         }
 
         var center = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
@@ -1375,6 +1496,9 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     bool TryGetFloorHit(Vector2 screenPoint, out Vector3 world)
     {
         world = default;
+        if (placementIndicator != null && placementIndicator.TryResolveAim(screenPoint, out world, out _))
+            return true;
+
         if (raycastManager == null) return false;
 
         hits.Clear();

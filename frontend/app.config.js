@@ -2,7 +2,7 @@ import 'dotenv/config';
 
 const existingConfig = {
   expo: {
-    name: 'Maharlika Furniture',
+    name: 'VisionSpace',
     slug: 'ARInteriorDesinApp',
     version: '1.0.0',
     orientation: 'portrait',
@@ -21,7 +21,7 @@ const existingConfig = {
     android: {
       package: 'com.arinteriordesign.app',
       adaptiveIcon: {
-        foregroundImage: './assets/images/icon.png',
+        foregroundImage: './assets/images/adaptive-icon.png',
         backgroundColor: '#FFFFFF',
       },
     },

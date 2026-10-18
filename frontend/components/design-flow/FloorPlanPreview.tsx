@@ -1,14 +1,17 @@
 import React, { useMemo, useState } from 'react';
 import { View, StyleSheet, type LayoutChangeEvent } from 'react-native';
-import Svg, { G, Line, Rect, Text as SvgText } from 'react-native-svg';
+import Svg, { G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
+import { AppText } from '@/components/ui/Text';
 import { useTheme } from '@/contexts/ThemeContext';
 import { designItemColor } from '@/utils/designItemColors';
-import type { DesignLayoutItem } from '@/types/design-flow';
+import type { DesignLayoutItem, ScannedOpening, ScannedRoom } from '@/types/design-flow';
 
 interface FloorPlanPreviewProps {
   widthM: number;
   lengthM: number;
   items: DesignLayoutItem[];
+  /** What the scan found: your own furniture (drawn grey) and the doors and windows. */
+  scannedRoom?: ScannedRoom | null;
   maxHeight?: number;
 }
 
@@ -19,6 +22,9 @@ const LABEL_PAD = 18;
 /** Width used until the container has been measured (px). */
 const FALLBACK_WIDTH = 280;
 const GRID_STEP_M = 0.5;
+/** Furniture already in the room: neutral, so the new pieces stand out. */
+const EXISTING_COLOR = '#8C8579';
+const WINDOW_COLOR = '#4A9BD9';
 
 function hexToRgba(hex: string, alpha: number): string {
   const raw = hex.replace('#', '');
@@ -131,14 +137,85 @@ function FurnitureSymbol({ kind, w, d, color, line }: {
   return <Rect x={0} y={0} width={w} height={d} rx={radius} fill={fill} stroke={color} strokeWidth={line} />;
 }
 
+/** A scanned piece in the layout item shape the symbols are drawn from. */
+function existingAsItem(piece: ScannedRoom['existingFurniture'][number]): DesignLayoutItem {
+  return {
+    instanceId: `existing-${piece.id}`,
+    furnitureId: piece.id,
+    displayName: piece.name.charAt(0).toUpperCase() + piece.name.slice(1),
+    category: piece.role,
+    role: piece.role,
+    width: piece.width,
+    height: piece.height,
+    depth: piece.length,
+    localPosition: piece.position,
+    rotationY: piece.position.rotation,
+    pricePhp: 0,
+  };
+}
+
+/**
+ * A door or window on the wall, in plan pixels: the wall is cut open where it is, a window
+ * gets a line across the gap and a door its leaf and swing into the room.
+ */
+function OpeningMark({ opening, kind, scale, roomW, roomH, wall, floor, line }: {
+  opening: ScannedOpening;
+  kind: 'door' | 'window';
+  scale: number;
+  roomW: number;
+  roomH: number;
+  wall: number;
+  floor: string;
+  line: string;
+}) {
+  const x1 = opening.x1 * scale;
+  const y1 = opening.z1 * scale;
+  const x2 = opening.x2 * scale;
+  const y2 = opening.z2 * scale;
+  const length = Math.hypot(x2 - x1, y2 - y1);
+  if (length < 2) return null;
+
+  const cut = <Line x1={x1} y1={y1} x2={x2} y2={y2} stroke={floor} strokeWidth={wall + 1} />;
+  if (kind === 'window') {
+    return (
+      <G>
+        {cut}
+        <Line x1={x1} y1={y1} x2={x2} y2={y2} stroke={WINDOW_COLOR} strokeWidth={Math.max(2, wall * 0.6)} />
+      </G>
+    );
+  }
+
+  // Swing into the room: the normal of the opening that points at the room's middle.
+  let nx = -(y2 - y1) / length;
+  let ny = (x2 - x1) / length;
+  if ((roomW / 2 - x1) * nx + (roomH / 2 - y1) * ny < 0) {
+    nx = -nx;
+    ny = -ny;
+  }
+  const leafX = x1 + nx * length;
+  const leafY = y1 + ny * length;
+  // SVG y points down, so a positive cross product is a clockwise sweep.
+  const sweep = (x2 - x1) * (leafY - y1) - (y2 - y1) * (leafX - x1) > 0 ? 1 : 0;
+  return (
+    <G>
+      {cut}
+      <Line x1={x1} y1={y1} x2={leafX} y2={leafY} stroke={line} strokeWidth={1.4} />
+      <Path d={`M ${x2} ${y2} A ${length} ${length} 0 0 ${sweep} ${leafX} ${leafY}`} fill="none"
+        stroke={line} strokeWidth={1} strokeDasharray="3,2" />
+    </G>
+  );
+}
+
 /**
  * Top view of a room layout: floor grid, walls, dimensions and furniture symbols drawn
- * to scale, sized to the available width.
+ * to scale, sized to the available width. With a scanned room, your own furniture is drawn
+ * grey and the doors and windows sit on the walls, as the layout was planned around them.
  */
 export function FloorPlanPreview({
   widthM,
   lengthM,
   items,
+  scannedRoom,
   maxHeight = 180,
 }: FloorPlanPreviewProps) {
   const { colors, isDark } = useTheme();
@@ -172,6 +249,14 @@ export function FloorPlanPreview({
   const wallColor = colors.textPrimary;
   const solidCount = items.filter((item) => symbolKind(item) !== 'rug').length;
   const ordered = [...items].sort((a, b) => Number(symbolKind(b) === 'rug') - Number(symbolKind(a) === 'rug'));
+  const existing = useMemo(() => (scannedRoom?.existingFurniture || []).map(existingAsItem), [scannedRoom]);
+  const doors = scannedRoom?.doors || [];
+  const windows = scannedRoom?.windows || [];
+  const scanParts = [
+    existing.length > 0 ? `${existing.length} of your own ${existing.length === 1 ? 'piece' : 'pieces'}` : '',
+    doors.length > 0 ? `${doors.length} ${doors.length === 1 ? 'door' : 'doors'}` : '',
+    windows.length > 0 ? `${windows.length} ${windows.length === 1 ? 'window' : 'windows'}` : '',
+  ].filter(Boolean);
 
   const gridLines: React.ReactNode[] = [];
   for (let x = GRID_STEP_M; x < safeW - 0.01; x += GRID_STEP_M) {
@@ -186,7 +271,8 @@ export function FloorPlanPreview({
       <Svg
         width={plan.svgW}
         height={plan.svgH}
-        accessibilityLabel={`Floor plan ${safeW.toFixed(1)} by ${safeL.toFixed(1)} meters with ${solidCount} pieces`}
+        accessibilityLabel={`Floor plan ${safeW.toFixed(1)} by ${safeL.toFixed(1)} meters with ${solidCount} pieces`
+          + (scanParts.length > 0 ? `, ${scanParts.join(', ')}` : '')}
       >
         <SvgText x={LABEL_PAD + plan.roomW / 2} y={LABEL_PAD - 6} fontSize={10} fill={colors.textMuted}
           textAnchor="middle">
@@ -200,6 +286,20 @@ export function FloorPlanPreview({
         <G transform={`translate(${LABEL_PAD}, ${LABEL_PAD})`}>
           <Rect x={0} y={0} width={plan.roomW} height={plan.roomH} fill={floor} />
           {gridLines}
+
+          {existing.map((item) => {
+            const w = item.width * plan.scale;
+            const d = item.depth * plan.scale;
+            const rotated = item.rotationY % 180 !== 0;
+            const cx = item.localPosition.x * plan.scale + (rotated ? d : w) / 2;
+            const cz = item.localPosition.z * plan.scale + (rotated ? w : d) / 2;
+            return (
+              <G key={item.instanceId}
+                transform={`translate(${cx}, ${cz}) rotate(${-item.rotationY}) translate(${-w / 2}, ${-d / 2})`}>
+                <FurnitureSymbol kind={symbolKind(item)} w={w} d={d} color={EXISTING_COLOR} line={1} />
+              </G>
+            );
+          })}
 
           {ordered.map((item, index) => {
             const kind = symbolKind(item);
@@ -220,7 +320,7 @@ export function FloorPlanPreview({
             );
           })}
 
-          {ordered.map((item, index) => {
+          {[...existing, ...ordered].map((item, index) => {
             if (symbolKind(item) === 'rug') return null;
             const rotated = item.rotationY % 180 !== 0;
             const footW = (rotated ? item.depth : item.width) * plan.scale;
@@ -241,6 +341,15 @@ export function FloorPlanPreview({
           <Rect x={0} y={0} width={plan.roomW} height={plan.roomH} fill="none" stroke={wallColor}
             strokeWidth={plan.wall} />
 
+          {doors.map((door) => (
+            <OpeningMark key={`door-${door.id}`} opening={door} kind="door" scale={plan.scale}
+              roomW={plan.roomW} roomH={plan.roomH} wall={plan.wall} floor={floor} line={wallColor} />
+          ))}
+          {windows.map((win) => (
+            <OpeningMark key={`window-${win.id}`} opening={win} kind="window" scale={plan.scale}
+              roomW={plan.roomW} roomH={plan.roomH} wall={plan.wall} floor={floor} line={wallColor} />
+          ))}
+
           {solidCount === 0 ? (
             <SvgText x={plan.roomW / 2} y={plan.roomH / 2 + 4} fontSize={11} fill={colors.textMuted}
               textAnchor="middle">
@@ -249,6 +358,28 @@ export function FloorPlanPreview({
           ) : null}
         </G>
       </Svg>
+      {scanParts.length > 0 ? (
+        <View style={styles.legend}>
+          {existing.length > 0 ? (
+            <View style={styles.legendItem}>
+              <View style={[styles.swatch, { backgroundColor: hexToRgba(EXISTING_COLOR, 0.35), borderColor: EXISTING_COLOR }]} />
+              <AppText variant="caption" color="textMuted">Your furniture</AppText>
+            </View>
+          ) : null}
+          {doors.length > 0 ? (
+            <View style={styles.legendItem}>
+              <View style={[styles.doorSwatch, { borderColor: wallColor }]} />
+              <AppText variant="caption" color="textMuted">Door</AppText>
+            </View>
+          ) : null}
+          {windows.length > 0 ? (
+            <View style={styles.legendItem}>
+              <View style={[styles.windowSwatch, { backgroundColor: WINDOW_COLOR }]} />
+              <AppText variant="caption" color="textMuted">Window</AppText>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -257,5 +388,36 @@ const styles = StyleSheet.create({
   container: {
     width: '100%',
     alignItems: 'center',
+  },
+  legend: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 12,
+    marginTop: 4,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  swatch: {
+    width: 12,
+    height: 9,
+    borderRadius: 2,
+    borderWidth: 1,
+  },
+  doorSwatch: {
+    width: 10,
+    height: 10,
+    borderTopRightRadius: 10,
+    borderTopWidth: 1,
+    borderRightWidth: 1,
+    borderStyle: 'dashed',
+  },
+  windowSwatch: {
+    width: 14,
+    height: 3,
+    borderRadius: 1,
   },
 });

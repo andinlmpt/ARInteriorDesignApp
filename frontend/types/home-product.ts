@@ -2,6 +2,22 @@
  * Home-tab product card / detail sheet model (admin Products catalog).
  */
 
+/**
+ * The store that sells a product ("Where to buy"). The backend only sends https links (or an
+ * empty string), and the phone number as digits.
+ */
+export interface ProductStore {
+  id: string;
+  name: string;
+  city?: string;
+  logoUrl?: string;
+  website?: string;
+  facebook?: string;
+  instagram?: string;
+  phone?: string;
+  email?: string;
+}
+
 export interface HomeProduct {
   id: string;
   name: string;
@@ -24,6 +40,8 @@ export interface HomeProduct {
   /** Suitable room types (Bedroom, Living Room, …). */
   rooms?: string[];
   roomTypes?: string[];
+  /** Where to buy it; missing for products not linked to a store. */
+  store?: ProductStore;
 }
 
 export type HomeProductCategoryFilter = 'all' | 'chair' | 'sofa' | 'beds' | 'other';

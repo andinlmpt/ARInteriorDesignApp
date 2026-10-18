@@ -199,8 +199,8 @@ public class MainMenuController : MonoBehaviour
         logoRt.sizeDelta = new Vector2(logoSize, logoSize);
         logoRt.anchoredPosition = anchoredPos;
 
-        // New PNG logo with black backdrop punched to transparent — no square/mask border.
-        var logoSprite = LoadMaharlikaLogoTransparent();
+        // VisionSpace logo (transparent PNG); any stray black backdrop is punched out too.
+        var logoSprite = LoadBrandLogoTransparent();
         if (logoSprite != null)
         {
             logoImg.sprite = logoSprite;
@@ -213,13 +213,13 @@ public class MainMenuController : MonoBehaviour
         }
     }
 
-    static Sprite LoadMaharlikaLogoTransparent()
+    static Sprite LoadBrandLogoTransparent()
     {
-        var tex = Resources.Load<Texture2D>("UIIcons/maharlika-logo");
+        var tex = Resources.Load<Texture2D>("UIIcons/visionspace-logo");
         if (tex == null)
         {
             // Unity may import as Sprite-only; pull pixels from the sprite texture.
-            var sprite = Resources.Load<Sprite>("UIIcons/maharlika-logo");
+            var sprite = Resources.Load<Sprite>("UIIcons/visionspace-logo");
             if (sprite == null) return null;
             tex = sprite.texture;
         }

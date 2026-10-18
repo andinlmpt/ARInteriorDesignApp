@@ -46,6 +46,7 @@ public static class SpatialMappingRegressionChecks
         Run();
         AutoWallGeometryChecks.Run();
         AutoOpeningChecks.Run();
+        ScanUxChecks.RunFromMenu();
         AutoOpeningChecks.RunDetectorOnTestPhotos();
         RnUnityExport.ExportAndroid();
     }

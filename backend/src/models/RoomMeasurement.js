@@ -41,6 +41,8 @@ const obstacleSchema = new mongoose.Schema(
   {
     id: { type: String, trim: true, default: '' },
     type: { type: String, trim: true, default: 'other' },
+    /** What the detector saw ("Coffee table", "Television"); empty when added by hand. */
+    label: { type: String, trim: true, default: '' },
     center: vec3Schema,
     size: vec3Schema,
     yaw: { type: Number, default: 0 },

@@ -377,7 +377,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
 
             var dir = Path.Combine(Application.persistentDataPath, "ARPhotos");
             Directory.CreateDirectory(dir);
-            var fileName = $"Maharlika_AR_{System.DateTime.Now:yyyy-MM-dd_HHmmss}.png";
+            var fileName = $"VisionSpace_AR_{System.DateTime.Now:yyyy-MM-dd_HHmmss}.png";
             var path = Path.Combine(dir, fileName);
             var pngBytes = shot.EncodeToPNG();
             File.WriteAllBytes(path, pngBytes);
@@ -412,7 +412,7 @@ public class ARDesignFurnitureCatalogUI : MonoBehaviour
         new NativeShare()
             .AddFile(absolutePath, "image/png")
             .SetSubject("AR photo")
-            .SetText($"Maharlika Furniture — AR capture")
+            .SetText($"VisionSpace — AR capture")
             .SetCallback((result, shareTarget) =>
                 Debug.Log($"[ARDesignFurnitureCatalogUI] Share result={result} target={shareTarget}"))
             .Share();

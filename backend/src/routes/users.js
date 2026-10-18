@@ -8,6 +8,7 @@ import {
   verifyPassword,
   createUser
 } from '../data/hardcodedUsers.js';
+import { normalizeProfilePicture, ProfilePictureError } from '../services/profilePicture.js';
 
 const router = express.Router();
 
@@ -336,6 +337,21 @@ router.put('/:id', authenticate, async (req, res, next) => {
         error: 'Validation error',
         message: 'Password must be at least 6 characters',
       });
+    }
+
+    // Phone photos are several MB: a small square copy goes to storage, the user keeps its link.
+    if (updates.profilePicture !== undefined) {
+      try {
+        updates.profilePicture = await normalizeProfilePicture(updates.profilePicture, { userId });
+      } catch (error) {
+        if (error instanceof ProfilePictureError) {
+          return res.status(error.status).json({
+            error: error.status === 400 ? 'Invalid photo' : 'Photo not saved',
+            message: error.message,
+          });
+        }
+        throw error;
+      }
     }
 
     // Use MongoDB if connected

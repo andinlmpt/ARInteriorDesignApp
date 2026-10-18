@@ -17,6 +17,7 @@ const UPLOAD_ROOT = join(__dirname, '..', '..', 'uploads');
 const GLB_DIR = join(UPLOAD_ROOT, 'glb');
 const THUMB_DIR = join(UPLOAD_ROOT, 'thumbnails');
 const AVATAR_DIR = join(UPLOAD_ROOT, 'avatars');
+const PROFILE_PICTURE_DIR = join(UPLOAD_ROOT, 'profile-pictures');
 
 const ALLOWED_GLB = ['.glb', '.gltf'];
 const ALLOWED_IMAGE = ['.png', '.jpg', '.jpeg', '.webp'];
@@ -32,7 +33,7 @@ function getPublicBaseUrl() {
 }
 
 async function ensureDirs() {
-  for (const dir of [UPLOAD_ROOT, GLB_DIR, THUMB_DIR, AVATAR_DIR]) {
+  for (const dir of [UPLOAD_ROOT, GLB_DIR, THUMB_DIR, AVATAR_DIR, PROFILE_PICTURE_DIR]) {
     if (!existsSync(dir)) {
       await mkdir(dir, { recursive: true });
     }
@@ -103,7 +104,13 @@ async function uploadToCloudinaryIfConfigured(buffer, { subdir, filename, conten
 async function saveLocally(buffer, subdir, filename) {
   await ensureDirs();
   const dir =
-    subdir === 'glb' ? GLB_DIR : subdir === 'avatars' ? AVATAR_DIR : THUMB_DIR;
+    subdir === 'glb'
+      ? GLB_DIR
+      : subdir === 'avatars'
+        ? AVATAR_DIR
+        : subdir === 'profile-pictures'
+          ? PROFILE_PICTURE_DIR
+          : THUMB_DIR;
   const filePath = join(dir, filename);
   await writeFile(filePath, buffer);
   const base = getPublicBaseUrl();
@@ -181,6 +188,35 @@ export async function uploadAvatar(file) {
 
   const url = await saveLocally(file.buffer, 'avatars', safeName);
   return { url, filename: safeName, storage: 'local' };
+}
+
+/**
+ * A user's profile photo (already shrunk to a small JPEG). Cloudinary keeps one file per user —
+ * a new photo replaces it and its link changes version; GCS and local copies get a new name.
+ */
+export async function uploadProfilePicture(buffer, userId) {
+  if (!buffer?.length) {
+    throw new Error('No profile picture provided');
+  }
+
+  const id = sanitizeFilename(String(userId || 'user'));
+  const cloudUrl = await uploadToCloudinaryIfConfigured(buffer, {
+    subdir: 'profile-pictures',
+    filename: `${id}.jpg`,
+    contentType: 'image/jpeg',
+  });
+  if (cloudUrl) {
+    return { url: cloudUrl, storage: 'cloudinary' };
+  }
+
+  const fileName = `${id}-${Date.now()}.jpg`;
+  const gcsUrl = await uploadToGcsIfConfigured(buffer, `profile-pictures/${fileName}`, 'image/jpeg');
+  if (gcsUrl) {
+    return { url: gcsUrl, storage: 'gcs' };
+  }
+
+  const url = await saveLocally(buffer, 'profile-pictures', fileName);
+  return { url, storage: 'local' };
 }
 
 export { UPLOAD_ROOT, getPublicBaseUrl };

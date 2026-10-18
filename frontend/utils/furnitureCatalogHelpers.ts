@@ -119,6 +119,9 @@ export function remoteItemToHomeProduct(item: RemoteFurnitureItem): HomeProduct 
       const q = Number(item.quantity);
       return Number.isFinite(q) ? q : undefined;
     })(),
+    store: item.store?.name
+      ? { ...item.store, logoUrl: item.store.logoUrl ? resolveMediaUrl(item.store.logoUrl) : undefined }
+      : undefined,
   };
 }
 

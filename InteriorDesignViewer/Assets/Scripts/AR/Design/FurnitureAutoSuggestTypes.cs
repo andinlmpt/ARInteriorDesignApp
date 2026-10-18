@@ -7,6 +7,8 @@ public struct FurnitureAutoSuggestion
 {
     public string id;
     public string type;
+    /// <summary>What the detector saw ("Coffee table", "Television"); <see cref="type"/> is the coarser planner type.</summary>
+    public string label;
     public Vector3 center;
     public Vector3 size;
     /// <summary>Degrees around Y, same convention as RoomObstaclePayload.yaw.</summary>

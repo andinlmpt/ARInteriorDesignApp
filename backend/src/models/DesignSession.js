@@ -35,6 +35,11 @@ const DesignSessionSchema = new mongoose.Schema({
     default: [],
   },
   detectedObstacles: [{ type: String }],
+  /** What the scan found, room-local, for drawing beside the layouts: existing furniture, doors, windows. */
+  scannedRoom: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null,
+  },
   preferences: {
     roomType: { type: String, required: true },
     style: { type: String, required: true },

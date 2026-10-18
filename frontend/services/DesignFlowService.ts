@@ -10,6 +10,7 @@ import type {
   DesignPreferencesInput,
   DesignProposalV2,
   SavedFinalDesignResponse,
+  ScannedRoom,
 } from '@/types/design-flow';
 import type { FurnitureLibraryItem } from '@/types/ar-view';
 import type { ApplyLayoutRequest, SpawnFurnitureRequest } from '@/types/unity-bridge';
@@ -32,6 +33,7 @@ interface GenerateDesignResponse extends GenerativeDesignOutput {
   measurementId?: string;
   projectId?: string;
   roomDimensions?: { width: number; height: number; depth: number };
+  scannedRoom?: ScannedRoom | null;
   preferences?: DesignPreferencesInput;
   finalLayout?: CustomizedDesignLayout | null;
   finalizedAt?: number;
@@ -140,6 +142,7 @@ export class DesignFlowService {
             height: response.roomDimensions.height || room.height,
           }
         : room,
+      scannedRoom: response.scannedRoom ?? null,
       preferences,
       proposals,
     };
@@ -193,6 +196,7 @@ export class DesignFlowService {
       measurementId: remote.measurementId,
       projectId: remote.projectId,
       room,
+      scannedRoom: remote.scannedRoom ?? null,
       preferences,
       proposals: (remote.proposals || []).map((proposal) =>
         toProposalV2(proposal, preferences.budgetPhp),

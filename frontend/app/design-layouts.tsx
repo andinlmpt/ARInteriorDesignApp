@@ -178,6 +178,7 @@ export default function DesignLayoutsScreen() {
                   widthM={result.room.width}
                   lengthM={result.room.length}
                   items={proposal.items}
+                  scannedRoom={result.scannedRoom}
                   maxHeight={240}
                 />
 

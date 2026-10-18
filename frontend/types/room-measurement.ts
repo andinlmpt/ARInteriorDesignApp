@@ -41,6 +41,8 @@ export interface RoomOpening {
 export interface RoomObstacle {
   id: string;
   type: string;
+  /** What the detector saw, e.g. "Coffee table"; empty when added by hand. */
+  label?: string;
   center: UnityVec3;
   /** Metres: x = width, y = height, z = depth. */
   size: UnityVec3;

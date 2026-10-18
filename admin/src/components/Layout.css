@@ -32,6 +32,12 @@
   flex-shrink: 0;
 }
 
+.brand-logo--mark {
+  /* The VisionSpace mark is square with corner brackets: no round crop. */
+  border-radius: 0;
+  object-fit: contain;
+}
+
 .brand-copy {
   display: flex;
   flex-direction: column;

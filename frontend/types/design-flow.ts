@@ -132,6 +132,38 @@ export interface SavedFinalDesignResponse {
   finalizedAt?: number;
 }
 
+/** Where a door or window sits on a wall, in the planner's room-local frame (metres). */
+export interface ScannedOpening {
+  id: string;
+  x1: number;
+  z1: number;
+  x2: number;
+  z2: number;
+}
+
+/** Furniture the scan found in the room; layouts are planned around it and never move it. */
+export interface ScannedFurniture {
+  id: string;
+  type: string;
+  /** What the detector saw, e.g. "Coffee table"; empty when added by hand. */
+  label: string;
+  role: string;
+  /** "your sofa" */
+  name: string;
+  width: number;
+  length: number;
+  height: number;
+  /** Min corner of the footprint; rotation is the way the planner takes it to face. */
+  position: { x: number; y: number; z: number; rotation: number };
+}
+
+/** What the scan found, as the layouts took it into account. */
+export interface ScannedRoom {
+  existingFurniture: ScannedFurniture[];
+  doors: ScannedOpening[];
+  windows: ScannedOpening[];
+}
+
 export interface DesignFlowGenerationResult {
   sessionId?: string;
   measurementId?: string;
@@ -141,6 +173,8 @@ export interface DesignFlowGenerationResult {
     length: number;
     height: number;
   };
+  /** Missing for sessions generated before scans were drawn with the layouts. */
+  scannedRoom?: ScannedRoom | null;
   preferences: DesignPreferencesInput;
   proposals: DesignProposalV2[];
 }

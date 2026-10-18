@@ -4,6 +4,7 @@
 
 import User from '../models/User.js';
 import { uploadAvatar } from '../services/uploadService.js';
+import { normalizeProfilePicture, ProfilePictureError } from '../services/profilePicture.js';
 
 const toProfile = (doc) => ({
   id: doc._id.toString(),
@@ -41,7 +42,16 @@ const accountController = {
         dbUser.avatar = String(req.body.avatar || '').trim();
       }
       if (req.body.profilePicture !== undefined) {
-        dbUser.profilePicture = req.body.profilePicture || null;
+        try {
+          dbUser.profilePicture = await normalizeProfilePicture(req.body.profilePicture, {
+            userId: dbUser._id.toString(),
+          });
+        } catch (error) {
+          if (error instanceof ProfilePictureError) {
+            return res.status(error.status).json({ success: false, error: error.message });
+          }
+          throw error;
+        }
       }
 
       await dbUser.save();

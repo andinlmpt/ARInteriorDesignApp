@@ -1,9 +1,10 @@
 /**
- * Maharlika Furniture brand assets and copy.
+ * App brand: VisionSpace (logo and name). Maharlika Furniture and Home Furnishing is the
+ * furniture company behind the app: `fullName` and `contact` are theirs (About Us, Help).
  */
 
 export const BRAND = {
-  name: 'Maharlika Furniture',
+  name: 'VisionSpace',
   fullName: 'Maharlika Furniture and Home Furnishing',
   tagline: 'Your vision, Our craft',
   legacyAppName: 'AR Interior Design',
@@ -21,4 +22,5 @@ export const BRAND = {
   },
 } as const;
 
-export const BRAND_LOGO = require('@/assets/images/maharlika-logo.png');
+/** VisionSpace cube mark (square); screens show `BRAND.name` beside or under it. */
+export const BRAND_LOGO = require('@/assets/images/visionspace-mark.png');

@@ -14,7 +14,9 @@ using UnityEngine.XR.ARSubsystems;
 ///            walls meet is a corner. A wall end with no corner gets an orange marker, and
 ///            holding the aim there (or tapping) places the corner by hand.
 /// Start/Finish, taps, Undo and Rescan keep working the whole time, and the whole thing can be
-/// switched off (remembered per device). Each scan's numbers — corners found vs. placed by hand,
+/// switched off (remembered per device). Nothing sets itself while ARCore isn't tracking well
+/// (the points would land in the wrong place) or while the HUD pauses it. Walls found so far are
+/// drawn as see-through panels. Each scan's numbers — corners found vs. placed by hand,
 /// time per step — go to logcat ("[AutoScanStats]") and persistentDataPath/auto-scan-stats.jsonl.
 /// </summary>
 [DefaultExecutionOrder(-120)]
@@ -29,14 +31,25 @@ public class ARAutoRoomScan : MonoBehaviour
         Closed,
     }
 
+    /// <summary>Something the user should hear about (the HUD shows a short note and buzzes).</summary>
+    public enum Note
+    {
+        CornerFound,
+        CornerAdded,
+        CornerRemoved,
+        OutlineComplete,
+        /// <summary>A tap while tracking was lost: it would have landed in the wrong place.</summary>
+        TapIgnored,
+    }
+
     const string EnabledPrefKey = "arAutoScanEnabled";
     const string StatsFileName = "auto-scan-stats.jsonl";
 
     [Header("Holding still")]
     [SerializeField] private float floorHoldSeconds = 0.8f;
     [SerializeField] private float floorHoldRadius = 0.05f;
+    [Tooltip("Seconds the live height must stay put (see ScanHeightFilter) before it locks itself.")]
     [SerializeField] private float heightHoldSeconds = 1.2f;
-    [SerializeField] private float heightHoldTolerance = 0.03f;
     [Tooltip("The height only locks itself above this (lower readings are furniture or mid-wall).")]
     [SerializeField] private float minAutoHeight = 1.8f;
     [Tooltip("Camera forward.y needed before the height locks itself (looking up).")]
@@ -67,6 +80,8 @@ public class ARAutoRoomScan : MonoBehaviour
 
     [Header("Look")]
     [SerializeField] private Color wallColor = new(0.45f, 0.78f, 1f, 0.95f);
+    [Tooltip("See-through fill for each wall found so far (floor to the measured height).")]
+    [SerializeField] private Color wallPanelColor = new(0.45f, 0.78f, 1f, 0.12f);
     [SerializeField] private Color targetColor = new(1f, 0.55f, 0.15f, 1f);
 
     sealed class TrackedCorner
@@ -135,12 +150,21 @@ public class ARAutoRoomScan : MonoBehaviour
     readonly List<Vector2> extraPoints = new();
     readonly List<Vector3> lastPushed = new();
     readonly List<LineRenderer> wallLines = new();
+    readonly List<MeshFilter> wallPanels = new();
+    readonly List<Note> pendingNotes = new();
     List<AutoWallGeometry.Wall> walls = new();
     List<AutoWallGeometry.OpenEnd> openEnds = new();
     bool[] innerWalls = Array.Empty<bool>();
 
+    readonly ScanFloorAim.Settings aimSettings = ScanFloorAim.Settings.Default;
+    readonly List<AutoWallGeometry.WallPiece> aimPieces = new();
+    readonly List<Vector2> aimCorners = new();
+    List<AutoWallGeometry.Wall> aimWalls = new();
+    float nextAimRefreshAt;
+
     Transform root;
     Material wallMaterial;
+    Material wallPanelMaterial;
     Material targetMaterial;
     LineRenderer targetRing;
     LineRenderer targetPole;
@@ -154,13 +178,16 @@ public class ARAutoRoomScan : MonoBehaviour
     float nextPushAt;
     int lastWallCount;
     int lastCornerCount;
+    bool wasComplete;
+    bool holdPaused;
+    /// <summary>Last time anything was paused: a hold only counts from then on.</summary>
+    float pausedAt = float.NegativeInfinity;
     Vector2 centerSum;
     int centerSamples;
 
     bool dwellRunning;
     float dwellStartedAt;
     Vector3 dwellAnchor;
-    float dwellValue;
 
     AutoScanStats stats;
     float sessionStartedAt;
@@ -189,7 +216,25 @@ public class ARAutoRoomScan : MonoBehaviour
     public bool NeedsWallHelp =>
         CurrentStep == Step.Walls && !OutlineLooksComplete && Time.unscaledTime - lastProgressAt >= stuckHelpSeconds;
 
+    /// <summary>ARCore is fully tracking (not starting up, relocalising or short of light or detail).</summary>
+    public static bool IsTrackingWell =>
+        ARSession.state == ARSessionState.SessionTracking && ARSession.notTrackingReason == NotTrackingReason.None;
+
+    /// <summary>Nothing sets itself right now: tracking isn't good, or the HUD paused it (help card open).</summary>
+    public bool IsPaused => holdPaused || !IsTrackingWell;
+
+    /// <summary>Walls found so far (floor-plan lines). Use <see cref="IsRoomWall"/> to skip furniture fronts and slivers.</summary>
+    public IReadOnlyList<AutoWallGeometry.Wall> Walls => walls;
+
+    /// <summary>Wall ends still missing their corner.</summary>
+    public IReadOnlyList<AutoWallGeometry.OpenEnd> OpenEnds => openEnds;
+
+    public bool IsRoomWall(int index) =>
+        index >= 0 && index < walls.Count && index < innerWalls.Length
+        && !innerWalls[index] && walls[index].Length >= settings.minCornerWallLength;
+
     public event Action Changed;
+    public event Action<Note> Noted;
 
     public static ARAutoRoomScan EnsureOn(GameObject host)
     {
@@ -209,6 +254,13 @@ public class ARAutoRoomScan : MonoBehaviour
         root = new GameObject("AutoRoomScan").transform;
         root.SetParent(transform, false);
         wallMaterial = ARLineMaterialUtil.Create(wallColor);
+        wallPanelMaterial = ARLineMaterialUtil.CreateTransparent(wallPanelColor);
+        // Without the blending shader the "see-through" fill would be solid and hide the room.
+        if (wallPanelMaterial != null && wallPanelMaterial.shader != null && wallPanelMaterial.shader.name != "Sprites/Default")
+        {
+            Destroy(wallPanelMaterial);
+            wallPanelMaterial = null;
+        }
         targetMaterial = ARLineMaterialUtil.Create(targetColor);
         targetRing = CreateLine("TargetRing", 0.025f, targetMaterial, true);
         targetPole = CreateLine("TargetPole", 0.02f, targetMaterial, false);
@@ -218,18 +270,26 @@ public class ARAutoRoomScan : MonoBehaviour
     {
         if (builder != null) builder.AutoTapped += OnTapped;
         if (scanController != null) scanController.PhaseChanged += OnScanPhase;
+        // By hand or automatic, the floor aim reaches into corners.
+        if (indicator != null) indicator.ExtendedAim = ResolveAim;
     }
 
     void OnDisable()
     {
         if (builder != null) builder.AutoTapped -= OnTapped;
         if (scanController != null) scanController.PhaseChanged -= OnScanPhase;
+        if (indicator != null) indicator.ExtendedAim = null;
     }
 
     void OnDestroy()
     {
         FinishSession("left");
+        foreach (var panel in wallPanels)
+        {
+            if (panel != null && panel.sharedMesh != null) Destroy(panel.sharedMesh);
+        }
         if (wallMaterial != null) Destroy(wallMaterial);
+        if (wallPanelMaterial != null) Destroy(wallPanelMaterial);
         if (targetMaterial != null) Destroy(targetMaterial);
         if (root != null) Destroy(root.gameObject);
     }
@@ -262,6 +322,15 @@ public class ARAutoRoomScan : MonoBehaviour
         Changed?.Invoke();
     }
 
+    /// <summary>Stops anything from setting itself (e.g. while the help card covers the camera).</summary>
+    public void SetHoldPaused(bool paused)
+    {
+        if (holdPaused == paused) return;
+        holdPaused = paused;
+        if (paused) ResetDwell();
+        Changed?.Invoke();
+    }
+
     void Update()
     {
         if (builder == null || scanController == null) return;
@@ -269,6 +338,14 @@ public class ARAutoRoomScan : MonoBehaviour
 
         var step = ResolveStep();
         if (step != CurrentStep) EnterStep(step);
+
+        // Lost or shaky tracking moves every point: hold everything as it is until it's back.
+        if (IsPaused && CurrentStep is Step.Floor or Step.Height or Step.Walls)
+        {
+            pausedAt = Time.unscaledTime;
+            ResetDwell();
+            return;
+        }
 
         switch (CurrentStep)
         {
@@ -341,6 +418,53 @@ public class ARAutoRoomScan : MonoBehaviour
         Changed?.Invoke();
     }
 
+    // ── Floor aim ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The scan's floor aim (see <see cref="ScanFloorAim"/>): it follows the floor past the part ARCore
+    /// recognized, stops at the bottom of walls and snaps to corners where two walls meet.
+    /// </summary>
+    bool ResolveAim(Ray ray, float floorY, out Vector3 point, out ARPlacementIndicator.AimKind kind)
+    {
+        RefreshAimGeometry(floorY);
+        var result = ScanFloorAim.Resolve(ray.origin, ray.direction, floorY, aimWalls, aimCorners, aimSettings, out point);
+        kind = result switch
+        {
+            ScanFloorAim.Kind.Corner => ARPlacementIndicator.AimKind.Corner,
+            ScanFloorAim.Kind.WallBase => ARPlacementIndicator.AimKind.WallBase,
+            _ => ARPlacementIndicator.AimKind.Floor,
+        };
+        return result != ScanFloorAim.Kind.None;
+    }
+
+    /// <summary>
+    /// Walls and corners the aim stops at and snaps to. The walk keeps its own up to date; before
+    /// it (the floor point, or scanning by hand) they are worked out here a few times a second.
+    /// </summary>
+    void RefreshAimGeometry(float floorY)
+    {
+        if (Time.unscaledTime < nextAimRefreshAt) return;
+        nextAimRefreshAt = Time.unscaledTime + evaluateInterval;
+        aimCorners.Clear();
+
+        if (CurrentStep == Step.Walls)
+        {
+            aimWalls = walls;
+            foreach (var t in tracked)
+            {
+                if (t.matched || t.confirmed) aimCorners.Add(t.point);
+            }
+            aimCorners.AddRange(placed);
+            return;
+        }
+
+        aimPieces.Clear();
+        CollectPieces(floorY, aimPieces);
+        aimWalls = AutoWallGeometry.MergeWalls(aimPieces, settings);
+        foreach (var corner in AutoWallGeometry.FindCorners(aimWalls, settings))
+            aimCorners.Add(corner.point);
+    }
+
     // ── Floor and height ──────────────────────────────────────────────────────
 
     void TickFloor()
@@ -377,19 +501,14 @@ public class ARAutoRoomScan : MonoBehaviour
         var lookUp = arCamera != null ? arCamera.transform.forward.y : 0f;
         if (!builder.HasLiveHeightPreview || live < minAutoHeight || lookUp < minLookUp)
         {
-            dwellRunning = false;
             DwellProgress = 0f;
             return;
         }
 
-        if (!dwellRunning || Mathf.Abs(live - dwellValue) > heightHoldTolerance)
-        {
-            StartDwell(DwellPoint);
-            dwellValue = live;
-            return;
-        }
-
-        DwellProgress = Mathf.Clamp01((Time.unscaledTime - dwellStartedAt) / heightHoldSeconds);
+        // The builder's reading knows how long it has stayed put (small hand shake allowed).
+        // Time spent paused (help card open, tracking frozen) doesn't count as holding.
+        var held = Mathf.Min(builder.HeightSteadySeconds, Time.unscaledTime - pausedAt);
+        DwellProgress = Mathf.Clamp01(held / heightHoldSeconds);
         if (DwellProgress < 1f) return;
 
         ResetDwell();
@@ -474,6 +593,10 @@ public class ARAutoRoomScan : MonoBehaviour
         PushOutline(outline, floorY);
         DrawWalls(floorY);
 
+        var complete = OutlineLooksComplete && !AutoWallGeometry.CrossesItself(outline);
+        if (complete && !wasComplete) pendingNotes.Add(Note.OutlineComplete);
+        wasComplete = complete;
+
         if (Time.unscaledTime >= nextLogAt)
         {
             nextLogAt = Time.unscaledTime + 2f;
@@ -482,6 +605,17 @@ public class ARAutoRoomScan : MonoBehaviour
         }
 
         Changed?.Invoke();
+        FlushNotes();
+    }
+
+    /// <summary>Notes are sent after the outline and counts are up to date, so the HUD reads the new numbers.</summary>
+    void FlushNotes()
+    {
+        if (pendingNotes.Count == 0) return;
+        var notes = pendingNotes.ToArray();
+        pendingNotes.Clear();
+        foreach (var note in notes)
+            Noted?.Invoke(note);
     }
 
     /// <summary>Each usable vertical plane as a floor-plan line, with the way it faces.</summary>
@@ -572,6 +706,7 @@ public class ARAutoRoomScan : MonoBehaviour
             {
                 best.confirmed = true;
                 history.Add(new HistoryEntry { auto = true, autoId = best.id });
+                pendingNotes.Add(Note.CornerFound);
                 if (stats != null) stats.cornersAutoFound++;
                 lastProgressAt = Time.unscaledTime;
             }
@@ -694,11 +829,18 @@ public class ARAutoRoomScan : MonoBehaviour
     void OnTapped(Vector3 world)
     {
         if (CurrentStep != Step.Walls) return;
+        if (!IsTrackingWell)
+        {
+            Noted?.Invoke(Note.TapIgnored);
+            return;
+        }
+
         var p = XZ(world);
 
         // Tapping a corner removes it (a found one stays away).
         if (TryRemoveCornerNear(p))
         {
+            pendingNotes.Add(Note.CornerRemoved);
             if (stats != null) stats.cornersRemoved++;
             Evaluate();
             return;
@@ -720,6 +862,7 @@ public class ARAutoRoomScan : MonoBehaviour
 
         placed.Add(p);
         history.Add(new HistoryEntry { auto = false, placed = p });
+        pendingNotes.Add(Note.CornerAdded);
         lastProgressAt = Time.unscaledTime;
     }
 
@@ -832,6 +975,7 @@ public class ARAutoRoomScan : MonoBehaviour
                 placed.RemoveAt(index);
             }
 
+            pendingNotes.Add(Note.CornerRemoved);
             if (stats != null) stats.undos++;
             Evaluate();
             return true;
@@ -863,6 +1007,8 @@ public class ARAutoRoomScan : MonoBehaviour
         centerSamples = 0;
         lastWallCount = 0;
         lastCornerCount = 0;
+        wasComplete = false;
+        pendingNotes.Clear();
         WallCount = CornerCount = OpenEndCount = 0;
         HasTarget = false;
         HideVisuals();
@@ -898,25 +1044,76 @@ public class ARAutoRoomScan : MonoBehaviour
 
     // ── Visuals ───────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Each wall found so far: a line along its foot and a see-through panel up to the measured
+    /// height over the part that was seen, so the user can tell which walls are captured.
+    /// </summary>
     void DrawWalls(float floorY)
     {
+        var height = Mathf.Max(0.5f, builder.WallHeight);
         var used = 0;
         for (var i = 0; i < walls.Count; i++)
         {
             if (innerWalls[i] || walls[i].Length < settings.minCornerWallLength) continue;
             if (used >= wallLines.Count)
+            {
                 wallLines.Add(CreateLine($"AutoWall_{used}", 0.02f, wallMaterial, false));
-            var line = wallLines[used++];
+                wallPanels.Add(wallPanelMaterial != null ? CreatePanel($"AutoWallPanel_{used}") : null);
+            }
+
+            var line = wallLines[used];
+            var panel = wallPanels[used];
+            used++;
             var a = walls[i].End(0);
             var b = walls[i].End(1);
+            var footA = new Vector3(a.x, floorY + 0.008f, a.y);
+            var footB = new Vector3(b.x, floorY + 0.008f, b.y);
             line.enabled = true;
             line.positionCount = 2;
-            line.SetPosition(0, new Vector3(a.x, floorY + 0.008f, a.y));
-            line.SetPosition(1, new Vector3(b.x, floorY + 0.008f, b.y));
+            line.SetPosition(0, footA);
+            line.SetPosition(1, footB);
+            if (panel != null) SetPanel(panel, footA, footB, height);
         }
 
         for (var i = used; i < wallLines.Count; i++)
+        {
             wallLines[i].enabled = false;
+            if (wallPanels[i] != null) wallPanels[i].gameObject.SetActive(false);
+        }
+    }
+
+    MeshFilter CreatePanel(string name)
+    {
+        var go = new GameObject(name, typeof(MeshFilter), typeof(MeshRenderer));
+        go.transform.SetParent(root, false);
+        var renderer = go.GetComponent<MeshRenderer>();
+        renderer.sharedMaterial = wallPanelMaterial;
+        renderer.shadowCastingMode = ShadowCastingMode.Off;
+        renderer.receiveShadows = false;
+        var filter = go.GetComponent<MeshFilter>();
+        filter.sharedMesh = new Mesh { name = name };
+        filter.sharedMesh.MarkDynamic();
+        go.SetActive(false);
+        return filter;
+    }
+
+    /// <summary>Upright quad from <paramref name="footA"/> to <paramref name="footB"/> (the shader draws both sides).</summary>
+    static void SetPanel(MeshFilter panel, Vector3 footA, Vector3 footB, float height)
+    {
+        var tr = panel.transform;
+        var up = Vector3.up * height;
+        var mesh = panel.sharedMesh;
+        mesh.Clear();
+        mesh.SetVertices(new[]
+        {
+            tr.InverseTransformPoint(footA),
+            tr.InverseTransformPoint(footB),
+            tr.InverseTransformPoint(footB + up),
+            tr.InverseTransformPoint(footA + up),
+        });
+        mesh.SetTriangles(new[] { 0, 1, 2, 0, 2, 3 }, 0);
+        mesh.RecalculateBounds();
+        panel.gameObject.SetActive(true);
     }
 
     void DrawTarget(float now)
@@ -950,6 +1147,11 @@ public class ARAutoRoomScan : MonoBehaviour
         foreach (var line in wallLines)
         {
             if (line != null) line.enabled = false;
+        }
+
+        foreach (var panel in wallPanels)
+        {
+            if (panel != null) panel.gameObject.SetActive(false);
         }
 
         if (targetRing != null) targetRing.enabled = false;

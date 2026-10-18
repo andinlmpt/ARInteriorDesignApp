@@ -14,8 +14,12 @@ function profilePictureCacheKey(userId: string): string {
 
 const PROFILE_DIR = `${FileSystem.documentDirectory ?? ''}profile-pictures/`;
 
-/** Soft cap for API payloads (~135KB base64 ≈ ~100KB image). */
-const MAX_DATA_URL_CHARS = 180_000;
+/**
+ * Largest photo sent to the API: about 7 MB of image (the server's limit). The server shrinks
+ * it to a small 512 px square before storing it, so ordinary phone photos are fine.
+ */
+const MAX_DATA_URL_CHARS = 9_700_000;
+const TOO_LARGE_MESSAGE = 'Photo is too large. Please choose one under 7 MB.';
 
 function toFileUri(path: string): string {
   if (!path) return path;
@@ -85,9 +89,7 @@ export async function toProfilePictureDataUrl(
 
   if (isDataUrl(source)) {
     if (source.length > MAX_DATA_URL_CHARS) {
-      throw new Error(
-        'Photo is too large. Please choose a smaller image or retake with lower quality.'
-      );
+      throw new Error(TOO_LARGE_MESSAGE);
     }
     return source;
   }
@@ -104,9 +106,7 @@ export async function toProfilePictureDataUrl(
   const dataUrl = `data:${mimeType};base64,${base64}`;
 
   if (dataUrl.length > MAX_DATA_URL_CHARS) {
-    throw new Error(
-      'Photo is too large. Please choose a smaller image or retake with lower quality.'
-    );
+    throw new Error(TOO_LARGE_MESSAGE);
   }
 
   return dataUrl;

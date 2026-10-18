@@ -279,6 +279,51 @@ public static class ARDesignUiUtil
         image.pixelsPerUnitMultiplier = 1f;
     }
 
+    /// <summary>White tick mark (drawn, since the built-in font may not have a ✓ glyph).</summary>
+    public static Sprite CheckSprite(int size = 64)
+    {
+        size = Mathf.Clamp(size, 32, 256);
+        var key = $"check_{size}";
+        if (roundedCache.TryGetValue(key, out var cached) && cached != null)
+            return cached;
+
+        var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
+        {
+            wrapMode = TextureWrapMode.Clamp,
+            filterMode = FilterMode.Bilinear,
+            hideFlags = HideFlags.HideAndDontSave,
+        };
+
+        // Two strokes: down to the bottom of the tick, then up to the right.
+        var a = new Vector2(0.18f, 0.52f) * size;
+        var b = new Vector2(0.42f, 0.28f) * size;
+        var c = new Vector2(0.82f, 0.74f) * size;
+        var half = size * 0.075f;
+        var pixels = new Color[size * size];
+        for (var y = 0; y < size; y++)
+        {
+            for (var x = 0; x < size; x++)
+            {
+                var p = new Vector2(x + 0.5f, y + 0.5f);
+                var d = Mathf.Min(DistanceToSegment(p, a, b), DistanceToSegment(p, b, c));
+                pixels[y * size + x] = new Color(1f, 1f, 1f, Mathf.Clamp01(half + 0.5f - d));
+            }
+        }
+
+        tex.SetPixels(pixels);
+        tex.Apply(false, true);
+        var sprite = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect);
+        roundedCache[key] = sprite;
+        return sprite;
+    }
+
+    static float DistanceToSegment(Vector2 p, Vector2 a, Vector2 b)
+    {
+        var ab = b - a;
+        var t = Mathf.Clamp01(Vector2.Dot(p - a, ab) / Mathf.Max(ab.sqrMagnitude, 1e-6f));
+        return Vector2.Distance(p, a + ab * t);
+    }
+
     static readonly System.Collections.Generic.Dictionary<string, Sprite> roundedCache = new();
     static readonly System.Collections.Generic.Dictionary<int, Sprite> punchedIconCache = new();
 
