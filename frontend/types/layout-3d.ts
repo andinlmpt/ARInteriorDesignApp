@@ -56,6 +56,8 @@ export interface Layout3DFurnitureItem {
     metalness?: number;
     textureUrl?: string;
   };
+  /** The product's 3D model (GLB); the box is shown until it loads, or if it can't. */
+  glbUrl?: string;
 }
 
 // Export option

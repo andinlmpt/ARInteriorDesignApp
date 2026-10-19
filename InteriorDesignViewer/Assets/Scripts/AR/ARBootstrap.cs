@@ -88,6 +88,26 @@ public class ARBootstrap : MonoBehaviour
 #endif
     }
 
+    /// <summary>
+    /// A new room scan: forget the planes ARCore has mapped so far. Unity stays loaded between
+    /// scans, so without this every earlier scan's floor and wall planes stay tracked, the count
+    /// keeps growing and each reopened scan gets slower. The camera feed is kicked the same way as
+    /// on resume, so the reset doesn't leave it black.
+    /// </summary>
+    public void ResetTrackingForNewScan()
+    {
+        if (!isActiveAndEnabled || arSession == null || IsPlannerOrbitActive() || IsRealRoomLayoutActive()) return;
+        StartCoroutine(ResetWhenIdle());
+    }
+
+    IEnumerator ResetWhenIdle()
+    {
+        // A resume/focus restart may be running; the reset must not be skipped because of it.
+        while (starting) yield return null;
+        Debug.Log("[ARBootstrap] New scan — resetting AR tracking (clears earlier planes).");
+        yield return EnsureSessionRunning(resetTracking: true);
+    }
+
     /// <summary>Public entry so ARDesignScene can force a camera recovery.</summary>
     public void ResumeCamera()
     {

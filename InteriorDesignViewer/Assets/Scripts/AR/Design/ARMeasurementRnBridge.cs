@@ -17,6 +17,9 @@ public class ARMeasurementRnBridge : MonoBehaviour
     Coroutine reloadRoutine;
     Coroutine armFurnitureRoutine;
     Coroutine wakePlannerRoutine;
+    /// <summary>A repeat open this soon after a scan started is answered without restarting it.</summary>
+    const float DuplicateOpenSeconds = 3f;
+    float lastScanStartedAt = -100f;
 
     /// <summary>RN design-flow "View in AR" — room shell from saved dimensions, no scan UI.</summary>
     public static string PendingDesignLayoutPayload;
@@ -48,6 +51,8 @@ public class ARMeasurementRnBridge : MonoBehaviour
 
     void Start()
     {
+        // A freshly loaded scene starts its own scan; RN's first open shouldn't restart it.
+        lastScanStartedAt = Time.unscaledTime;
         UnityMessageBridge.SendToApp("unityReady", MeasurementSceneName);
         if (HasPendingDesignLayout)
             StartCoroutine(DesignLayoutAfterSceneLoadRoutine());
@@ -412,9 +417,32 @@ public class ARMeasurementRnBridge : MonoBehaviour
 
     void ScheduleReload()
     {
+        // A repeat "open" right after a fresh start (RN retries, ping races) would restart the
+        // scan — and reset tracking — again for nothing: answer it and keep the scan running.
+        var scan = UnityEngine.Object.FindFirstObjectByType<RoomScanController>();
+        if (reloadRoutine == null && !HasPendingDesignLayout && scan != null
+            && scan.Phase == RoomScanController.ScanPhase.Scanning
+            && Time.unscaledTime - lastScanStartedAt < DuplicateOpenSeconds)
+        {
+            Debug.Log("[ARMeasurementRnBridge] Scan just started — ignoring a repeat open.");
+            UnityMessageBridge.SendToApp("reloadComplete", MeasurementSceneName);
+            return;
+        }
+
         if (reloadRoutine != null)
             StopCoroutine(reloadRoutine);
         reloadRoutine = StartCoroutine(ReloadMeasurementRoutine());
+    }
+
+    /// <summary>
+    /// Unity stays loaded between scans, so a new scan starts clean: ARCore forgets the earlier
+    /// scans' planes, and cached furniture models and unused assets are let go.
+    /// </summary>
+    void FreeEarlierScan()
+    {
+        RuntimeGltfLoader.ReleaseCachedTemplates();
+        UnityEngine.Object.FindFirstObjectByType<ARBootstrap>()?.ResetTrackingForNewScan();
+        Resources.UnloadUnusedAssets();
     }
 
     IEnumerator ReloadMeasurementRoutine()
@@ -438,8 +466,10 @@ public class ARMeasurementRnBridge : MonoBehaviour
             yield break;
         }
 
+        FreeEarlierScan();
         if (scan != null)
             scan.StartRoomScan();
+        lastScanStartedAt = Time.unscaledTime;
 
         ARMainMenuBackButton.SetUiVisible(true);
         // Distinct from cold unityReady so RN does not double-boot open/reload.

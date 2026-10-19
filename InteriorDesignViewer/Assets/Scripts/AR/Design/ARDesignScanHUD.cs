@@ -12,7 +12,9 @@ using UnityEngine.UI;
 ///   • a mini floor plan of what's been mapped (large, with wall lengths, on the review step);
 ///   • short notes with a buzz when something sets itself (floor, height, corner, door, sofa);
 ///   • a first-run "how it works" card, which Help reopens;
-///   • the floor dots and aiming circle for the height step;
+///   • floor dots that turn green once enough floor is found (only then can the floor point be
+///     set), a small aim dot instead of the placement ring while scanning, and the aiming circle
+///     for the height step;
 ///   • a Review panel: ceiling height (+/−), everything found (× removes it), + Add;
 ///   • Skip on the height step (uses the usual ceiling height);
 ///   • Undo, which becomes Back in Review (back to walking, keeping everything found).
@@ -56,6 +58,8 @@ public class ARDesignScanHUD : MonoBehaviour
     static readonly Color MapUser = new(0.10f, 0.45f, 0.95f, 1f);
     static readonly Color MaybeChip = new(1f, 0.93f, 0.85f, 0.97f);
     static readonly Color AutoOrangeInk = new(0.75f, 0.35f, 0.05f, 1f);
+    static readonly Color AimSearching = new(1f, 1f, 1f, 0.75f);
+    static readonly Color AimOnFloor = new(0.35f, 0.92f, 0.55f, 1f);
 
     const int RetryCornerCount = 4;
     const float RescanConfirmSeconds = 3f;
@@ -150,6 +154,9 @@ public class ARDesignScanHUD : MonoBehaviour
     Image dwellRing;
     RectTransform targetArrow;
     RectTransform aimMark;
+    RectTransform floorAimDot;
+    Image floorAimDotImage;
+    bool floorReadyShown;
 
     RectTransform mapPanel;
     ARScanMiniMap map;
@@ -311,6 +318,8 @@ public class ARDesignScanHUD : MonoBehaviour
     {
         if (active) TurnLightOff();
         if (floorGrid != null) floorGrid.Visible = false;
+        if (active && placementIndicator != null) placementIndicator.HideVisuals = false;
+        if (active && cornerBuilder != null) cornerBuilder.FloorPointAllowed = true;
         if (scanController == null) return;
         scanController.StatusChanged -= OnStatus;
         scanController.PhaseChanged -= OnPhase;
@@ -373,6 +382,7 @@ public class ARDesignScanHUD : MonoBehaviour
         LayoutRail();
         RefreshAimMark();
         RefreshFloorGrid();
+        RefreshFloorAimDot();
         if (Time.unscaledTime >= nextMapRefreshAt)
         {
             nextMapRefreshAt = Time.unscaledTime + MapRefreshInterval;
@@ -404,6 +414,10 @@ public class ARDesignScanHUD : MonoBehaviour
     void ApplyReticle(RoomScanController.ScanPhase phase)
     {
         if (placementIndicator == null) return;
+
+        // The placement ring (and its measuring icon) read as "measuring" before anything was set,
+        // so the scan aims with its own small dot instead; the ring is back for placing furniture.
+        placementIndicator.HideVisuals = IsScanning(phase);
 
         if (phase != RoomScanController.ScanPhase.Scanning
             && phase != RoomScanController.ScanPhase.ReadyToConfirm)
@@ -535,7 +549,7 @@ public class ARDesignScanHUD : MonoBehaviour
             startButton.gameObject.SetActive(showStart);
             if (showStart)
             {
-                var canStart = cornerBuilder.CanStartHeight;
+                var canStart = cornerBuilder.CanStartHeight && FloorReady;
                 startButton.interactable = canStart;
                 if (startImage != null)
                     startImage.color = canStart ? MeasurePurple : MeasurePurpleDisabled;
@@ -581,7 +595,7 @@ public class ARDesignScanHUD : MonoBehaviour
                 {
                     if (inHeightPhase)
                     {
-                        confirmLabel.text = cornerBuilder.HasHeightBase ? "Finish" : "Set base";
+                        confirmLabel.text = cornerBuilder.HasHeightBase ? "Set height" : "Set base";
                         confirmLabel.color = canConfirmHeight ? Color.white : InkMuted;
                     }
                     else
@@ -591,7 +605,7 @@ public class ARDesignScanHUD : MonoBehaviour
                         else if (canCloseWidth)
                             confirmLabel.text = spatialMapping != null ? "Finish" : "Close room";
                         else if (outlineCrosses)
-                            confirmLabel.text = "Walls cross";
+                            confirmLabel.text = "Fix a corner";
                         else if (autoWalls)
                             confirmLabel.text = "Finding corners…";
                         else
@@ -611,6 +625,10 @@ public class ARDesignScanHUD : MonoBehaviour
     }
 
     const string FindFloorHint = "Move the phone slowly until dots appear on the floor";
+    const string FloorGrowingHint = "Keep moving slowly until the dots turn green";
+
+    /// <summary>The floor step's detail line until the floor is found (dots green).</summary>
+    string FloorSearchHint() => floorGrid != null && floorGrid.HasFloor ? FloorGrowingHint : FindFloorHint;
 
     /// <summary>Setting the floor point, and the aim has snapped onto a room corner.</summary>
     bool AimOnCorner =>
@@ -715,9 +733,16 @@ public class ARDesignScanHUD : MonoBehaviour
             // By hand, the floor point is also the first corner of the outline.
             if (!cornerBuilder.HasHeightBase)
             {
-                title = "Point at a corner of the room, on the floor";
+                if (!FloorReady)
+                {
+                    title = "Point at the floor";
+                    subtitle = FloorSearchHint();
+                    return;
+                }
+
+                title = "Floor found · aim the dot at a floor corner";
                 var onFloor = placementIndicator != null && placementIndicator.IsLockedOnFloor;
-                subtitle = !onFloor ? FindFloorHint
+                subtitle = !onFloor ? "Aim the camera down at the floor"
                     : AimOnCorner ? (measurementOnlyMode ? "Corner found · tap Start" : "Corner found · tap to set it")
                     : measurementOnlyMode ? "Tap Start · this is your first corner"
                     : "Tap to set it · this is your first corner";
@@ -726,7 +751,7 @@ public class ARDesignScanHUD : MonoBehaviour
 
             title = "Aim up that corner to the ceiling";
             var cm = LiveHeightCm();
-            subtitle = cm >= 180 ? $"{cm} cm · tap Finish when the line reaches the ceiling"
+            subtitle = cm >= 180 ? $"{cm} cm · tap Set height when the line reaches the ceiling"
                 : cm > 0 ? $"{cm} cm · aim higher, or tap Skip"
                 : "Tilt the phone up slowly, or tap Skip";
             return;
@@ -735,7 +760,7 @@ public class ARDesignScanHUD : MonoBehaviour
         title = "Tap each corner of the room on the floor";
         if (cornerBuilder.IsOutlineSelfIntersecting)
         {
-            title = "The walls cross";
+            title = "A corner is in the wrong place";
             subtitle = "Tap Undo to move the last corner";
         }
         else if (cornerBuilder.CanConfirm)
@@ -780,12 +805,19 @@ public class ARDesignScanHUD : MonoBehaviour
         {
             case ARAutoRoomScan.Step.Floor:
             {
-                title = "Point at the floor next to a wall";
+                if (!FloorReady)
+                {
+                    title = "Point at the floor";
+                    subtitle = FloorSearchHint();
+                    return true;
+                }
+
+                title = "Floor found · aim the dot next to a wall";
                 var onFloor = placementIndicator != null && placementIndicator.IsLockedOnFloor;
-                subtitle = holding ? (AimOnCorner ? "Corner found · hold still…" : "Hold still…")
+                subtitle = holding ? (AimOnCorner ? "Corner found · hold still…" : "Hold still… the height is measured from here")
                     : AimOnCorner ? "Corner found · hold still to set it"
                     : onFloor ? "Hold still to set it · or tap Start"
-                    : FindFloorHint;
+                    : "Aim the camera down at the floor";
                 return true;
             }
 
@@ -796,7 +828,7 @@ public class ARDesignScanHUD : MonoBehaviour
                 if (holding)
                     subtitle = $"{cm} cm · hold still…";
                 else if (cm >= 180)
-                    subtitle = $"{cm} cm · hold still to set it, or tap Finish";
+                    subtitle = $"{cm} cm · hold still to set it, or tap Set height";
                 else if (cm > 0)
                     subtitle = $"{cm} cm · aim higher, or tap Skip";
                 else
@@ -807,8 +839,8 @@ public class ARDesignScanHUD : MonoBehaviour
             case ARAutoRoomScan.Step.Walls:
                 if (cornerBuilder.IsOutlineSelfIntersecting)
                 {
-                    title = "The outline crosses itself";
-                    subtitle = "Tap a wrong corner to remove it, or tap Undo";
+                    title = "A corner is in the wrong place";
+                    subtitle = "Tap it to remove it, or tap Undo";
                 }
                 else if (autoScan.OutlineLooksComplete)
                 {
@@ -822,7 +854,7 @@ public class ARDesignScanHUD : MonoBehaviour
                     else if (autoScan.WallCount == 0)
                         subtitle = "Point the phone at a wall about 2 m away";
                     else if (autoScan.HasTarget)
-                        subtitle = $"{FoundSummary(autoScan.CornerCount)} · follow the orange marker";
+                        subtitle = "Walk to the orange marker and hold the dot on it";
                     else
                         subtitle = $"{FoundSummary(autoScan.CornerCount)} · keep going along the walls";
                 }
@@ -1143,7 +1175,7 @@ public class ARDesignScanHUD : MonoBehaviour
                 ShowToast("corner-removed", "Corner removed", ARScanHaptics.Kind.Tick);
                 break;
             case ARAutoRoomScan.Note.OutlineComplete:
-                ShowToast("outline", "All corners found · tap Close room", ARScanHaptics.Kind.Success);
+                ShowToast("outline", "Outline complete · now look around the room", ARScanHaptics.Kind.Success);
                 break;
             case ARAutoRoomScan.Note.TapIgnored:
                 ShowToast("tracking", "Hold on · finding your place again", ARScanHaptics.Kind.Warning);
@@ -1333,8 +1365,8 @@ public class ARDesignScanHUD : MonoBehaviour
             ? new[]
             {
                 auto
-                    ? "Point at the floor next to a wall and hold still. Then aim the circle where the wall meets the ceiling, or tap Skip."
-                    : "Point at a floor corner of the room and tap Start. Aim up that corner to the ceiling and tap Finish, or tap Skip.",
+                    ? "Move slowly until the floor dots turn green. Aim the dot next to a wall and hold still. Then aim the circle where the wall meets the ceiling, or tap Skip."
+                    : "Move slowly until the floor dots turn green. Aim the dot at a floor corner and tap Start. Aim up that corner to the ceiling and tap Set height, or tap Skip.",
                 auto
                     ? "Walk slowly along the walls. Corners, doors, windows and furniture appear by themselves. When the outline is complete, look across the room once and tap Finish."
                     : "Walk to each corner and tap it on the floor. Doors, windows and furniture are found as you go. Tap Finish when every corner is marked.",
@@ -1342,7 +1374,7 @@ public class ARDesignScanHUD : MonoBehaviour
             }
             : new[]
             {
-                "Point at a floor corner of the room and tap. Aim up that corner to the ceiling and tap Finish.",
+                "Point at a floor corner of the room and tap. Aim up that corner to the ceiling and tap Set height.",
                 "Tap each floor corner of the room in turn, then tap Close room.",
             };
 
@@ -1384,11 +1416,44 @@ public class ARDesignScanHUD : MonoBehaviour
         aimMark.anchoredPosition = Vector2.zero;
     }
 
-    /// <summary>Floor dots only while the floor point is still to be set.</summary>
+    /// <summary>
+    /// Floor dots only while the floor point is still to be set. They turn green once enough floor
+    /// is found ("Floor found"); only then can the floor point be set.
+    /// </summary>
     void RefreshFloorGrid()
     {
         if (floorGrid == null) return;
         floorGrid.Visible = Scanning && !HelpVisible && cornerBuilder.IsInHeightPhase && !cornerBuilder.HasHeightBase;
+        if (autoScan != null) autoScan.FloorReady = floorGrid.IsReady;
+        cornerBuilder.FloorPointAllowed = floorGrid.IsReady;
+
+        if (!floorGrid.Visible) return;
+        if (floorGrid.IsReady && !floorReadyShown)
+            ShowToast("floor-ready", "Floor found · now set your floor point", ARScanHaptics.Kind.Success);
+        floorReadyShown = floorGrid.IsReady;
+    }
+
+    /// <summary>The floor point can be set: enough floor found (or no dots to wait for).</summary>
+    bool FloorReady => floorGrid == null || floorGrid.IsReady;
+
+    /// <summary>
+    /// A small dot where the scan aims on the floor (the placement ring is hidden while scanning):
+    /// white while searching, green on the floor. Not while aiming at the ceiling.
+    /// </summary>
+    void RefreshFloorAimDot()
+    {
+        if (floorAimDot == null) return;
+        var show = Scanning && !HelpVisible && !InReview && placementIndicator != null && placementIndicator.IsTracking
+                   && !cornerBuilder.IsLoopClosed && !(cornerBuilder.IsInHeightPhase && cornerBuilder.HasHeightBase);
+        var local = Vector2.zero;
+        if (show) show = TryScreenToCanvas(placementIndicator.AimScreenPoint, out local);
+        if (floorAimDot.gameObject.activeSelf != show)
+            floorAimDot.gameObject.SetActive(show);
+        if (!show) return;
+
+        floorAimDot.anchoredPosition = local;
+        var onFloor = placementIndicator.IsLockedOnFloor && (FloorReady || !cornerBuilder.IsInHeightPhase);
+        floorAimDotImage.color = onFloor ? AimOnFloor : AimSearching;
     }
 
     /// <summary>Hold-still ring around what is about to set itself, and an arrow to a missing corner off screen.</summary>
@@ -1800,7 +1865,13 @@ public class ARDesignScanHUD : MonoBehaviour
         if (coachChip == null || guidance == null) return;
 
         guidance.FloorAim = FloorAimForCurrentStep();
-        var trackingIssue = guidance.isActiveAndEnabled && guidance.Current != ARScanGuidance.Issue.None;
+        var issue = guidance.isActiveAndEnabled ? guidance.Current : ARScanGuidance.Issue.None;
+        // While the floor point is to be set, the card already says to point at the floor and move
+        // slowly: the tip would only repeat it.
+        if (cornerBuilder.IsInHeightPhase && !cornerBuilder.HasHeightBase
+            && issue is ARScanGuidance.Issue.NoFloor or ARScanGuidance.Issue.Starting)
+            issue = ARScanGuidance.Issue.None;
+        var trackingIssue = issue != ARScanGuidance.Issue.None;
         string helpTitle = null;
         string helpDetail = null;
         var autoHelp = !trackingIssue && TryGetAutoHelp(out helpTitle, out helpDetail);
@@ -1828,7 +1899,7 @@ public class ARDesignScanHUD : MonoBehaviour
             var skipCm = Mathf.RoundToInt(cornerBuilder.DefaultWallHeight * 100f);
             title = "Ceiling hard to measure?";
             detail = useCm >= 180 && Mathf.Abs(useCm - skipCm) > 2
-                ? $"Tap Finish to use {useCm} cm, or Skip to use {skipCm} cm"
+                ? $"Tap Set height to use {useCm} cm, or Skip to use {skipCm} cm"
                 : $"Tap Skip to use {skipCm} cm · you can change it in Review";
             return true;
         }
@@ -1836,7 +1907,7 @@ public class ARDesignScanHUD : MonoBehaviour
         if (autoScan.NeedsWallHelp)
         {
             title = "Wall not showing up?";
-            detail = "Plain walls are hard to detect. Tap its corner on the floor instead";
+            detail = "Plain walls are hard to detect. Tap the floor corner where this wall ends";
             return true;
         }
 
@@ -1970,7 +2041,7 @@ public class ARDesignScanHUD : MonoBehaviour
 
     void OnStartClicked()
     {
-        if (cornerBuilder == null || !cornerBuilder.TryConfirmHeightBaseFromIndicator())
+        if (cornerBuilder == null || !FloorReady || !cornerBuilder.TryConfirmHeightBaseFromIndicator())
             return;
 
         RefreshCornerUi();
@@ -2283,6 +2354,22 @@ public class ARDesignScanHUD : MonoBehaviour
         dotRt.anchorMin = dotRt.anchorMax = dotRt.pivot = new Vector2(0.5f, 0.5f);
         dotRt.sizeDelta = new Vector2(12f, 12f);
         aimMark.gameObject.SetActive(false);
+
+        // The floor aim while scanning: a dot with a dark edge so it reads on white floors too.
+        var edge = ARDesignUiUtil.CreateImage(root, new Color(0f, 0f, 0f, 0.35f));
+        ARDesignUiUtil.ApplyCircle(edge);
+        edge.raycastTarget = false;
+        floorAimDot = edge.rectTransform;
+        floorAimDot.anchorMin = floorAimDot.anchorMax = floorAimDot.pivot = new Vector2(0.5f, 0.5f);
+        floorAimDot.sizeDelta = new Vector2(34f, 34f);
+
+        floorAimDotImage = ARDesignUiUtil.CreateImage(floorAimDot, AimSearching);
+        ARDesignUiUtil.ApplyCircle(floorAimDotImage);
+        floorAimDotImage.raycastTarget = false;
+        var innerRt = floorAimDotImage.rectTransform;
+        innerRt.anchorMin = innerRt.anchorMax = innerRt.pivot = new Vector2(0.5f, 0.5f);
+        innerRt.sizeDelta = new Vector2(24f, 24f);
+        floorAimDot.gameObject.SetActive(false);
     }
 
     void BuildMap(Transform root)
@@ -2359,7 +2446,7 @@ public class ARDesignScanHUD : MonoBehaviour
         startButton.gameObject.SetActive(false);
 
         finishButton = CreateCenterActionButton(
-            root, "Finish", new Vector2(0.5f, 0f), new Vector2(0f, 160f), 156f, MeasurePurple,
+            root, "Set\nheight", new Vector2(0.5f, 0f), new Vector2(0f, 160f), 156f, MeasurePurple,
             OnFinishClicked, out finishImage, out finishLabel);
         finishButton.gameObject.SetActive(false);
 

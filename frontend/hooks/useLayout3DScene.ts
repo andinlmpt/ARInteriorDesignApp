@@ -21,7 +21,16 @@ import {
   highlightFurniture,
   resetFurnitureMaterial,
 } from '@/utils/layout3dSceneBuilder';
+import { clearLayoutModelCache, hideBoxUnderModel, loadPlacedModel } from '@/utils/layout3dModels';
 import { CONTROL_DEFAULTS } from '@/config/layout3d.config';
+
+/** Real models loaded so far for the pieces that have one. */
+export interface ModelLoadProgress {
+  loaded: number;
+  total: number;
+  /** All tried; some may have stayed boxes. */
+  done: boolean;
+}
 
 interface UseLayout3DSceneProps {
   roomDimensions: RoomDimensions;
@@ -46,6 +55,7 @@ interface UseLayout3DSceneReturn {
   isRendering: boolean;
   furnitureMeshes: Map<string, THREE.Mesh>;
   selectedFurnitureId: string | null;
+  modelProgress: ModelLoadProgress;
   // Functions
   onGLContextCreate: (gl: ExpoWebGLRenderingContext) => Promise<void>;
   handleFurnitureTap: (locationX: number, locationY: number, viewWidth?: number, viewHeight?: number) => void;
@@ -88,6 +98,37 @@ export function useLayout3DScene({
   const [isRendering, setIsRendering] = useState(false);
   const [furnitureMeshes, setFurnitureMeshes] = useState<Map<string, THREE.Mesh>>(new Map());
   const [selectedFurnitureId, setSelectedFurnitureId] = useState<string | null>(null);
+  const [modelProgress, setModelProgress] = useState<ModelLoadProgress>({ loaded: 0, total: 0, done: true });
+  /** Bumped on every rebuild, so models from an earlier build aren't added to the new one. */
+  const buildTokenRef = useRef(0);
+
+  /**
+   * Swaps each box for the product's real model as it loads, one at a time (each is a few MB).
+   * The box stays as the tap target, invisible; a piece without a model keeps its box.
+   */
+  const loadRealModels = useCallback(
+    async (items: Layout3DFurnitureItem[], meshMap: Map<string, THREE.Mesh>, token: number) => {
+      const withModel = items.filter((item) => item.glbUrl && meshMap.has(item.id));
+      setModelProgress({ loaded: 0, total: withModel.length, done: withModel.length === 0 });
+      let loaded = 0;
+      for (const item of withModel) {
+        const placed = await loadPlacedModel(item);
+        const group = furnitureGroupRef.current;
+        if (token !== buildTokenRef.current || !group) return;
+        const box = meshMap.get(item.id);
+        if (placed && box) {
+          group.add(placed);
+          hideBoxUnderModel(box);
+          loaded += 1;
+          setModelProgress({ loaded, total: withModel.length, done: false });
+        }
+      }
+      if (token === buildTokenRef.current) {
+        setModelProgress({ loaded, total: withModel.length, done: true });
+      }
+    },
+    []
+  );
 
   // Animation loop
   const animate = useCallback(() => {
@@ -156,14 +197,17 @@ export function useLayout3DScene({
 
     const furnitureGroup = furnitureGroupRef.current;
     const newFurnitureMeshes = new Map<string, THREE.Mesh>();
+    const token = ++buildTokenRef.current;
     if (furnitureGroup) {
       furnitureGroup.clear();
       if (currentDesign?.layout?.furniture) {
-        const { meshMap } = createFurnitureGroup(currentDesign.layout.furniture);
+        const items = currentDesign.layout.furniture as Layout3DFurnitureItem[];
+        const { meshMap } = createFurnitureGroup(items);
         meshMap.forEach((mesh, id) => {
           furnitureGroup.add(mesh);
           newFurnitureMeshes.set(id, mesh);
         });
+        void loadRealModels(items, meshMap, token);
       }
     }
     setFurnitureMeshes(newFurnitureMeshes);
@@ -175,7 +219,7 @@ export function useLayout3DScene({
         measurementGroupRef.current.add(createMeasurementLines(dims));
       }
     }
-  }, []);
+  }, [loadRealModels]);
 
   // Initialize 3D scene
   const onGLContextCreate = useCallback(
@@ -339,6 +383,8 @@ export function useLayout3DScene({
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      buildTokenRef.current += 1; // models still loading are dropped
+      clearLayoutModelCache();
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
@@ -358,6 +404,7 @@ export function useLayout3DScene({
     isRendering,
     furnitureMeshes,
     selectedFurnitureId,
+    modelProgress,
     onGLContextCreate,
     handleFurnitureTap,
     selectFurniture,

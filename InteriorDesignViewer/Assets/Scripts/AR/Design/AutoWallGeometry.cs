@@ -529,3 +529,213 @@ public static class AutoWallGeometry
     /// <summary>Moves a point onto the wall line, keeping it where it is along the wall.</summary>
     public static Vector2 SnapToLine(Wall wall, Vector2 p) => wall.PointAt(wall.Project(p));
 }
+
+/// <summary>
+/// Keeps the walls steady while ARCore keeps re-estimating its planes. The walls found from the
+/// planes each round are matched to the walls already known: a match settles the known wall
+/// gently toward it and can only make it longer, a new wall shows after it has been seen twice,
+/// and a known wall stays when its plane drops out for a moment (a well-seen wall stays until
+/// the scan starts over). Without this the blue lines jump, shrink and vanish as planes merge.
+/// No AR types, so it is checked without a phone.
+/// </summary>
+public sealed class AutoWallTracker
+{
+    public struct Settings
+    {
+        public float matchAngleDegrees;
+        /// <summary>Furthest a found wall's line may be from a known wall's line to match it (m).</summary>
+        public float matchOffset;
+        /// <summary>Furthest gap along the line between a found wall and a known wall that still matches (m).</summary>
+        public float matchGap;
+        /// <summary>How far a known wall moves toward a match each round (0–1).</summary>
+        public float smoothing;
+        /// <summary>Rounds a new wall must be seen in before it shows.</summary>
+        public int confirmAfter;
+        /// <summary>A wall that never showed goes after this many rounds unseen.</summary>
+        public int dropUnconfirmedAfter;
+        /// <summary>A wall seen at least this often stays until the scan starts over.</summary>
+        public int keepAfterSeen;
+        /// <summary>A shown wall seen less often goes after this many rounds unseen.</summary>
+        public int dropWeakAfter;
+
+        public static Settings Default => new()
+        {
+            matchAngleDegrees = 12f,
+            matchOffset = 0.2f,
+            matchGap = 0.6f,
+            smoothing = 0.3f,
+            confirmAfter = 2,
+            dropUnconfirmedAfter = 2,
+            keepAfterSeen = 8,
+            dropWeakAfter = 40,
+        };
+    }
+
+    sealed class Known
+    {
+        public AutoWallGeometry.Wall wall;
+        public int seen;
+        public int misses;
+        public bool confirmed;
+        public bool matched;
+    }
+
+    readonly Settings settings;
+    readonly List<Known> known = new();
+
+    public AutoWallTracker(Settings settings) => this.settings = settings;
+
+    /// <summary>Walls known so far, shown or not.</summary>
+    public int KnownCount => known.Count;
+
+    public void Clear() => known.Clear();
+
+    /// <summary>Takes this round's walls and returns the steady walls to use (copies).</summary>
+    public List<AutoWallGeometry.Wall> Update(IReadOnlyList<AutoWallGeometry.Wall> found)
+    {
+        foreach (var k in known) k.matched = false;
+
+        var order = new List<AutoWallGeometry.Wall>(found);
+        order.Sort((x, y) => y.weight.CompareTo(x.weight));
+        foreach (var wall in order)
+        {
+            if (wall == null || wall.Length <= 1e-4f) continue;
+            var match = FindMatch(wall);
+            if (match == null)
+            {
+                known.Add(new Known { wall = Copy(wall), seen = 1, matched = true });
+                continue;
+            }
+
+            // A plane split into two walls this round still counts as one sighting.
+            if (!match.matched)
+            {
+                match.seen++;
+                match.misses = 0;
+                match.matched = true;
+            }
+
+            Settle(match.wall, wall);
+            if (match.seen >= settings.confirmAfter) match.confirmed = true;
+        }
+
+        for (var i = known.Count - 1; i >= 0; i--)
+        {
+            var k = known[i];
+            if (k.matched) continue;
+            k.misses++;
+            var drop = k.confirmed
+                ? k.seen < settings.keepAfterSeen && k.misses > settings.dropWeakAfter
+                : k.misses > settings.dropUnconfirmedAfter;
+            if (drop) known.RemoveAt(i);
+        }
+
+        MergeKnown();
+
+        var result = new List<AutoWallGeometry.Wall>();
+        foreach (var k in known)
+        {
+            if (k.confirmed) result.Add(Copy(k.wall));
+        }
+
+        return result;
+    }
+
+    Known FindMatch(AutoWallGeometry.Wall wall)
+    {
+        Known best = null;
+        var bestOffset = float.MaxValue;
+        foreach (var k in known)
+        {
+            if (!Matches(k.wall, wall, out var offset)) continue;
+            // Prefer walls already shown, then the closest line.
+            var score = offset - (k.confirmed ? 1f : 0f);
+            if (score < bestOffset)
+            {
+                bestOffset = score;
+                best = k;
+            }
+        }
+
+        return best;
+    }
+
+    bool Matches(AutoWallGeometry.Wall a, AutoWallGeometry.Wall b, out float offset)
+    {
+        offset = float.MaxValue;
+        var cosTol = Mathf.Cos(settings.matchAngleDegrees * Mathf.Deg2Rad);
+        if (Vector2.Dot(a.normal, b.normal) < cosTol) return false;
+        var mid = (b.End(0) + b.End(1)) * 0.5f;
+        offset = a.DistanceToLine(mid);
+        if (offset > settings.matchOffset) return false;
+        var t0 = a.Project(b.End(0));
+        var t1 = a.Project(b.End(1));
+        return Mathf.Max(t0, t1) >= a.tMin - settings.matchGap && Mathf.Min(t0, t1) <= a.tMax + settings.matchGap;
+    }
+
+    /// <summary>Moves <paramref name="target"/> part way toward <paramref name="seen"/>; its seen part only grows.</summary>
+    void Settle(AutoWallGeometry.Wall target, AutoWallGeometry.Wall seen)
+    {
+        var ends = new[] { target.End(0), target.End(1), seen.End(0), seen.End(1) };
+
+        var normal = Vector2.Lerp(target.normal, seen.normal, settings.smoothing);
+        if (normal.sqrMagnitude < 1e-6f) normal = target.normal;
+        normal.Normalize();
+        var offsetNow = Vector2.Dot(target.origin, target.normal);
+        var offsetSeen = Vector2.Dot((seen.End(0) + seen.End(1)) * 0.5f, seen.normal);
+        var offset = Mathf.Lerp(offsetNow, offsetSeen, settings.smoothing);
+
+        var mid = (target.End(0) + target.End(1)) * 0.5f;
+        target.normal = normal;
+        target.dir = new Vector2(-normal.y, normal.x);
+        target.origin = mid - normal * (Vector2.Dot(mid, normal) - offset);
+
+        var tMin = float.MaxValue;
+        var tMax = float.MinValue;
+        foreach (var p in ends)
+        {
+            var t = target.Project(p);
+            tMin = Mathf.Min(tMin, t);
+            tMax = Mathf.Max(tMax, t);
+        }
+
+        target.tMin = tMin;
+        target.tMax = tMax;
+        target.weight = Mathf.Max(target.weight, seen.weight);
+        target.pieceCount = Mathf.Max(target.pieceCount, seen.pieceCount);
+    }
+
+    /// <summary>Two known walls that have drifted onto the same line become one.</summary>
+    void MergeKnown()
+    {
+        for (var i = 0; i < known.Count; i++)
+        {
+            for (var j = known.Count - 1; j > i; j--)
+            {
+                var a = known[i];
+                var b = known[j];
+                if (!Matches(a.wall, b.wall, out _)) continue;
+                var keep = a.seen >= b.seen ? a : b;
+                var gone = keep == a ? b : a;
+                Settle(keep.wall, gone.wall);
+                keep.seen = Mathf.Max(a.seen, b.seen);
+                keep.confirmed |= gone.confirmed;
+                keep.matched |= gone.matched;
+                keep.misses = Mathf.Min(a.misses, b.misses);
+                known[i] = keep;
+                known.RemoveAt(j);
+            }
+        }
+    }
+
+    static AutoWallGeometry.Wall Copy(AutoWallGeometry.Wall w) => new()
+    {
+        origin = w.origin,
+        dir = w.dir,
+        normal = w.normal,
+        tMin = w.tMin,
+        tMax = w.tMax,
+        weight = w.weight,
+        pieceCount = w.pieceCount,
+    };
+}

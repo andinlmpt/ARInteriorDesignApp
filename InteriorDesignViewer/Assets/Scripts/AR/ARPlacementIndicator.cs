@@ -92,11 +92,27 @@ public class ARPlacementIndicator : MonoBehaviour
     /// <summary>True when the reticle is visible (tracking and at least partially hitting a surface).</summary>
     public bool     IsVisible       { get; private set; }
 
+    /// <summary>
+    /// Draws nothing (no reticle, no overlay icon) while still aiming and tracking the floor, so
+    /// the room scan can use the aim with its own, simpler marker. Off again for furniture placement.
+    /// </summary>
+    public bool HideVisuals
+    {
+        get => hideVisuals;
+        set
+        {
+            if (hideVisuals == value) return;
+            hideVisuals = value;
+            SetVisible(IsVisible, IsLockedOnFloor);
+        }
+    }
+
     // ── Private ───────────────────────────────────────────────────────────────
     private readonly List<ARRaycastHit> hits     = new();
     private ARPlaneManager              planeManager;
     private bool                        isTracking;
     private bool                        visualSuppressed;
+    private bool                        hideVisuals;
     private bool                        overlayLocked;
     private Vector3                     overlayLockedPosition;
     private Quaternion                  overlayLockedRotation = Quaternion.identity;
@@ -428,7 +444,7 @@ public class ARPlacementIndicator : MonoBehaviour
         if (overlayIconObject != null)
             overlayIconObject.SetActive(false);
         if (indicatorRenderer != null)
-            indicatorRenderer.enabled = IsVisible;
+            indicatorRenderer.enabled = IsVisible && !hideVisuals;
     }
 
     void OnDestroy()
@@ -457,7 +473,7 @@ public class ARPlacementIndicator : MonoBehaviour
         overlayIconRenderer.sharedMaterial = overlayIconMaterial;
         overlayIconRenderer.shadowCastingMode = ShadowCastingMode.Off;
         overlayIconRenderer.receiveShadows = false;
-        overlayIconObject.SetActive(true);
+        overlayIconObject.SetActive(!hideVisuals);
     }
 
     void ApplyOverlayWorldSize()
@@ -501,9 +517,10 @@ public class ARPlacementIndicator : MonoBehaviour
     {
         IsVisible = visible;
 
+        var drawn = visible && !hideVisuals;
         if (overlayIconObject != null)
         {
-            var showOverlay = visible && (visualSuppressed || overlayLocked);
+            var showOverlay = drawn && (visualSuppressed || overlayLocked);
             overlayIconObject.SetActive(showOverlay);
             if (showOverlay)
                 ApplyOverlayWorldSize();
@@ -511,7 +528,7 @@ public class ARPlacementIndicator : MonoBehaviour
 
         if (indicatorRenderer == null) return;
 
-        indicatorRenderer.enabled = visible && !visualSuppressed && !overlayLocked;
+        indicatorRenderer.enabled = drawn && !visualSuppressed && !overlayLocked;
 
         if (!visible) return;
 
