@@ -355,10 +355,16 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
             placementIndicator.StopTracking(clearOverlay: true);
     }
 
+    /// <summary>
+    /// False while the scan is still finding the floor (its dots aren't green yet): taps don't set
+    /// the floor point then. The scan HUD sets it; true everywhere else.
+    /// </summary>
+    public bool FloorPointAllowed { get; set; } = true;
+
     /// <summary>Places the height base at the current floor reticle (Start button).</summary>
     public bool TryConfirmHeightBaseFromIndicator()
     {
-        if (!IsInHeightPhase || heightBaseSet) return false;
+        if (!IsInHeightPhase || heightBaseSet || !FloorPointAllowed) return false;
         if (placementIndicator == null || !placementIndicator.IsLockedOnFloor) return false;
 
         TrySetHeightBase(placementIndicator.CurrentPose.position);
@@ -599,6 +605,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
 
     void TrySetHeightBaseFromTap(Vector2 screenPoint)
     {
+        if (!FloorPointAllowed) return;
         if (placementIndicator != null && placementIndicator.IsLockedOnFloor)
         {
             TrySetHeightBase(placementIndicator.CurrentPose.position);

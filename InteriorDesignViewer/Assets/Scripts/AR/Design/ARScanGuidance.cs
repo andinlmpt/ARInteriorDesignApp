@@ -60,7 +60,7 @@ public class ARScanGuidance : MonoBehaviour
         Issue.TooDark => "Turn on a light, open the curtains, or tap Light at the top right",
         Issue.TooFast => "Slow, steady sweeps keep the measurements accurate",
         Issue.LowDetail => "Plain walls are hard to track. Include edges, furniture or the floor",
-        Issue.NoFloor => "Aim the camera down until the marker is on the floor",
+        Issue.NoFloor => "Aim the camera down at the floor",
         Issue.CameraBusy => "Turn off the phone's flashlight, then use Light here instead",
         _ => string.Empty,
     };

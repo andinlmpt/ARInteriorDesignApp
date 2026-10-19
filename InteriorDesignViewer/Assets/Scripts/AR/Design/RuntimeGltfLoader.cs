@@ -41,10 +41,27 @@ public class RuntimeGltfLoader : MonoBehaviour
     static readonly Dictionary<string, GameObject> templateCache = new(StringComparer.Ordinal);
     static readonly LinkedList<string> cacheOrder = new();
     static Transform persistentCacheRoot;
+
+    /// <summary>
+    /// Drops every cached furniture model (they only speed up placing the same piece again).
+    /// Called when a new room scan starts, so the scan and its detector get that memory back.
+    /// </summary>
+    public static void ReleaseCachedTemplates()
+    {
+        foreach (var template in templateCache.Values)
+        {
+            if (template != null) Destroy(template);
+        }
+
+        templateCache.Clear();
+        cacheOrder.Clear();
+    }
 #else
     public static bool IsSupported => false;
 
     public static void PurgeUnreadyTemplates() { }
+
+    public static void ReleaseCachedTemplates() { }
 #endif
 
 #if GLTFAST_PRESENT

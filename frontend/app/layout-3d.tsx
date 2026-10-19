@@ -280,6 +280,11 @@ export default function Layout3DScreen() {
                     : `${design.layout?.furniture?.length || 0} items · tap one to identify`}
                 </Text>
               )}
+              {!scene.modelProgress.done && scene.modelProgress.total > 0 && (
+                <Text style={[styles.infoText, { color: colors.textMuted }]}>
+                  {`Loading 3D models ${scene.modelProgress.loaded}/${scene.modelProgress.total}…`}
+                </Text>
+              )}
             </View>
           </View>
         </View>

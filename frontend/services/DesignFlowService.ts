@@ -60,6 +60,7 @@ function toLayoutItem(item: DesignLayoutItem | NonNullable<DesignProposal['layou
     rotationY: furniture.position?.rotation ?? 0,
     color: furniture.properties?.color,
     pricePhp: furniture.properties?.price ?? furniture.estimatedPrice?.low ?? 0,
+    glbUrl: furniture.glbUrl || undefined,
   };
 }
 
@@ -249,6 +250,7 @@ export function designProposalToLegacy(
           },
           zIndex: index + 1,
           color: designItemColor(index, item.category, item.role),
+          glbUrl: item.glbUrl,
         };
       }),
       metadata: {

@@ -10,7 +10,8 @@ using UnityEngine.XR.ARSubsystems;
 /// Automatic room scan on top of the manual corner scan (<see cref="ARDesignCornerRoomBuilder"/>):
 ///   Floor  — the base point sets itself when the reticle holds still on the floor.
 ///   Height — locks itself when the live height holds steady while aiming up.
-///   Walls  — ARCore's vertical planes become walls (<see cref="AutoWallGeometry"/>); where two
+///   Walls  — ARCore's vertical planes become walls (<see cref="AutoWallGeometry"/>), kept steady
+///            between rounds by <see cref="AutoWallTracker"/>; where two
 ///            walls meet is a corner. A wall end with no corner gets an orange marker, and
 ///            holding the aim there (or tapping) places the corner by hand.
 /// Start/Finish, taps, Undo and Rescan keep working the whole time, and the whole thing can be
@@ -153,6 +154,7 @@ public class ARAutoRoomScan : MonoBehaviour
     readonly List<MeshFilter> wallPanels = new();
     readonly List<Note> pendingNotes = new();
     List<AutoWallGeometry.Wall> walls = new();
+    readonly AutoWallTracker wallTracker = new(AutoWallTracker.Settings.Default);
     List<AutoWallGeometry.OpenEnd> openEnds = new();
     bool[] innerWalls = Array.Empty<bool>();
 
@@ -196,6 +198,11 @@ public class ARAutoRoomScan : MonoBehaviour
     float closedAt;
 
     public bool Enabled { get; private set; }
+    /// <summary>
+    /// Enough floor has been found (the scan's floor dots have turned green). The floor point only
+    /// sets itself after that, so it isn't taken from the first small patch ARCore sees.
+    /// </summary>
+    public bool FloorReady { get; set; } = true;
     public Step CurrentStep { get; private set; } = Step.Off;
     public bool IsActive => Enabled && CurrentStep != Step.Off && CurrentStep != Step.Closed;
     /// <summary>0–1 while holding still for something to set itself.</summary>
@@ -469,7 +476,7 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void TickFloor()
     {
-        if (indicator == null || !indicator.IsLockedOnFloor)
+        if (indicator == null || !indicator.IsLockedOnFloor || !FloorReady)
         {
             ResetDwell();
             return;
@@ -548,7 +555,8 @@ public class ARAutoRoomScan : MonoBehaviour
         var floorY = builder.FloorY;
         pieces.Clear();
         var vertical = CollectPieces(floorY, pieces);
-        walls = AutoWallGeometry.MergeWalls(pieces, settings);
+        // Steady walls: planes come and go between rounds, the walls shown shouldn't.
+        walls = wallTracker.Update(AutoWallGeometry.MergeWalls(pieces, settings));
         innerWalls = AutoWallGeometry.FindInnerWalls(walls, settings);
         TrackCorners(AutoWallGeometry.FindCorners(walls, settings));
 
@@ -1002,6 +1010,7 @@ public class ARAutoRoomScan : MonoBehaviour
         lastPushed.Clear();
         openEnds.Clear();
         walls.Clear();
+        wallTracker.Clear();
         innerWalls = Array.Empty<bool>();
         centerSum = Vector2.zero;
         centerSamples = 0;

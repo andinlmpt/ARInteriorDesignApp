@@ -85,6 +85,8 @@ export interface FurnitureItem {
   zIndex: number; // for layering
   /** Display color for 3D/floor-plan rendering (hex). */
   color?: string;
+  /** The product's 3D model (GLB), drawn in the 3D layout instead of a box when it loads. */
+  glbUrl?: string;
 }
 
 // Generated Layout

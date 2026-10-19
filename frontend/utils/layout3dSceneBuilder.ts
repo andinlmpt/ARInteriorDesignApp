@@ -350,6 +350,11 @@ export function createMeasurementLines(dimensions: RoomDimensions): THREE.Group 
  * Highlight a furniture mesh
  */
 export function highlightFurniture(mesh: THREE.Mesh, highlight: boolean): void {
+  if (highlight && mesh.userData.hasModel) {
+    // The real model is drawn: outline its box instead of covering it.
+    mesh.material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+    return;
+  }
   if (highlight) {
     mesh.material = new THREE.MeshStandardMaterial({
       color: 0x00ff00,
@@ -363,6 +368,10 @@ export function highlightFurniture(mesh: THREE.Mesh, highlight: boolean): void {
  * Reset furniture material to original
  */
 export function resetFurnitureMaterial(mesh: THREE.Mesh, category?: string): void {
+  if (mesh.userData.hasModel) {
+    mesh.material = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+    return;
+  }
   const color = typeof mesh.userData.baseColor === 'number'
     ? mesh.userData.baseColor
     : FURNITURE_COLORS[category?.toLowerCase() || 'default'] || FURNITURE_COLORS.default;

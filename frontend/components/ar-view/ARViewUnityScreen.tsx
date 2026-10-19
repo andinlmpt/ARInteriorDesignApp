@@ -150,6 +150,8 @@ export function ARViewUnityScreen() {
   const measureNeedsReloadRef = useRef(true);
   /** Ensures open/reload runs once per AR screen mount (ping must not re-boot). */
   const modeBootedRef = useRef(false);
+  /** Unity answered this session's open (unityReady or reloadComplete): stop the boot retries. */
+  const sessionBootAckRef = useRef(false);
   /** User closed the catalog sheet — ignore duplicate Unity unlock events that re-open it. */
   const libraryUserDismissedRef = useRef(false);
   const applyLayoutActiveRef = useRef(isApplyLayoutFlow);
@@ -461,6 +463,7 @@ export function ARViewUnityScreen() {
 
     const synced = scene === MEASUREMENT_UNITY_SCENE;
     if (synced) {
+      sessionBootAckRef.current = true;
       markUnityPlayerWarm();
       setUnityReady(true);
       setUnityTimedOut(false);
@@ -551,6 +554,7 @@ export function ARViewUnityScreen() {
     (sceneName?: string) => {
       if (closingRef.current) return;
 
+      sessionBootAckRef.current = true;
       markUnityPlayerWarm();
       setUnityReady(true);
       setUnityTimedOut(false);
@@ -1259,11 +1263,20 @@ export function ARViewUnityScreen() {
     }
     if (measuredFurnitureActiveRef.current) return;
     unityRef.current?.openRoomMeasurement();
+    // Opening restarts the scan in Unity; a reload on top of it (from the ping's unityReady)
+    // would restart it a second time.
+    modeBootedRef.current = true;
+    measureNeedsReloadRef.current = false;
   }, [unityAvailable]);
 
   useEffect(() => {
     if (!mountUnity || !unityAvailable) return;
+    sessionBootAckRef.current = false;
     const runBootAttempt = () => {
+      // The retries are for a cold start, when Unity may not be listening yet. Once it has
+      // answered, each further "open" would restart the scan (and the camera) again — on a warm
+      // reopen that was five restarts in two seconds, and the scan got slower every reopen.
+      if (sessionBootAckRef.current) return;
       bootstrapUnitySceneForSession();
       unityRef.current?.sendToUnity('ping', '');
     };
