@@ -36,6 +36,8 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
 
     Matrix4x4 sourceToWorld = Matrix4x4.identity;
     float sourceYaw;
+    /// <summary>Placed where the room was scanned (same tracking session), not by marked corners.</summary>
+    bool autoPlaced;
 
     GameObject markerA;
     LineRenderer guideLine;
@@ -76,6 +78,19 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
             return;
         }
 
+        // A repeat begin (RN retries) after the layout was placed at the scan: keep it there.
+        if (state == State.Aligned && autoPlaced)
+        {
+            Send();
+            return;
+        }
+
+        // Same tracking session as the scan: the room is still where it was scanned, so put the
+        // layout there. No corner marking, and no chance of matching the wrong wall.
+        if (state == State.Idle && TryPlaceAtScan())
+            return;
+
+        autoPlaced = false;
         state = State.Aligning;
         step = 0;
         measuredM = 0f;
@@ -224,6 +239,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
 
         state = State.Idle;
         step = 0;
+        autoPlaced = false;
         matchedEdge = -1;
         sourceToWorld = Matrix4x4.identity;
         sourceYaw = 0f;
@@ -332,6 +348,44 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
         Debug.Log(
             $"[ARDesignLayoutAlignment] Aligned to plan wall {edge} (plan {planLen:F2} m, " +
             $"measured {measured:F2} m, yaw {yawDelta:F1}°).");
+        return true;
+    }
+
+    bool TryPlaceAtScan()
+    {
+        var poly = scan != null ? scan.FloorPolygon : null;
+        if (poly == null || poly.Count < 3) return false;
+        if (!ScanPlacement.TryGetShellToWorld(poly, out var m, out var yaw)) return false;
+
+        var corners = new Vector3[poly.Count];
+        for (var i = 0; i < poly.Count; i++)
+            corners[i] = m.MultiplyPoint3x4(poly[i]);
+
+        var wallHeight = scan.ConfirmedRoom != null && scan.ConfirmedRoom.hasBounds
+            ? Mathf.Max(0.5f, scan.ConfirmedRoom.bounds.size.y)
+            : 2.5f;
+        if (!scan.ApplyMeasuredRoom(corners, wallHeight)) return false;
+
+        placement?.TransformAllInstances(m, yaw);
+        FindFirstObjectByType<FurnitureLayoutHistory>()?.Clear();
+        sourceToWorld = m;
+        sourceYaw = yaw;
+        matchedEdge = -1;
+        measuredM = 0f;
+        planM = 0f;
+        autoPlaced = true;
+
+        if (layoutMode != null)
+        {
+            layoutMode.HoldRealRoom = true;
+            layoutMode.SetViewMode(ARDesignLayoutModeController.ViewMode.RealRoom);
+        }
+        PreferredView = ARDesignLayoutModeController.ViewMode.RealRoom;
+        if (placement != null) placement.ShareSpacesAcrossViews = true;
+
+        state = State.Aligned;
+        step = 0;
+        Send();
         return true;
     }
 
@@ -485,6 +539,9 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
                 ? "plan"
                 : "real",
             error = error ?? string.Empty,
+            autoPlaced = autoPlaced,
+            canTurn = state == State.Aligned && !autoPlaced && scan != null
+                      && FindOppositeEdge(scan.FloorPolygon, matchedEdge) >= 0,
         };
         UnityMessageBridge.SendToApp("layoutAlignment", JsonUtility.ToJson(payload));
     }

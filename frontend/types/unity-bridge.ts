@@ -154,6 +154,10 @@ export type LayoutAlignmentError = '' | 'noFloor' | 'tooClose' | 'noRoom';
 /** `layoutAlignment` event — lining the design layout up with the real room. */
 export interface LayoutAlignmentPayload {
   state: LayoutAlignmentState;
+  /** Placed where the room was scanned (same AR session), without marking corners. */
+  autoPlaced?: boolean;
+  /** Lined up by hand and the opposite wall fits too: offer to turn the layout around. */
+  canTurn?: boolean;
   /** Corners marked so far while aligning (0 or 1). */
   step: number;
   floorDetected: boolean;

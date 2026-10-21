@@ -179,6 +179,28 @@ describe('optimizer with fixed furniture', () => {
   });
 });
 
+describe('scan frame for AR', () => {
+  it('maps the room-local outline exactly back onto a rotated, offset scan', () => {
+    // A 5 × 3.5 m room scanned at 30° and away from the origin, with one corner off square.
+    const turn = (Math.PI / 180) * 30;
+    const place = (x, z) => ({ x: x * Math.cos(turn) - z * Math.sin(turn) + 7, y: 0, z: x * Math.sin(turn) + z * Math.cos(turn) - 2 });
+    const scan = [place(0, 0), place(5, 0), place(5, 3.5), place(0.2, 3.3)];
+    const room = { width: 5, length: 3.5, height: 2.6 };
+    const features = buildRoomFeatures(room, { floorPolygon: scan });
+    const { outline, frame } = describeRoomFeatures(room, features);
+    expect(outline).toHaveLength(4);
+    // What AR does: world = rotate(local + min, −angle).
+    outline.forEach((p, i) => {
+      const x = p.x + frame.minX;
+      const z = p.z + frame.minZ;
+      const c = Math.cos(-frame.angle);
+      const s = Math.sin(-frame.angle);
+      expect(x * c - z * s).toBeCloseTo(scan[i].x, 2);
+      expect(x * s + z * c).toBeCloseTo(scan[i].z, 2);
+    });
+  });
+});
+
 describe('describeRoomFeatures', () => {
   it('lists existing furniture with the way it faces, and the door on its wall', () => {
     const scan = describeRoomFeatures(ROOM, SOFA_SCAN);

@@ -162,6 +162,10 @@ export interface ScannedRoom {
   existingFurniture: ScannedFurniture[];
   doors: ScannedOpening[];
   windows: ScannedOpening[];
+  /** The room's real shape in the planner frame (metres, min corner at 0,0). */
+  outline?: { x: number; z: number }[] | null;
+  /** Planner frame on the scan: local = rotate(world, angle) − (minX, minZ). */
+  frame?: { angle: number; minX: number; minZ: number } | null;
 }
 
 export interface DesignFlowGenerationResult {

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -79,6 +80,7 @@ public static class MeasuredRoomHandoff
         }
 
         if (payload == null) return;
+        ScanPlacement.SetFrame(payload);
 
         // Prefer explicit polygon when RN still has it.
         if (payload.floorPolygon != null && payload.floorPolygon.Length >= 3)
@@ -200,5 +202,86 @@ public static class MeasuredRoomHandoff
         public ARDesignVec3 boundsMin;
         public ARDesignVec3 boundsMax;
         public ARDesignVec3[] floorPolygon;
+        /// <summary>Design flow: how the planner frame sits on the scan (see <see cref="ScanPlacement"/>).</summary>
+        public bool hasScanFrame;
+        public float frameAngle;
+        public float frameMinX;
+        public float frameMinZ;
+    }
+}
+
+/// <summary>
+/// Puts a generated layout back where its room was scanned, without the user lining it up.
+/// Unity stays loaded through the design flow (scan → preferences → layouts → View in AR) and
+/// ARCore keeps the same world frame unless tracking is reset, so the scanned corners are still
+/// where they were. The planner's frame is the scan turned by <c>frameAngle</c> and shifted by
+/// (<c>frameMinX</c>, <c>frameMinZ</c>); the AR shell is that frame centred on the room. When the
+/// last scan is from the current tracking session and its corners match the shell, the shell
+/// (and every layout piece) maps straight onto the real room. Otherwise the user lines it up.
+/// </summary>
+public static class ScanPlacement
+{
+    /// <summary>A shell corner may be this far from the scanned corner it should land on (m).</summary>
+    public const float MatchTolerance = 0.2f;
+
+    static Vector3[] lastScanCorners;
+    static int lastScanEpoch = -1;
+
+    static bool hasFrame;
+    static float frameAngle;
+    static float frameMinX;
+    static float frameMinZ;
+    static float shellWidth;
+    static float shellDepth;
+
+    /// <summary>A room scan was confirmed from real corners (world space, this tracking session).</summary>
+    public static void RememberScan(IReadOnlyList<Vector3> worldCorners)
+    {
+        if (worldCorners == null || worldCorners.Count < 3) return;
+        lastScanCorners = new Vector3[worldCorners.Count];
+        for (var i = 0; i < worldCorners.Count; i++) lastScanCorners[i] = worldCorners[i];
+        lastScanEpoch = ARBootstrap.TrackingEpoch;
+    }
+
+    /// <summary>The design flow sent the planner frame with the room (or not).</summary>
+    public static void SetFrame(MeasuredRoomHandoff.MeasuredRoomRnPayload payload)
+    {
+        hasFrame = payload != null && payload.hasScanFrame && payload.width > 0.2f && payload.depth > 0.2f;
+        if (!hasFrame) return;
+        frameAngle = payload.frameAngle;
+        frameMinX = payload.frameMinX;
+        frameMinZ = payload.frameMinZ;
+        shellWidth = payload.width;
+        shellDepth = payload.depth;
+    }
+
+    public static void ClearFrame() => hasFrame = false;
+
+    /// <summary>
+    /// The transform from the AR shell (centred planner frame) onto the scanned room, when the
+    /// scan is from this tracking session and its corners match <paramref name="shellCorners"/>.
+    /// </summary>
+    public static bool TryGetShellToWorld(IReadOnlyList<Vector3> shellCorners, out Matrix4x4 shellToWorld, out float yawDegrees)
+    {
+        shellToWorld = Matrix4x4.identity;
+        yawDegrees = 0f;
+        if (!hasFrame || lastScanCorners == null || shellCorners == null) return false;
+        if (lastScanEpoch != ARBootstrap.TrackingEpoch)
+        {
+            Debug.Log("[ScanPlacement] Tracking was reset since the scan — the user lines the layout up.");
+            return false;
+        }
+
+        if (shellCorners.Count != lastScanCorners.Length) return false;
+
+        if (!ScanFrameMath.TryBuild(frameAngle, frameMinX, frameMinZ, shellWidth, shellDepth, lastScanCorners,
+                shellCorners, MatchTolerance, out shellToWorld, out yawDegrees))
+        {
+            Debug.Log("[ScanPlacement] Shell doesn't match the last scan — the user lines the layout up.");
+            return false;
+        }
+
+        Debug.Log($"[ScanPlacement] Layout placed where the room was scanned (yaw {yawDegrees:F1}°).");
+        return true;
     }
 }

@@ -84,6 +84,32 @@ public static class ScanUxChecks
         }, AutoWallGeometry.Settings.Default);
         kind = ScanFloorAim.Resolve(camera, AimAt(-0.5f, 2.5f), 0f, far, null, s, out p);
         Check(kind == ScanFloorAim.Kind.Floor && Near(p.z, 2.5f), "a wall seen far away doesn't stop the aim");
+
+        CeilingAim(s, camera, walls, corners);
+    }
+
+    /// <summary>A floor corner hidden by furniture, placed from the ceiling corner above it.</summary>
+    static void CeilingAim(ScanFloorAim.Settings s, Vector3 camera, List<AutoWallGeometry.Wall> walls, List<Vector2> corners)
+    {
+        const float ceiling = 2.6f;
+        Vector3 UpAt(float x, float z) => new Vector3(x, ceiling, z) - camera;
+
+        var kind = ScanFloorAim.ResolveCeiling(camera, UpAt(0f, 1.5f), 0f, ceiling, null, null, s, out var p, out var top);
+        Check(kind == ScanFloorAim.Kind.Floor && Near(p.x, 0f) && Near(p.z, 1.5f) && Near(p.y, 0f) && Near(top.y, ceiling),
+            "a ceiling spot gives the floor point straight below it");
+        Check(ScanFloorAim.ResolveCeiling(camera, UpAt(0f, 2f) - new Vector3(0f, 3f, 0f), 0f, ceiling, null, null, s, out _, out _)
+              == ScanFloorAim.Kind.None, "aiming down isn't the ceiling");
+        Check(ScanFloorAim.ResolveCeiling(camera, UpAt(0f, 1.5f), 0f, 0f, null, null, s, out _, out _) == ScanFloorAim.Kind.None,
+            "no ceiling without a height");
+
+        // The ceiling corner above the (1, 2) corner, a little off: snaps onto the floor corner.
+        kind = ScanFloorAim.ResolveCeiling(camera, UpAt(1.08f, 2.06f), 0f, ceiling, walls, corners, s, out p, out top);
+        Check(kind == ScanFloorAim.Kind.Corner && Near(p.x, 1f) && Near(p.z, 2f) && Near(p.y, 0f)
+              && Near(top.x, 1f) && Near(top.z, 2f), "ceiling corner snaps onto the floor corner below");
+
+        // Past a wall on the ceiling: stopped at the wall, like on the floor.
+        kind = ScanFloorAim.ResolveCeiling(camera, UpAt(-0.5f, 2.5f), 0f, ceiling, walls, null, s, out p, out _);
+        Check(kind == ScanFloorAim.Kind.WallBase && Near(p.z, 1.99f, 0.005f), $"ceiling aim stops at the wall ({p.x:F3}, {p.z:F3})");
     }
 
     /// <summary>Doors and windows shown during the walk, before the room is closed.</summary>

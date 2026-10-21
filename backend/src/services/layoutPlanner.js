@@ -1190,7 +1190,18 @@ export function describeRoomFeatures(room, features) {
     })),
     doors: f.doorZones.map(opening).filter(Boolean),
     windows: f.windowZones.map(opening).filter(Boolean),
+    // Room shape and scan frame for AR (see buildRoomFeatures); absent without a scanned outline.
+    outline: Array.isArray(features?.outline) && features.outline.length >= 3
+      ? features.outline.map((p) => ({ x: round3(p.x), z: round3(p.z) }))
+      : null,
+    frame: features?.frame && Number.isFinite(features.frame.angle)
+      ? { angle: features.frame.angle, minX: round3(features.frame.minX), minZ: round3(features.frame.minZ) }
+      : null,
   };
+}
+
+function round3(value) {
+  return Math.round(value * 1000) / 1000;
 }
 
 function roundSpan(span) {

@@ -450,6 +450,12 @@ public class LayoutAlignmentPayload
     /// <summary>"idle" | "aligning" | "aligned".</summary>
     public string state;
 
+    /// <summary>Aligned by itself: placed where the room was scanned (same AR session), no corners marked.</summary>
+    public bool autoPlaced;
+
+    /// <summary>Lined up by hand and another plan wall fits the marked one: the layout can be turned 180°.</summary>
+    public bool canTurn;
+
     /// <summary>Corners marked so far while aligning (0 or 1).</summary>
     public int step;
 

@@ -58,9 +58,47 @@ public static class ScanFloorAim
         var t = (floorY - origin.y) / direction.y;
         if (t <= 0f) return Kind.None;
 
-        var hit = origin + direction * t;
+        var kind = Land(origin, origin + direction * t, walls, corners, settings, out var to);
+        if (kind == Kind.None) return Kind.None;
+        point = new Vector3(to.x, floorY, to.y);
+        return kind;
+    }
+
+    /// <summary>
+    /// For a floor corner hidden behind furniture: the aim points up at the ceiling (at
+    /// <paramref name="ceilingY"/>, known once the height is measured) and the spot it meets is
+    /// taken straight down to the floor. Walls stop it and corners pull it in, as on the floor.
+    /// <paramref name="ceilingPoint"/> is that spot on the ceiling (for drawing the drop line).
+    /// </summary>
+    public static Kind ResolveCeiling(Vector3 origin, Vector3 direction, float floorY, float ceilingY,
+        IReadOnlyList<AutoWallGeometry.Wall> walls, IReadOnlyList<Vector2> corners, Settings settings,
+        out Vector3 point, out Vector3 ceilingPoint)
+    {
+        point = default;
+        ceilingPoint = default;
+        if (direction.sqrMagnitude < 1e-8f || ceilingY <= floorY) return Kind.None;
+        direction.Normalize();
+        if (direction.y < settings.minDownward) return Kind.None;
+
+        var t = (ceilingY - origin.y) / direction.y;
+        if (t <= 0f) return Kind.None;
+
+        var kind = Land(origin, origin + direction * t, walls, corners, settings, out var to);
+        if (kind == Kind.None) return Kind.None;
+        point = new Vector3(to.x, floorY, to.y);
+        ceilingPoint = new Vector3(to.x, ceilingY, to.y);
+        return kind;
+    }
+
+    /// <summary>
+    /// Where an aim that reaches <paramref name="hit"/> (on the floor or the ceiling) lands on the
+    /// floor plan: not past the first wall in the way, and pulled onto a corner close by.
+    /// </summary>
+    static Kind Land(Vector3 origin, Vector3 hit, IReadOnlyList<AutoWallGeometry.Wall> walls,
+        IReadOnlyList<Vector2> corners, Settings settings, out Vector2 to)
+    {
         var from = new Vector2(origin.x, origin.z);
-        var to = new Vector2(hit.x, hit.z);
+        to = new Vector2(hit.x, hit.z);
         if (Vector2.Distance(from, to) > settings.maxDistance) return Kind.None;
 
         var kind = Kind.Floor;
@@ -87,7 +125,6 @@ public static class ScanFloorAim
             }
         }
 
-        point = new Vector3(to.x, floorY, to.y);
         return kind;
     }
 

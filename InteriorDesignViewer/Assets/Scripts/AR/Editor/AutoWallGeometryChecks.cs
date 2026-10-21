@@ -67,8 +67,82 @@ public static class AutoWallGeometryChecks
         Check(lOutline.Count == 6 && !AutoWallGeometry.CrossesItself(lOutline), "L room outline order");
 
         RunTrackerChecks(s, room);
+        RunScanFrameChecks();
 
         Debug.Log("[AutoWallGeometryChecks] Passed wall merge, corner, open-end, outline and steady-wall checks.");
+    }
+
+    /// <summary>
+    /// A layout's room put back where it was scanned: the backend's planner frame (same math as
+    /// roomFeatures.js / roomGeometry.js) and the AR shell (centred, as roomLocalToUnity) must map
+    /// exactly onto the scan, with furniture turned the right way.
+    /// </summary>
+    static void RunScanFrameChecks()
+    {
+        // A 5 × 3.5 m room with one corner off square, scanned at 30° and away from the origin.
+        var turn = 30f * Mathf.Deg2Rad;
+        Vector3 Place(float x, float z) =>
+            new(x * Mathf.Cos(turn) - z * Mathf.Sin(turn) + 7f, 0.04f, x * Mathf.Sin(turn) + z * Mathf.Cos(turn) - 2f);
+        var scan = new[] { Place(0, 0), Place(5, 0), Place(5, 3.5f), Place(0.2f, 3.3f) };
+
+        // Backend: angle = −atan2 of the longest wall; local = rotateXZ(world, angle) − min.
+        var longest = 0f;
+        var angle = 0f;
+        for (var i = 0; i < scan.Length; i++)
+        {
+            var a = scan[i];
+            var b = scan[(i + 1) % scan.Length];
+            var len = new Vector2(b.x - a.x, b.z - a.z).magnitude;
+            if (len > longest)
+            {
+                longest = len;
+                angle = -Mathf.Atan2(b.z - a.z, b.x - a.x);
+            }
+        }
+
+        Vector2 RotateXZ(Vector3 p, float r) =>
+            new(p.x * Mathf.Cos(r) - p.z * Mathf.Sin(r), p.x * Mathf.Sin(r) + p.z * Mathf.Cos(r));
+        var aligned = Array.ConvertAll(scan, p => RotateXZ(p, angle));
+        var minX = float.MaxValue;
+        var minZ = float.MaxValue;
+        var maxX = float.MinValue;
+        var maxZ = float.MinValue;
+        foreach (var p in aligned)
+        {
+            minX = Mathf.Min(minX, p.x);
+            minZ = Mathf.Min(minZ, p.y);
+            maxX = Mathf.Max(maxX, p.x);
+            maxZ = Mathf.Max(maxZ, p.y);
+        }
+
+        var width = maxX - minX;
+        var depth = maxZ - minZ;
+        // RN: shell corner = local − (w/2, d/2), y 0.
+        var shell = Array.ConvertAll(aligned, p => new Vector3(p.x - minX - width / 2f, 0f, p.y - minZ - depth / 2f));
+
+        Check(ScanFrameMath.TryBuild(angle, minX, minZ, width, depth, scan, shell, 0.02f, out var m, out var yaw),
+            "shell lands on the scanned room");
+        for (var i = 0; i < shell.Length; i++)
+        {
+            var w = m.MultiplyPoint3x4(shell[i]);
+            Check(new Vector2(w.x - scan[i].x, w.z - scan[i].z).magnitude < 0.01f && Mathf.Abs(w.y - 0.04f) < 0.01f,
+                $"shell corner {i} on scan corner");
+        }
+
+        // A sofa planned along the longest wall (local z ≈ 0, facing +z into the room) ends up along
+        // that real wall, facing into the room. Planner rotation 0 + yaw is its Unity yaw.
+        var sofaLocal = new Vector3(2.5f, 0f, 0.45f);
+        var sofaWorld = m.MultiplyPoint3x4(sofaLocal - new Vector3(width / 2f, 0f, depth / 2f));
+        var wallMid = (scan[0] + scan[1]) * 0.5f;
+        Check(new Vector2(sofaWorld.x - wallMid.x, sofaWorld.z - wallMid.z).magnitude < 0.5f, "sofa sits by its real wall");
+        var facing = new Vector3(Mathf.Sin(yaw * Mathf.Deg2Rad), 0f, Mathf.Cos(yaw * Mathf.Deg2Rad));
+        var inward = Place(2.5f, 1f) - Place(2.5f, 0f);
+        Check(Vector3.Dot(facing, inward.normalized) > 0.99f, "sofa faces into the room");
+
+        // A different room (or the same one moved) is not placed blindly.
+        var moved = Array.ConvertAll(scan, p => p + new Vector3(0.6f, 0f, 0f));
+        Check(!ScanFrameMath.TryBuild(angle, minX, minZ, width, depth, moved, shell, 0.2f, out _, out _),
+            "a moved room isn't matched");
     }
 
     /// <summary>Walls kept steady between rounds while the planes under them change.</summary>
