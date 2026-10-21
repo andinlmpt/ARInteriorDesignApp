@@ -531,6 +531,54 @@ public static class AutoWallGeometry
 }
 
 /// <summary>
+/// How a generated layout's room (the planner frame, centred) sits on the scanned room.
+/// The backend's planner frame is the scan turned by <c>angle</c> radians (counter-clockwise from
+/// x toward z, as its rotateXZ) and shifted so the outline's min corner is at 0,0; the AR shell is
+/// that frame minus half the room. So world = turn(−angle)(shell + (w/2 + minX, d/2 + minZ)), and
+/// turning by −angle on x/z is a Unity yaw of +angle. Pure math, checked without a phone.
+/// </summary>
+public static class ScanFrameMath
+{
+    public static bool TryBuild(float angle, float minX, float minZ, float width, float depth,
+        IReadOnlyList<Vector3> scanCorners, IReadOnlyList<Vector3> shellCorners, float tolerance,
+        out Matrix4x4 shellToWorld, out float yawDegrees)
+    {
+        yawDegrees = angle * Mathf.Rad2Deg;
+        // A Unity yaw of θ turns (x, z) into (x cos θ + z sin θ, −x sin θ + z cos θ); written out so
+        // the checks can run without the engine.
+        var cos = Mathf.Cos(angle);
+        var sin = Mathf.Sin(angle);
+        var ox = width * 0.5f + minX;
+        var oz = depth * 0.5f + minZ;
+
+        var floorY = 0f;
+        foreach (var p in scanCorners) floorY += p.y;
+        floorY /= Mathf.Max(1, scanCorners.Count);
+        var shellY = 0f;
+        foreach (var p in shellCorners) shellY += p.y;
+        shellY /= Mathf.Max(1, shellCorners.Count);
+
+        shellToWorld = new Matrix4x4(
+            new Vector4(cos, 0f, -sin, 0f),
+            new Vector4(0f, 1f, 0f, 0f),
+            new Vector4(sin, 0f, cos, 0f),
+            new Vector4(ox * cos + oz * sin, floorY - shellY, -ox * sin + oz * cos, 1f));
+
+        // Every shell corner must land on a scanned corner (any order): the same room, same place.
+        foreach (var c in shellCorners)
+        {
+            var w = shellToWorld.MultiplyPoint3x4(c);
+            var nearest = float.MaxValue;
+            foreach (var s in scanCorners)
+                nearest = Mathf.Min(nearest, new Vector2(w.x - s.x, w.z - s.z).magnitude);
+            if (nearest > tolerance) return false;
+        }
+
+        return true;
+    }
+}
+
+/// <summary>
 /// Keeps the walls steady while ARCore keeps re-estimating its planes. The walls found from the
 /// planes each round are matched to the walls already known: a match settles the known wall
 /// gently toward it and can only make it longer, a new wall shows after it has been seen twice,

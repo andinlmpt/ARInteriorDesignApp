@@ -37,6 +37,8 @@ export interface UnityARViewerHandle {
   startFurniturePlacement: () => void;
   /** Load Unity ARRoomMeasurement scene (native measurement HUDs). */
   openRoomMeasurement: () => void;
+  /** After lining up by hand: put the layout on the opposite plan wall (turns it 180°). */
+  flipLayoutAlignment: () => void;
   /** Load ARDesignScene with the measured room shell for real GLB placement. */
   openDesignLayoutInAr: (payload?: {
     roomName?: string;
@@ -44,6 +46,13 @@ export interface UnityARViewerHandle {
     depth?: number;
     height?: number;
     wallHeight?: number;
+    /** The room's real outline, centred like the layout positions (instead of a width × depth box). */
+    floorPolygon?: { x: number; y: number; z: number }[];
+    /** How the planner frame sits on the scan: lets Unity put the layout where the room was scanned. */
+    hasScanFrame?: boolean;
+    frameAngle?: number;
+    frameMinX?: number;
+    frameMinZ?: number;
   }) => void;
   openMeasuredFurnitureDesign: (payload?: {
     roomName?: string;
@@ -269,6 +278,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
         startRoomScan: () => sendToUnity('startRoomScan', ''),
         startFurniturePlacement: () => sendToUnity('startFurniturePlacement', ''),
         openRoomMeasurement: () => sendToUnity('openRoomMeasurement', ''),
+        flipLayoutAlignment: () => sendToUnity('flipLayoutAlignment', ''),
         openDesignLayoutInAr: (payload) =>
           sendToUnity(
             'openDesignLayoutInAr',

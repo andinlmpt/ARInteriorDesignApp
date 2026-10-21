@@ -198,6 +198,22 @@ public class ARAutoRoomScan : MonoBehaviour
     float closedAt;
 
     public bool Enabled { get; private set; }
+
+    /// <summary>
+    /// Corners can be aimed at on the ceiling: the height was measured (not skipped), so the
+    /// ceiling is known, and the outline is still open.
+    /// </summary>
+    public bool CeilingAimAvailable =>
+        builder != null && builder.IsHeightLocked && builder.HeightWasMeasured && !builder.IsLoopClosed;
+
+    /// <summary>The aim is on the ceiling right now (the floor point is the spot straight below).</summary>
+    public bool AimFromCeiling => Time.frameCount - ceilingAimFrame <= 1;
+
+    /// <summary>Where the aim meets the ceiling while <see cref="AimFromCeiling"/>.</summary>
+    public Vector3 CeilingAimPoint { get; private set; }
+
+    int ceilingAimFrame = -10;
+    LineRenderer ceilingDrop;
     /// <summary>
     /// Enough floor has been found (the scan's floor dots have turned green). The floor point only
     /// sets itself after that, so it isn't taken from the first small patch ARCore sees.
@@ -271,6 +287,21 @@ public class ARAutoRoomScan : MonoBehaviour
         targetMaterial = ARLineMaterialUtil.Create(targetColor);
         targetRing = CreateLine("TargetRing", 0.025f, targetMaterial, true);
         targetPole = CreateLine("TargetPole", 0.02f, targetMaterial, false);
+        ceilingDrop = CreateLine("CeilingDrop", 0.012f, wallMaterial, false);
+    }
+
+    /// <summary>Aiming at a ceiling corner: a line from it straight down to where the corner goes.</summary>
+    void DrawCeilingDrop()
+    {
+        if (ceilingDrop == null) return;
+        var show = AimFromCeiling && indicator != null && indicator.IsTracking && indicator.IsLockedOnFloor;
+        if (ceilingDrop.enabled != show) ceilingDrop.enabled = show;
+        if (!show) return;
+
+        var floor = indicator.WorldPosition;
+        ceilingDrop.positionCount = 2;
+        ceilingDrop.SetPosition(0, CeilingAimPoint);
+        ceilingDrop.SetPosition(1, new Vector3(CeilingAimPoint.x, floor.y + 0.01f, CeilingAimPoint.z));
     }
 
     void OnEnable()
@@ -341,6 +372,8 @@ public class ARAutoRoomScan : MonoBehaviour
     void Update()
     {
         if (builder == null || scanController == null) return;
+        // By hand or automatic, a corner can be aimed at on the ceiling.
+        DrawCeilingDrop();
         if (builder.AutoOutline != Enabled) builder.AutoOutline = Enabled;
 
         var step = ResolveStep();
@@ -435,6 +468,18 @@ public class ARAutoRoomScan : MonoBehaviour
     {
         RefreshAimGeometry(floorY);
         var result = ScanFloorAim.Resolve(ray.origin, ray.direction, floorY, aimWalls, aimCorners, aimSettings, out point);
+        if (result == ScanFloorAim.Kind.None && CeilingAimAvailable)
+        {
+            // Floor corner hidden by furniture: the ceiling corner above it gives the same spot.
+            result = ScanFloorAim.ResolveCeiling(ray.origin, ray.direction, floorY, floorY + builder.WallHeight,
+                aimWalls, aimCorners, aimSettings, out point, out var ceiling);
+            if (result != ScanFloorAim.Kind.None)
+            {
+                ceilingAimFrame = Time.frameCount;
+                CeilingAimPoint = ceiling;
+            }
+        }
+
         kind = result switch
         {
             ScanFloorAim.Kind.Corner => ARPlacementIndicator.AimKind.Corner,

@@ -384,6 +384,12 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     public bool SkipHeight() => LockHeight(defaultWallHeight);
 
     public float DefaultWallHeight => defaultWallHeight;
+
+    /// <summary>
+    /// The height was measured, not skipped or defaulted, so the ceiling is known well enough to
+    /// place corners from it (a 20 cm height error moves a ceiling corner about half a metre).
+    /// </summary>
+    public bool HeightWasMeasured { get; private set; }
     public float MinWallHeight => minWallHeight;
     public float MaxWallHeight => maxWallHeight;
 
@@ -404,6 +410,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
 
         // The reading held steady (or the last one held before the phone came down to tap Finish).
         var measured = forced ?? heightFilter.Resolve(minReliableLockHeight, float.NaN);
+        HeightWasMeasured = !forced.HasValue && !float.IsNaN(measured);
         if (float.IsNaN(measured))
         {
             // Too short to be a real ceiling — use default rather than ~70 cm furniture height.
@@ -591,6 +598,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     {
         heightBaseSet = false;
         heightLocked = false;
+        HeightWasMeasured = false;
         outlinePhase = requireHeightBeforeCorners ? RoomOutlinePhase.Height : RoomOutlinePhase.Width;
         heightFloorBase = default;
         ReleaseHeightBaseAnchor();

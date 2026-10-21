@@ -22,6 +22,12 @@ public class ARBootstrap : MonoBehaviour
 
     bool starting;
     bool sessionReady;
+
+    /// <summary>
+    /// Goes up every time AR tracking is reset (the world frame starts over). Positions saved in
+    /// an earlier epoch no longer match the real room.
+    /// </summary>
+    public static int TrackingEpoch { get; private set; }
     RoomScanController scanController;
     ARDesignLayoutModeController layoutMode;
 
@@ -236,7 +242,10 @@ public class ARBootstrap : MonoBehaviour
             // Xiaomi / ARCore often leaves the camera texture black after splash.
             sessionReady = true;
             if (resetTracking)
+            {
                 arSession.Reset();
+                TrackingEpoch++;
+            }
 
             var wait = 0f;
             while (wait < 2.5f &&
@@ -252,6 +261,7 @@ public class ARBootstrap : MonoBehaviour
             {
                 Debug.LogWarning($"[ARBootstrap] Session stuck in {ARSession.state} — resetting.");
                 arSession.Reset();
+                TrackingEpoch++;
             }
 
             Debug.Log($"[ARBootstrap] AR session state={ARSession.state}");

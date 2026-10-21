@@ -313,6 +313,8 @@ public class RoomScanController : MonoBehaviour
             snapshot = RoomGeometryBuilder.CaptureFromFloorCorners(
                 cornerBuilder.Corners, cornerBuilder.WallHeight);
             CaptureFloorPolygon(cornerBuilder.Corners);
+            // "View in AR" later puts the layout right here when tracking hasn't been reset.
+            ScanPlacement.RememberScan(cornerBuilder.Corners);
         }
 
         if (snapshot == null || snapshot.IsEmpty)

@@ -783,9 +783,17 @@ public class ARDesignScanHUD : MonoBehaviour
                 ? "Your floor point is corner 1 · walk to the next corner and tap it"
                 : "Aim at a floor corner and tap";
         }
+        else if (autoScan != null && autoScan.AimFromCeiling)
+        {
+            subtitle = "Ceiling corner · tap to set the floor corner below it";
+        }
         else if (cornerBuilder.HasLivePreview)
         {
             subtitle = $"{FoundSummary(count)} · {Mathf.RoundToInt(cornerBuilder.LivePreviewDistanceMeters * 100f)} cm to here";
+        }
+        else if (autoScan != null && autoScan.CeilingAimAvailable)
+        {
+            subtitle = $"{FoundSummary(count)} · corner hidden? aim at the ceiling corner";
         }
         else
         {
@@ -849,7 +857,9 @@ public class ARDesignScanHUD : MonoBehaviour
                 else
                 {
                     title = "Walk slowly around the room";
-                    if (holding)
+                    if (holding && autoScan.AimFromCeiling)
+                        subtitle = "Ceiling corner · hold still to place the corner below it…";
+                    else if (holding)
                         subtitle = "Hold still to place the corner…";
                     else if (autoScan.WallCount == 0)
                         subtitle = "Point the phone at a wall about 2 m away";
@@ -1368,8 +1378,8 @@ public class ARDesignScanHUD : MonoBehaviour
                     ? "Move slowly until the floor dots turn green. Aim the dot next to a wall and hold still. Then aim the circle where the wall meets the ceiling, or tap Skip."
                     : "Move slowly until the floor dots turn green. Aim the dot at a floor corner and tap Start. Aim up that corner to the ceiling and tap Set height, or tap Skip.",
                 auto
-                    ? "Walk slowly along the walls. Corners, doors, windows and furniture appear by themselves. When the outline is complete, look across the room once and tap Finish."
-                    : "Walk to each corner and tap it on the floor. Doors, windows and furniture are found as you go. Tap Finish when every corner is marked.",
+                    ? "Walk slowly along the walls. Corners, doors, windows and furniture appear by themselves. A corner hidden by furniture? Hold the dot on the ceiling corner above it. When the outline is complete, look across the room once and tap Finish."
+                    : "Walk to each corner and tap it on the floor. A corner hidden by furniture? Aim at the ceiling corner above it and tap. Doors, windows and furniture are found as you go. Tap Finish when every corner is marked.",
                 "Check the floor plan. Tap anything wrong to remove it, use + Add for anything missed, then tap Scan complete.",
             }
             : new[]
@@ -1901,6 +1911,13 @@ public class ARDesignScanHUD : MonoBehaviour
             detail = useCm >= 180 && Mathf.Abs(useCm - skipCm) > 2
                 ? $"Tap Set height to use {useCm} cm, or Skip to use {skipCm} cm"
                 : $"Tap Skip to use {skipCm} cm · you can change it in Review";
+            return true;
+        }
+
+        if (autoScan.NeedsWallHelp && autoScan.HasTarget && autoScan.CeilingAimAvailable)
+        {
+            title = "Corner hidden by furniture?";
+            detail = "Hold the dot on the ceiling corner above it instead";
             return true;
         }
 

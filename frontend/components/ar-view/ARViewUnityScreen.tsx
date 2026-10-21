@@ -163,7 +163,7 @@ export function ARViewUnityScreen() {
   const applyGenerationRef = useRef<DesignFlowGenerationResult | null>(null);
   /** Set when a layout is sent to Unity; the next non-empty layoutChanged reports it placed. */
   const applyAwaitingPlacementRef = useRef(false);
-  const applyHandoffRef = useRef<Parameters<UnityARViewerHandle['openMeasuredFurnitureDesign']>[0]>(undefined);
+  const applyHandoffRef = useRef<Parameters<UnityARViewerHandle['openDesignLayoutInAr']>[0]>(undefined);
 
   const unityAvailable = isUnityViewAvailable();
   const { items: catalogItems, loading: catalogLoading, error: catalogError } = useFurnitureCatalog();
@@ -188,6 +188,8 @@ export function ARViewUnityScreen() {
         applyRoomRef.current = stored?.room || null;
         applyGenerationRef.current = stored;
         const room = stored?.room;
+        const outline = stored?.scannedRoom?.outline;
+        const frame = stored?.scannedRoom?.frame;
         applyHandoffRef.current = room
           ? {
               roomName: 'Design layout',
@@ -195,6 +197,20 @@ export function ARViewUnityScreen() {
               depth: room.length,
               height: room.height,
               wallHeight: room.height,
+              // The real room shape, centred the same way roomLocalToUnity centres the furniture,
+              // so walls in AR are where the planner kept the furniture clear of them.
+              ...(outline && outline.length >= 3
+                ? {
+                    floorPolygon: outline.map((p) => ({
+                      x: p.x - room.width / 2,
+                      y: 0,
+                      z: p.z - room.length / 2,
+                    })),
+                  }
+                : {}),
+              ...(frame
+                ? { hasScanFrame: true, frameAngle: frame.angle, frameMinX: frame.minX, frameMinZ: frame.minZ }
+                : {}),
             }
           : undefined;
         setApplyPayloadReady(Boolean(proposal && room));
@@ -643,6 +659,10 @@ export function ARViewUnityScreen() {
 
   const handleLayoutAligned = useCallback(
     (payload: LayoutAlignmentPayload) => {
+      if (payload.autoPlaced) {
+        showToast('Placed where you scanned the room', 3000);
+        return;
+      }
       const gap = Math.abs(payload.measuredM - payload.planM);
       const lengths = `Wall ${payload.measuredM.toFixed(2)} m · plan ${payload.planM.toFixed(2)} m`;
       if (gap > 0.3) {
@@ -1261,7 +1281,9 @@ export function ARViewUnityScreen() {
     } catch {
       /* native view may not be attached yet */
     }
-    if (measuredFurnitureActiveRef.current) return;
+    // "View in AR" boots through openDesignLayoutInAr. Opening the scanner here would start a new
+    // scan, which resets AR tracking and loses where the room was scanned (the layout goes there).
+    if (measuredFurnitureActiveRef.current || applyLayoutActiveRef.current) return;
     unityRef.current?.openRoomMeasurement();
     // Opening restarts the scan in Unity; a reload on top of it (from the ping's unityReady)
     // would restart it a second time.
@@ -1569,6 +1591,12 @@ export function ARViewUnityScreen() {
           onFinish={() => {
             void handleFinishDesign();
           }}
+          onTurnAround={!alignment?.canTurn
+            ? undefined
+            : () => {
+                unityRef.current?.flipLayoutAlignment();
+                showToast('Layout turned around', 2000);
+              }}
         />
       )}
 

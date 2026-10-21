@@ -200,7 +200,17 @@ export function buildRoomFeatures(room, scan = {}) {
     })
     .filter(Boolean);
 
-  return { polygon: matchesRoom ? polygon : null, doorZones, windowZones, obstacles };
+  return {
+    polygon: matchesRoom ? polygon : null,
+    doorZones,
+    windowZones,
+    obstacles,
+    // The room's real shape in the planner frame, and how that frame sits on the scan
+    // (local = rotateXZ(world, angle) − (minX, minZ)), so AR can put the layout back where
+    // the room was scanned instead of on a rectangle.
+    outline: localPolygon,
+    frame: { angle, minX, minZ },
+  };
 }
 
 /**
