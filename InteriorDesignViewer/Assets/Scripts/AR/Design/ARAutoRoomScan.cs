@@ -162,6 +162,8 @@ public class ARAutoRoomScan : MonoBehaviour
     readonly List<AutoWallGeometry.WallPiece> pieces = new();
     readonly List<TrackedCorner> tracked = new();
     readonly List<Vector2> placed = new();
+    /// <summary>Corners in <see cref="placed"/> that were found from the walls (and locked), not placed by hand.</summary>
+    readonly List<Vector2> locked = new();
     readonly List<Vector2> suppressed = new();
     readonly List<HistoryEntry> history = new();
     readonly List<AutoWallGeometry.Corner> outlineCorners = new();
@@ -740,7 +742,7 @@ public class ARAutoRoomScan : MonoBehaviour
         {
             nextLogAt = Time.unscaledTime + 2f;
             Debug.Log($"[AutoScan] vertical planes={vertical} pieces={pieces.Count} walls={WallCount} " +
-                      $"corners={CornerCount} (auto {outlineCorners.Count}, hand {placed.Count}) open ends={OpenEndCount} " +
+                      $"corners={CornerCount} (found {locked.Count}, hand {placed.Count - locked.Count}, seen {tracked.Count}) open ends={OpenEndCount} " +
                       $"floor y={floorY:F2}{(builder.IsOutlineSelfIntersecting ? " CROSSES ITSELF (can't close)" : "")}");
         }
 
@@ -845,14 +847,7 @@ public class ARAutoRoomScan : MonoBehaviour
             best.seen++;
             best.misses = 0;
             best.matched = true;
-            if (!best.confirmed && best.seen >= confirmAfterEvaluations)
-            {
-                best.confirmed = true;
-                history.Add(new HistoryEntry { auto = true, autoId = best.id });
-                pendingNotes.Add(Note.CornerFound);
-                if (stats != null) stats.cornersAutoFound++;
-                lastProgressAt = Time.unscaledTime;
-            }
+            if (best.seen >= confirmAfterEvaluations) LockCorner(best);
         }
 
         for (var i = tracked.Count - 1; i >= 0; i--)
@@ -862,6 +857,32 @@ public class ARAutoRoomScan : MonoBehaviour
             t.misses++;
             if (t.misses > (t.confirmed ? dropConfirmedAfterMisses : dropAfterMisses)) tracked.RemoveAt(i);
         }
+    }
+
+    /// <summary>
+    /// A corner seen where two walls meet a few rounds running stays, like one placed by hand. Found
+    /// corners used to come and go with the walls: in a plain, dim room the outline went 4 → 1
+    /// corners while the user watched (2026-10-24). Undo and press-and-hold still remove it, and it
+    /// isn't found again there.
+    /// </summary>
+    void LockCorner(TrackedCorner corner)
+    {
+        tracked.Remove(corner);
+        if (IsNearPlaced(corner.point)) return;
+        placed.Add(corner.point);
+        locked.Add(corner.point);
+        history.Add(new HistoryEntry { auto = false, placed = corner.point });
+        pendingNotes.Add(Note.CornerFound);
+        if (stats != null) stats.cornersAutoFound++;
+        lastProgressAt = Time.unscaledTime;
+    }
+
+    /// <summary>Takes a placed corner out; a locked found one is kept from coming straight back.</summary>
+    void UnplaceAt(int index)
+    {
+        var point = placed[index];
+        placed.RemoveAt(index);
+        if (locked.Remove(point)) suppressed.Add(point);
     }
 
     int CountRealWalls()
@@ -1062,7 +1083,7 @@ public class ARAutoRoomScan : MonoBehaviour
         }
 
         var point = placed[placedIndex];
-        placed.RemoveAt(placedIndex);
+        UnplaceAt(placedIndex);
         history.RemoveAll(h => !h.auto && h.placed == point);
         return true;
     }
@@ -1142,7 +1163,7 @@ public class ARAutoRoomScan : MonoBehaviour
             {
                 var index = placed.IndexOf(entry.placed);
                 if (index < 0) continue;
-                placed.RemoveAt(index);
+                UnplaceAt(index);
             }
 
             pendingNotes.Add(Note.CornerRemoved);
@@ -1211,6 +1232,7 @@ public class ARAutoRoomScan : MonoBehaviour
     {
         tracked.Clear();
         placed.Clear();
+        locked.Clear();
         suppressed.Clear();
         history.Clear();
         lastPushed.Clear();
@@ -1463,8 +1485,9 @@ public class ARAutoRoomScan : MonoBehaviour
     {
         if (stats == null) return;
         stats.cornersFinal = builder.CornerCount;
-        stats.cornersFinalAuto = Mathf.Max(0, builder.CornerCount - placed.Count);
-        stats.cornersFinalByHand = Mathf.Min(placed.Count, builder.CornerCount);
+        var byHand = placed.Count - locked.Count;
+        stats.cornersFinalAuto = Mathf.Max(0, builder.CornerCount - byHand);
+        stats.cornersFinalByHand = Mathf.Min(byHand, builder.CornerCount);
         stats.openEndsAtClose = OpenEndCount;
         if (builder.CornerCount >= RoomPolygonUtil.MinCorners)
         {
