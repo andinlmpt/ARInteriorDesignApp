@@ -27,6 +27,8 @@ public static class ARFurniturePlaneAutoScanner
         if (planeManager == null || corners == null || corners.Count < 3)
             return results;
 
+        var outline = new List<Vector2>(corners.Count);
+        foreach (var c in corners) outline.Add(new Vector2(c.x, c.z));
         var candidates = new List<(ARPlane plane, float area)>();
 
         foreach (var plane in planeManager.trackables)
@@ -56,13 +58,24 @@ public static class ARFurniturePlaneAutoScanner
                 continue;
 
             var type = Classify(height, area);
-            var size = new Vector3(
-                Mathf.Max(MinFootprintSide, plane.size.x),
-                Mathf.Max(height, type == "chair" ? 0.9f : height),
-                Mathf.Max(MinFootprintSide, plane.size.y));
-            center.y = floorY;
+            // Measured along the nearest wall and cut back at the walls: the surface's own axes
+            // are ARCore's choice, and a surface spreads past the bed it's on, through the wall.
+            var yaw = plane.transform.eulerAngles.y;
+            var footprint = new Vector2(plane.size.x, plane.size.y);
+            var middle = new Vector2(center.x, center.z);
+            var wallYaw = RoomBoxFit.NearestWallYaw(outline, true, middle);
+            if (!float.IsNaN(wallYaw) && TryBoundary(plane, out var boundary))
+            {
+                yaw = wallYaw;
+                RoomBoxFit.BoundsAt(boundary, yaw, out middle, out footprint);
+            }
+            footprint = Vector2.Max(footprint, new Vector2(MinFootprintSide, MinFootprintSide));
+            RoomBoxFit.KeepInside(outline, ref middle, ref footprint, yaw);
 
-            if (ARFurniturePlaneAutoScannerOverlapsHelper.Overlaps(center, size, existing, pending, plane.transform.eulerAngles.y))
+            var size = new Vector3(footprint.x, Mathf.Max(height, type == "chair" ? 0.9f : height), footprint.y);
+            center = new Vector3(middle.x, floorY, middle.y);
+
+            if (ARFurniturePlaneAutoScannerOverlapsHelper.Overlaps(center, size, existing, pending, yaw))
                 continue;
 
             counter += 1;
@@ -72,13 +85,30 @@ public static class ARFurniturePlaneAutoScanner
                 type = type,
                 center = center,
                 size = size,
-                yaw = plane.transform.eulerAngles.y,
+                yaw = yaw,
                 confidence = Mathf.Clamp(0.52f + area * 0.08f, 0.55f, 0.82f),
                 source = "plane",
             });
         }
 
         return results;
+    }
+
+    /// <summary>The surface's outline on the floor plan (x, z).</summary>
+    static bool TryBoundary(ARPlane plane, out List<Vector2> points)
+    {
+        points = null;
+        var boundary = plane.boundary;
+        if (!boundary.IsCreated || boundary.Length < 3) return false;
+        points = new List<Vector2>(boundary.Length);
+        var t = plane.transform;
+        for (var i = 0; i < boundary.Length; i++)
+        {
+            var w = t.TransformPoint(new Vector3(boundary[i].x, 0f, boundary[i].y));
+            points.Add(new Vector2(w.x, w.z));
+        }
+
+        return true;
     }
 
     /// <summary>Seat-height surfaces are beds/sofas/chairs; table-height ones tables/desks.</summary>

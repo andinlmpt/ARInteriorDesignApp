@@ -73,6 +73,9 @@ public class FurniturePlacementController : MonoBehaviour
     [SerializeField] private float floorContactInset = 0.006f;
     [Tooltip("Extra sink in live AR so feet meet the detected plane (not the scan mesh).")]
     [SerializeField] private float liveArFloorSink = 0.022f;
+    [Tooltip("In the scanned room, a floor reading further than this from the scanned floor is a raised " +
+             "surface the reticle rested on, and the scanned floor is used instead (m).")]
+    [SerializeField] private float maxLiveFloorOffset = 0.12f;
     [Tooltip("Keep furniture this far inside the room outline (metres from walls).")]
     [SerializeField] private float roomWallInset = 0.22f;
     [Tooltip("Clamp spawn/drag positions to the confirmed floor polygon.")]
@@ -696,6 +699,7 @@ public class FurniturePlacementController : MonoBehaviour
     void SeatOnFloor(GameObject instance, float localFootY, Vector3 floorPoint)
     {
         if (instance == null) return;
+        floorPoint.y = NearScanFloor(floorPoint.y);
         var inset = EffectiveFloorInset();
         Physics.SyncTransforms();
 
@@ -1459,9 +1463,25 @@ public class FurniturePlacementController : MonoBehaviour
 
     void DetachFurnitureFromWorld(PlacedFurniture furniture)
     {
-        furniture?.UnbindWorldAnchor(furnitureParent, destroyAnchor: true);
+        if (furniture == null) return;
+        // A pin still waiting for tracking gives up: the piece is about to move (drag, planner view).
+        pinRequests.Remove(furniture);
+        furniture.UnbindWorldAnchor(furnitureParent, destroyAnchor: true);
     }
 
+    /// <summary>Latest pin request per piece: a newer one, or a detach, makes older retries give up.</summary>
+    readonly Dictionary<PlacedFurniture, int> pinRequests = new();
+    int nextPinRequest;
+    const float PinWaitForTrackingSeconds = 15f;
+    const int PinAttempts = 6;
+    const float PinRetrySeconds = 0.5f;
+
+    /// <summary>
+    /// Locks a piece to the real room with an ARCore anchor. ARCore refuses anchors until it is
+    /// tracking: a layout applied while the camera was still starting failed once ("UnknownError")
+    /// and the piece stayed unpinned for the whole session, sliding with every tracking correction.
+    /// So this waits for tracking, then retries a few times.
+    /// </summary>
     async void PinFurnitureToWorld(PlacedFurniture furniture)
     {
         if (furniture == null || anchorManager == null || !anchorManager.isActiveAndEnabled)
@@ -1470,42 +1490,63 @@ public class FurniturePlacementController : MonoBehaviour
             return;
 
         DetachFurnitureFromWorld(furniture);
+        var request = ++nextPinRequest;
+        pinRequests[furniture] = request;
+        bool StillWanted() =>
+            furniture != null && pinRequests.TryGetValue(furniture, out var latest) && latest == request
+            && ShouldUseWorldAnchors();
 
-        var yaw = furniture.transform.eulerAngles.y;
-        var pose = new Pose(furniture.transform.position, Quaternion.Euler(0f, yaw, 0f));
-
-        try
+        var waited = 0f;
+        while (ARSession.state != ARSessionState.SessionTracking && waited < PinWaitForTrackingSeconds)
         {
-            var result = await anchorManager.TryAddAnchorAsync(pose);
-            if (furniture == null) return;
+            await Awaitable.WaitForSecondsAsync(PinRetrySeconds);
+            waited += PinRetrySeconds;
+            if (!StillWanted()) return;
+        }
 
-            if (!result.status.IsSuccess())
+        for (var attempt = 1; attempt <= PinAttempts; attempt++)
+        {
+            // Read the pose each try: the piece may have been grounded or nudged meanwhile.
+            var yaw = furniture.transform.eulerAngles.y;
+            var pose = new Pose(furniture.transform.position, Quaternion.Euler(0f, yaw, 0f));
+            try
             {
-                Debug.LogWarning(
-                    $"[FurniturePlacementController] Anchor failed for '{furniture.InstanceId}': {result.status}");
-                if (furnitureParent != null)
-                    furniture.transform.SetParent(furnitureParent, true);
-                return;
+                var result = await anchorManager.TryAddAnchorAsync(pose);
+                var anchor = result.status.IsSuccess() ? result.value : null;
+                if (!StillWanted())
+                {
+                    if (anchor != null) Destroy(anchor.gameObject);
+                    return;
+                }
+
+                if (anchor != null)
+                {
+                    pinRequests.Remove(furniture);
+                    furniture.transform.SetParent(anchor.transform, true);
+                    furniture.BindWorldAnchor(anchor);
+                    GroundInstance(furniture);
+                    if (attempt > 1 || waited > 0f)
+                        Debug.Log($"[FurniturePlacementController] '{furniture.InstanceId}' pinned on try {attempt} " +
+                                  $"after waiting {waited:F1}s for tracking.");
+                    return;
+                }
+
+                Debug.LogWarning($"[FurniturePlacementController] Anchor failed for '{furniture.InstanceId}': " +
+                                 $"{result.status} (try {attempt} of {PinAttempts}, tracking {ARSession.state})");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[FurniturePlacementController] Anchor exception: {e.Message}");
             }
 
-            var anchor = result.value;
-            if (anchor == null)
-            {
-                if (furnitureParent != null)
-                    furniture.transform.SetParent(furnitureParent, true);
-                return;
-            }
+            if (attempt == PinAttempts) break;
+            await Awaitable.WaitForSecondsAsync(PinRetrySeconds);
+            if (!StillWanted()) return;
+        }
 
-            furniture.transform.SetParent(anchor.transform, true);
-            furniture.BindWorldAnchor(anchor);
-            GroundInstance(furniture);
-        }
-        catch (System.Exception e)
-        {
-            Debug.LogWarning($"[FurniturePlacementController] Anchor exception: {e.Message}");
-            if (furniture != null && furnitureParent != null)
-                furniture.transform.SetParent(furnitureParent, true);
-        }
+        pinRequests.Remove(furniture);
+        if (furniture != null && furnitureParent != null)
+            furniture.transform.SetParent(furnitureParent, true);
     }
 
     void EnsureSpawnVisibleInRealRoom(PlacedFurniture furniture)
@@ -1528,6 +1569,28 @@ public class FurniturePlacementController : MonoBehaviour
         furniture.transform.position = new Vector3(seed.x, furniture.transform.position.y, seed.z);
         GroundInstance(furniture);
     }
+
+    /// <summary>
+    /// The live floor reading, unless it's far from the floor this room was scanned on: the reticle
+    /// rests on any flat surface, so it's a bed, table or sofa top, and the scanned floor is used.
+    /// The same chair landed 23 cm apart on the phone (2026-10-24). Without a scanned floor from this
+    /// tracking session (no scan yet, or tracking was reset) the reading is kept: no made-up height.
+    /// </summary>
+    float NearScanFloor(float liveY)
+    {
+        if (!ShouldUseLiveFloorHits() || !ScanPlacement.TryGetScanFloorY(out var scanY)) return liveY;
+        if (Mathf.Abs(liveY - scanY) <= maxLiveFloorOffset) return liveY;
+        // Seating runs every frame of a drag: one line now and then is enough.
+        if (Time.unscaledTime >= nextFloorNoteAt)
+        {
+            nextFloorNoteAt = Time.unscaledTime + 2f;
+            Debug.Log($"[FurniturePlacementController] Floor reading {liveY:F2} is {(liveY - scanY) * 100f:F0} cm " +
+                      $"from the scanned floor {scanY:F2}: seated on the scanned floor.");
+        }
+        return scanY;
+    }
+
+    float nextFloorNoteAt;
 
     float EffectiveFloorInset()
     {

@@ -39,20 +39,46 @@ public sealed class ARDepthSnapshot
     public int Height => height;
 
     /// <summary>
+    /// ARCore depth is not started at all. Its own depth thread ("ms_depth") crashed the app when a
+    /// room was confirmed (2026-10-22, and 2026-10-24 even with depth switched off first), always
+    /// inside ARCore. Without it, found furniture is placed by the floor ray and fitted to the walls.
+    /// The user chose this on 2026-10-24; set true to bring depth back.
+    /// </summary>
+    public static readonly bool DepthEnabled = false;
+
+    /// <summary>
     /// Adds an AROcclusionManager to the AR camera if there isn't one, asking for environment
-    /// depth only: occlusion stays off, so what the user sees doesn't change.
+    /// depth only: occlusion stays off, so what the user sees doesn't change. Null when
+    /// <see cref="DepthEnabled"/> is off (the component isn't added: it would start depth at once).
     /// </summary>
     public static AROcclusionManager EnsureDepth(GameObject arCamera)
     {
         var occlusion = arCamera.GetComponent<AROcclusionManager>();
+        if (!DepthEnabled) return occlusion;
         if (occlusion == null)
         {
             occlusion = arCamera.AddComponent<AROcclusionManager>();
             occlusion.requestedOcclusionPreferenceMode = OcclusionPreferenceMode.NoOcclusion;
-            occlusion.requestedEnvironmentDepthMode = EnvironmentDepthMode.Medium;
+            // Depth runs on every frame once it's on; the fastest mode is plenty for placing a sofa
+            // and costs the phone the least during the walk.
+            occlusion.requestedEnvironmentDepthMode = EnvironmentDepthMode.Fastest;
             occlusion.environmentDepthTemporalSmoothingRequested = true;
         }
         return occlusion;
+    }
+
+    /// <summary>
+    /// Depth is only read while scanning (placing found furniture). Once the room is confirmed it is
+    /// switched off: ARCore's own depth thread crashed the app (null pointer inside ARCore) the moment
+    /// the room plan turned plane detection off while depth was still running.
+    /// </summary>
+    public static void SetDepthRunning(bool on)
+    {
+        if (on && !DepthEnabled) return;
+        var occlusion = Object.FindAnyObjectByType<AROcclusionManager>();
+        if (occlusion == null || occlusion.enabled == on) return;
+        occlusion.enabled = on;
+        Debug.Log($"[ARDepthSnapshot] Depth {(on ? "on" : "off")}.");
     }
 
     /// <summary>Copies the latest depth image; false when depth isn't available this frame.</summary>

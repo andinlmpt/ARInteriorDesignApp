@@ -58,8 +58,28 @@ function inStock(doc) {
   return q > 0;
 }
 
+/**
+ * The space a product takes in a layout: its 3D model's measured size when there is one, since AR
+ * shows the model at exactly that size. The listed size often describes one piece of a set (a
+ * 3-seater listed as 66" × 30" whose model is the sofa plus two chairs, 2.6 m × 2.6 m) or has width
+ * and depth the other way round (a bed listed L 75" as its width), and layouts planned with it ran
+ * into walls in AR. Products without a measured model keep their listed size.
+ */
+export function plannerFootprint(doc) {
+  const model = doc.modelSize;
+  if (model && model.width > 0 && model.depth > 0 && model.height > 0) {
+    return { width: Number(model.width), length: Number(model.depth), height: Number(model.height) };
+  }
+  return {
+    width: Number(doc.width) || 1,
+    length: Number(doc.depth) || 0.8,
+    height: Number(doc.height) || 0.8,
+  };
+}
+
 export function mapDocToPlannerItem(doc) {
   const pricePhp = resolvePricePhp(doc);
+  const footprint = plannerFootprint(doc);
   return {
     id: doc.id,
     catalogId: doc.id,
@@ -68,14 +88,10 @@ export function mapDocToPlannerItem(doc) {
     category: doc.category || 'other',
     glbUrl: doc.glbUrl || '',
     pricePhp,
-    width: Number(doc.width) || 1,
-    length: Number(doc.depth) || 0.8,
-    height: Number(doc.height) || 0.8,
-    dimensions: {
-      width: Number(doc.width) || 1,
-      length: Number(doc.depth) || 0.8,
-      height: Number(doc.height) || 0.8,
-    },
+    width: footprint.width,
+    length: footprint.length,
+    height: footprint.height,
+    dimensions: { ...footprint },
     styles: getStyles(doc),
     roomTypes: getRoomTypes(doc),
   };
@@ -387,6 +403,7 @@ export default {
   loadEligibleCatalogPool,
   selectCatalogFurnitureSet,
   mapDocToPlannerItem,
+  plannerFootprint,
   sumCatalogPricePhp,
   estimateFurnitureCostPhp,
 };

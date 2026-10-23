@@ -67,13 +67,120 @@ public static class AutoWallGeometry
         public static Settings Default => new()
         {
             mergeAngleDegrees = 10f,
-            mergeOffset = 0.15f,
+            mergeOffset = 0.25f,
             minCornerAngleDegrees = 60f,
-            cornerReach = 2.0f,
+            cornerReach = 1.5f,
             cornerInset = 0.3f,
-            minCornerWallLength = 0.5f,
-            innerWallGap = 0.25f,
+            minCornerWallLength = 1.0f,
+            innerWallGap = 0.35f,
         };
+    }
+
+    /// <summary>
+    /// Drops short pieces that don't line up with the room. Rooms are mostly square, so their walls
+    /// run in two directions at right angles; the main one comes from all pieces, weighted, with
+    /// angles folded onto 0–90°. A piece shorter than <paramref name="keepLength"/> more than
+    /// <paramref name="toleranceDegrees"/> off both directions is a curtain fold or a furniture side:
+    /// those made walls come and go in a furnished room. Longer pieces stay at any angle (a real
+    /// angled wall).
+    /// </summary>
+    public static List<WallPiece> DropOffAxisPieces(IReadOnlyList<WallPiece> pieces,
+        float toleranceDegrees = 15f, float keepLength = 1.5f)
+    {
+        var result = new List<WallPiece>(pieces.Count);
+        // Angles ×4 repeat every 90°, so both directions of a square room point the same way.
+        var sum = Vector2.zero;
+        foreach (var p in pieces)
+        {
+            var d = p.b - p.a;
+            if (d.sqrMagnitude < 1e-6f) continue;
+            var a4 = Mathf.Atan2(d.y, d.x) * 4f;
+            sum += new Vector2(Mathf.Cos(a4), Mathf.Sin(a4)) * p.weight;
+        }
+
+        if (pieces.Count < 3 || sum.sqrMagnitude < 1e-6f)
+        {
+            result.AddRange(pieces);
+            return result;
+        }
+
+        var main = Mathf.Atan2(sum.y, sum.x) * Mathf.Rad2Deg / 4f;
+        foreach (var p in pieces)
+        {
+            var d = p.b - p.a;
+            if (d.magnitude >= keepLength)
+            {
+                result.Add(p);
+                continue;
+            }
+
+            var angle = Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg;
+            var off = Mathf.Abs(Mathf.Repeat(angle - main + 45f, 90f) - 45f);
+            if (off <= toleranceDegrees) result.Add(p);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Turns walls that are nearly square to the room exactly square to it. ARCore's wall planes often
+    /// face a few degrees off, so one end of the blue wall stood out from the real wall while the other
+    /// touched it (5° over 3 m is 26 cm). The room's direction comes from all walls, longest counting
+    /// most; a wall within <paramref name="toleranceDegrees"/> of it (or of its right angle) is turned
+    /// about the middle of its seen part to match. Walls further off (a real angled wall) stay.
+    /// </summary>
+    public static void SquareWalls(List<Wall> walls, float toleranceDegrees = 12f)
+    {
+        if (walls.Count < 2) return;
+        // A second pass leaves out the walls that don't line up: a long angled wall pulled the
+        // room's direction several degrees its way.
+        if (!TryMainDirection(walls, float.NaN, toleranceDegrees, out var main)) return;
+        if (!TryMainDirection(walls, main, toleranceDegrees, out main)) return;
+
+        foreach (var w in walls)
+        {
+            var off = OffAxis(w, main);
+            if (Mathf.Abs(off) > toleranceDegrees || Mathf.Abs(off) < 0.01f) continue;
+
+            var mid = (w.End(0) + w.End(1)) * 0.5f;
+            var half = w.Length * 0.5f;
+            w.dir = Rotate(w.dir, -off);
+            w.normal = Rotate(w.normal, -off);
+            w.origin = mid;
+            w.tMin = -half;
+            w.tMax = half;
+        }
+    }
+
+    /// <summary>
+    /// The room's direction in degrees from the walls, longest counting most. With a direction
+    /// already known, only walls within <paramref name="toleranceDegrees"/> of it count.
+    /// </summary>
+    static bool TryMainDirection(List<Wall> walls, float known, float toleranceDegrees, out float main)
+    {
+        // Angles ×4 repeat every 90°, so both directions of a square room point the same way.
+        var sum = Vector2.zero;
+        foreach (var w in walls)
+        {
+            if (!float.IsNaN(known) && Mathf.Abs(OffAxis(w, known)) > toleranceDegrees) continue;
+            var a4 = Mathf.Atan2(w.dir.y, w.dir.x) * 4f;
+            sum += new Vector2(Mathf.Cos(a4), Mathf.Sin(a4)) * w.Length;
+        }
+
+        main = Mathf.Atan2(sum.y, sum.x) * Mathf.Rad2Deg / 4f;
+        return sum.sqrMagnitude >= 1e-6f;
+    }
+
+    /// <summary>Signed degrees from the wall to the nearest of the room's two directions (−45…45).</summary>
+    static float OffAxis(Wall w, float main) =>
+        Mathf.Repeat(Mathf.Atan2(w.dir.y, w.dir.x) * Mathf.Rad2Deg - main + 45f, 90f) - 45f;
+
+    static Vector2 Rotate(Vector2 v, float degrees)
+    {
+        var r = degrees * Mathf.Deg2Rad;
+        var cos = Mathf.Cos(r);
+        var sin = Mathf.Sin(r);
+        return new Vector2(v.x * cos - v.y * sin, v.x * sin + v.y * cos);
     }
 
     /// <summary>
@@ -193,7 +300,37 @@ public static class AutoWallGeometry
             }
         }
 
+        // Room walls meet at their ends (an L), they never cut through each other (an X). Where
+        // two seen walls cross well inside both, the shorter one is a desk or cabinet edge.
+        for (var i = 0; i < walls.Count; i++)
+        {
+            if (inner[i]) continue;
+            for (var j = 0; j < walls.Count; j++)
+            {
+                if (i == j || walls[j].Length <= walls[i].Length) continue;
+                if (CrossInside(walls[i], walls[j], CrossInset))
+                {
+                    inner[i] = true;
+                    break;
+                }
+            }
+        }
+
         return inner;
+    }
+
+    /// <summary>How far inside both seen parts a crossing must be to count as an X (m).</summary>
+    const float CrossInset = 0.3f;
+
+    /// <summary>The seen parts of <paramref name="a"/> and <paramref name="b"/> cross at least <paramref name="inset"/> from every end.</summary>
+    static bool CrossInside(Wall a, Wall b, float inset)
+    {
+        var denominator = a.dir.x * b.dir.y - a.dir.y * b.dir.x;
+        if (Mathf.Abs(denominator) < 0.2f) return false; // nearly parallel: not a crossing
+        var diff = b.origin - a.origin;
+        var ta = (diff.x * b.dir.y - diff.y * b.dir.x) / denominator;
+        var tb = (diff.x * a.dir.y - diff.y * a.dir.x) / denominator;
+        return ta > a.tMin + inset && ta < a.tMax - inset && tb > b.tMin + inset && tb < b.tMax - inset;
     }
 
     /// <summary>
@@ -528,6 +665,34 @@ public static class AutoWallGeometry
 
     /// <summary>Moves a point onto the wall line, keeping it where it is along the wall.</summary>
     public static Vector2 SnapToLine(Wall wall, Vector2 p) => wall.PointAt(wall.Project(p));
+
+    /// <summary>
+    /// The fourth corner of a rectangle from three: at the corner closest to square (within
+    /// <paramref name="toleranceDegrees"/>, both walls at least <paramref name="minSide"/> long) the
+    /// two walls are completed, so it goes opposite that corner.
+    /// </summary>
+    public static bool TryRectangleCorner(Vector2 p0, Vector2 p1, Vector2 p2, out Vector2 fourth,
+        float toleranceDegrees = 15f, float minSide = 1f)
+    {
+        fourth = default;
+        var points = new[] { p0, p1, p2 };
+        var best = float.MaxValue;
+        for (var i = 0; i < 3; i++)
+        {
+            var b = points[i];
+            var a = points[(i + 2) % 3];
+            var c = points[(i + 1) % 3];
+            var ba = a - b;
+            var bc = c - b;
+            if (ba.magnitude < minSide || bc.magnitude < minSide) continue;
+            var off = Mathf.Abs(Vector2.Angle(ba, bc) - 90f);
+            if (off > toleranceDegrees || off >= best) continue;
+            best = off;
+            fourth = a + c - b;
+        }
+
+        return best <= toleranceDegrees;
+    }
 }
 
 /// <summary>
@@ -581,7 +746,7 @@ public static class ScanFrameMath
 /// <summary>
 /// Keeps the walls steady while ARCore keeps re-estimating its planes. The walls found from the
 /// planes each round are matched to the walls already known: a match settles the known wall
-/// gently toward it and can only make it longer, a new wall shows after it has been seen twice,
+/// gently toward it and can only make it longer, a new wall shows after a few sightings,
 /// and a known wall stays when its plane drops out for a moment (a well-seen wall stays until
 /// the scan starts over). Without this the blue lines jump, shrink and vanish as planes merge.
 /// No AR types, so it is checked without a phone.
@@ -601,21 +766,28 @@ public sealed class AutoWallTracker
         public int confirmAfter;
         /// <summary>A wall that never showed goes after this many rounds unseen.</summary>
         public int dropUnconfirmedAfter;
-        /// <summary>A wall seen at least this often stays until the scan starts over.</summary>
+        /// <summary>A wall seen at least this often stays until the scan starts over…</summary>
         public int keepAfterSeen;
-        /// <summary>A shown wall seen less often goes after this many rounds unseen.</summary>
+        /// <summary>…when it is at least this long (m). Shorter pieces (a cabinet side, a door frame) can go.</summary>
+        public float keepMinLength;
+        /// <summary>A shown wall that isn't kept goes after this many rounds unseen.</summary>
         public int dropWeakAfter;
+        /// <summary>Seen within this many rounds counts as "seen just now".</summary>
+        public int recentRounds;
 
         public static Settings Default => new()
         {
-            matchAngleDegrees = 12f,
-            matchOffset = 0.2f,
+            matchAngleDegrees = 15f,
+            matchOffset = 0.3f,
             matchGap = 0.6f,
-            smoothing = 0.3f,
-            confirmAfter = 2,
+            // Gentle, and only walls seen in three rounds (¾ s) show: short-lived guesses never flash up.
+            smoothing = 0.25f,
+            confirmAfter = 3,
             dropUnconfirmedAfter = 2,
             keepAfterSeen = 8,
+            keepMinLength = 1.2f,
             dropWeakAfter = 40,
+            recentRounds = 8,
         };
     }
 
@@ -636,7 +808,11 @@ public sealed class AutoWallTracker
     /// <summary>Walls known so far, shown or not.</summary>
     public int KnownCount => known.Count;
 
-    public void Clear() => known.Clear();
+    public void Clear()
+    {
+        known.Clear();
+        recentlySeen.Clear();
+    }
 
     /// <summary>Takes this round's walls and returns the steady walls to use (copies).</summary>
     public List<AutoWallGeometry.Wall> Update(IReadOnlyList<AutoWallGeometry.Wall> found)
@@ -672,8 +848,9 @@ public sealed class AutoWallTracker
             var k = known[i];
             if (k.matched) continue;
             k.misses++;
+            var kept = k.seen >= settings.keepAfterSeen && k.wall.Length >= settings.keepMinLength;
             var drop = k.confirmed
-                ? k.seen < settings.keepAfterSeen && k.misses > settings.dropWeakAfter
+                ? !kept && k.misses > settings.dropWeakAfter
                 : k.misses > settings.dropUnconfirmedAfter;
             if (drop) known.RemoveAt(i);
         }
@@ -681,13 +858,21 @@ public sealed class AutoWallTracker
         MergeKnown();
 
         var result = new List<AutoWallGeometry.Wall>();
+        recentlySeen.Clear();
         foreach (var k in known)
         {
-            if (k.confirmed) result.Add(Copy(k.wall));
+            if (!k.confirmed) continue;
+            result.Add(Copy(k.wall));
+            recentlySeen.Add(k.misses <= settings.recentRounds);
         }
 
         return result;
     }
+
+    readonly List<bool> recentlySeen = new();
+
+    /// <summary>For each wall the last <see cref="Update"/> returned: seen just now (not only remembered).</summary>
+    public IReadOnlyList<bool> RecentlySeen => recentlySeen;
 
     Known FindMatch(AutoWallGeometry.Wall wall)
     {

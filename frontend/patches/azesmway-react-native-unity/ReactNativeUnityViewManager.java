@@ -4,6 +4,8 @@ import static com.azesmwayreactnativeunity.ReactNativeUnity.*;
 
 import android.os.Handler;
 import android.view.View;
+import android.view.ViewParent;
+import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -195,18 +197,33 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   }
 
   @Override
-  public void onDropViewInstance(ReactNativeUnityView view) {
-    view.removeOnAttachStateChangeListener(this);
+  public void onDropViewInstance(ReactNativeUnityView dropped) {
+    dropped.removeOnAttachStateChangeListener(this);
     // Park Unity in a tiny background host so the player survives screen unmounts.
     // Destroying UnityPlayer on Android UaaL cannot be restarted in-process.
-    if (isUnityReady()) {
+    // Only when the dropped view still owns the player: reopening an AR screen mounts the new
+    // view first and drops the old one a moment later, and pausing then froze the new screen
+    // (ARCore paused while the camera opened → black camera on the second scan).
+    if (isUnityReady() && ownsPlayer(dropped)) {
       try {
         addUnityViewToBackground();
         getPlayer().pause();
       } catch (Exception ignored) {
       }
     }
-    super.onDropViewInstance(view);
+    super.onDropViewInstance(dropped);
+  }
+
+  /** False when a newer RN view has already taken the Unity player (its frame sits in that view). */
+  private static boolean ownsPlayer(ReactNativeUnityView candidate) {
+    if (candidate != view) return false;
+    try {
+      FrameLayout frame = getPlayer().requestFrame();
+      ViewParent parent = frame.getParent();
+      return parent == null || parent == candidate;
+    } catch (Exception ignored) {
+      return true;
+    }
   }
 
   @Override

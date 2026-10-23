@@ -88,3 +88,6 @@ frontend/unity/
 *.booproj
 *.svd
 
+
+# Claude session handoff notes (internal, not for the client repo)
+plan.md

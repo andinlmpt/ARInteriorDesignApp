@@ -117,6 +117,8 @@ public class ARDesignSpatialMappingController : MonoBehaviour
     readonly Dictionary<string, int> announcedOpenings = new();
     List<AutoOpeningResolver.LiveOpening> liveOpenings = new();
     readonly List<FurnitureAutoSuggestion> liveFurniture = new();
+    /// <summary>Furniture seen once during the walk: drawn faint until it's seen again.</summary>
+    readonly List<FurnitureAutoSuggestion> liveMaybeFurniture = new();
 
     readonly List<RoomObstaclePayload> knownFurniture = new();
     int knownFurnitureCount = -1;
@@ -147,6 +149,16 @@ public class ARDesignSpatialMappingController : MonoBehaviour
     /// <summary>The build has the model that sees doors and windows.</summary>
     public bool DetectsOpenings => ARFurnitureCocoDetector.HasRoomModel;
     public bool IsFurnitureScanning => autoSuggest != null && autoSuggest.IsScanning;
+
+    /// <summary>The object detector is loaded and has run once (or there is none to wait for).</summary>
+    public bool IsDetectorWarm => autoSuggest == null || autoSuggest.IsDetectorWarm;
+
+    /// <summary>Loads and runs the object detector once, so its first detection doesn't freeze the walk.</summary>
+    public void WarmUpDetector()
+    {
+        ResolveReferences();
+        autoSuggest?.WarmUpDetector();
+    }
 
     public IReadOnlyList<RoomOpeningPayload> Openings => openings;
     public IReadOnlyList<RoomObstaclePayload> Obstacles => obstacles;
@@ -326,12 +338,18 @@ public class ARDesignSpatialMappingController : MonoBehaviour
             autoSuggest.OpeningSightings, WalkWalls(), FloorY, cornerBuilder.WallHeight, IsRemovedOpening);
 
         liveFurniture.Clear();
+        liveMaybeFurniture.Clear();
         foreach (var s in autoSuggest.EarlySightings)
         {
             if (s.source != "coco") continue;
-            if (s.sightings < AutoAcceptSightings && s.confidence < AutoAcceptConfidence) continue;
             if (OverlapsAny(s, obstacles) || OverlapsAny(s, removedObstacles)) continue;
-            liveFurniture.Add(s);
+            // Square to the walls walked so far (kept inside them once the room is closed).
+            var fitted = ARFurnitureAutoSuggestService.FitToRoom(s, cornerBuilder.Corners, cornerBuilder.IsLoopClosed);
+            // Seen once, it shows faint straight away: waiting for a second detection took 8–13 s.
+            if (s.sightings < AutoAcceptSightings && s.confidence < AutoAcceptConfidence)
+                liveMaybeFurniture.Add(fitted);
+            else
+                liveFurniture.Add(fitted);
         }
 
         if (announce) AnnounceLive();
@@ -369,6 +387,8 @@ public class ARDesignSpatialMappingController : MonoBehaviour
             sb.Append(o.kind).Append(Mathf.RoundToInt(o.Center.x * 10f)).Append(',').Append(Mathf.RoundToInt(o.Center.z * 10f)).Append(';');
         foreach (var s in liveFurniture)
             sb.Append(s.id).Append(Mathf.RoundToInt(s.center.x * 10f)).Append(',').Append(Mathf.RoundToInt(s.center.z * 10f)).Append(';');
+        foreach (var s in liveMaybeFurniture)
+            sb.Append('?').Append(s.id).Append(Mathf.RoundToInt(s.center.x * 10f)).Append(',').Append(Mathf.RoundToInt(s.center.z * 10f)).Append(';');
         sb.Append(obstacles.Count);
         return sb.ToString();
     }
@@ -418,6 +438,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         RestoreManualOpenings();
         liveOpenings.Clear();
         liveFurniture.Clear();
+        liveMaybeFurniture.Clear();
         liveSignature = string.Empty;
         history.Clear();
         CurrentAddMode = AddMode.None;
@@ -763,6 +784,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         pendingSuggestions.Clear();
         liveOpenings.Clear();
         liveFurniture.Clear();
+        liveMaybeFurniture.Clear();
         history.Clear();
         announcedFurniture.Clear();
         announcedOpenings.Clear();
@@ -934,13 +956,18 @@ public class ARDesignSpatialMappingController : MonoBehaviour
 
         obstacleCounter += 1;
         var type = addFurnitureType;
+        // Square to the nearest wall and inside the room, like the furniture the scan finds.
+        var box = ARFurnitureAutoSuggestService.FitToRoom(
+            new FurnitureAutoSuggestion { center = world, size = DefaultObstacleSize(type) },
+            cornerBuilder != null ? cornerBuilder.Corners : null,
+            cornerBuilder != null && cornerBuilder.IsLoopClosed);
         var obstacle = new RoomObstaclePayload
         {
             id = $"obstacle-{obstacleCounter}",
             type = type,
-            center = new ARDesignVec3(world),
-            size = new ARDesignVec3(DefaultObstacleSize(type)),
-            yaw = 0f,
+            center = new ARDesignVec3(box.center),
+            size = new ARDesignVec3(box.size),
+            yaw = box.yaw,
         };
         obstacles.Add(obstacle);
         history.Add(new ReviewAction { kind = ActionKind.AddedObstacle, obstacle = obstacle });
@@ -1081,7 +1108,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
             liveOpenings = reviewing ? null : liveOpenings,
             obstacles = obstacles,
             furniture = reviewing ? null : liveFurniture,
-            maybe = reviewing ? pendingSuggestions : null,
+            maybe = reviewing ? pendingSuggestions : liveMaybeFurniture,
             pendingEdge = HasPendingOpeningEdge ? pendingEdgePoint : null,
         });
     }

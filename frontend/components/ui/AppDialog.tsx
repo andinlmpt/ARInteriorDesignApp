@@ -2,7 +2,7 @@
  * Soft, rounded dialog — replaces raw system Alert.alert styling.
  */
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   Modal,
   View,
@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   Platform,
   KeyboardAvoidingView,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -39,6 +40,11 @@ export interface AppDialogProps {
   variant?: 'default' | 'danger';
   /** Extra content between the message and actions (e.g. a text field). */
   children?: React.ReactNode;
+  /**
+   * Draw over the screen instead of in a Modal. A Modal is its own Android window: over the AR
+   * view it takes focus, which pauses Unity and restarts AR tracking even when the user taps "Stay".
+   */
+  inline?: boolean;
 }
 
 export function AppDialog({
@@ -51,8 +57,19 @@ export function AppDialog({
   icon,
   variant = 'default',
   children,
+  inline = false,
 }: AppDialogProps) {
   const { colors } = useTheme();
+
+  // Without a Modal nothing else closes the dialog on Android back.
+  useEffect(() => {
+    if (!inline || !visible) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      onRequestClose?.();
+      return true;
+    });
+    return () => sub.remove();
+  }, [inline, visible, onRequestClose]);
 
   const handleBackdrop = () => {
     if (!dismissOnBackdrop) return;
@@ -89,6 +106,87 @@ export function AppDialog({
     variant === 'danger' ? `${colors.danger}18` : colors.accentSoft;
   const iconColor = variant === 'danger' ? colors.danger : colors.accent;
 
+  const dialog = (
+    <KeyboardAvoidingView
+      style={[styles.backdrop, inline && styles.inlineBackdrop]}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <Pressable
+        style={StyleSheet.absoluteFillObject}
+        onPress={handleBackdrop}
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss dialog"
+      />
+      <View
+        style={[
+          styles.card,
+          {
+            backgroundColor: colors.surfacePrimary,
+            ...Platform.select({
+              ios: shadows.lg,
+              android: { elevation: 8 },
+              default: shadows.md,
+            }),
+          },
+        ]}
+      >
+        {icon ? (
+          <View style={[styles.iconBadge, { backgroundColor: iconBadgeBg }]}>
+            <Ionicons name={icon} size={28} color={iconColor} />
+          </View>
+        ) : null}
+
+        <AppText variant="h2" style={[styles.title, { color: colors.textPrimary }]}>
+          {title}
+        </AppText>
+        {message ? (
+          <AppText variant="body" color="textMuted" style={styles.message}>
+            {message}
+          </AppText>
+        ) : null}
+
+        {children ? <View style={styles.content}>{children}</View> : null}
+
+        <View
+          style={[
+            styles.actions,
+            actions.length === 1 && styles.actionsSingle,
+            actions.length > 2 && styles.actionsStacked,
+          ]}
+        >
+          {actions.map((action) => {
+            const palette = toneStyles(action.tone);
+            return (
+              <TouchableOpacity
+                key={action.label}
+                style={[
+                  styles.actionBtn,
+                  actions.length === 2 && styles.actionBtnFlex,
+                  actions.length > 2 && styles.actionBtnFull,
+                  { backgroundColor: palette.backgroundColor },
+                ]}
+                onPress={action.onPress}
+                activeOpacity={0.85}
+              >
+                <AppText
+                  variant="subtitle"
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                  style={[styles.actionLabel, { color: palette.textColor }]}
+                >
+                  {action.label}
+                </AppText>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+    </KeyboardAvoidingView>
+  );
+
+  if (inline) return visible ? dialog : null;
+
   return (
     <Modal
       visible={visible}
@@ -97,82 +195,7 @@ export function AppDialog({
       statusBarTranslucent
       onRequestClose={onRequestClose}
     >
-      <KeyboardAvoidingView
-        style={styles.backdrop}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <Pressable
-          style={StyleSheet.absoluteFillObject}
-          onPress={handleBackdrop}
-          accessibilityRole="button"
-          accessibilityLabel="Dismiss dialog"
-        />
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: colors.surfacePrimary,
-              ...Platform.select({
-                ios: shadows.lg,
-                android: { elevation: 8 },
-                default: shadows.md,
-              }),
-            },
-          ]}
-        >
-          {icon ? (
-            <View style={[styles.iconBadge, { backgroundColor: iconBadgeBg }]}>
-              <Ionicons name={icon} size={28} color={iconColor} />
-            </View>
-          ) : null}
-
-          <AppText variant="h2" style={[styles.title, { color: colors.textPrimary }]}>
-            {title}
-          </AppText>
-          {message ? (
-            <AppText variant="body" color="textMuted" style={styles.message}>
-              {message}
-            </AppText>
-          ) : null}
-
-          {children ? <View style={styles.content}>{children}</View> : null}
-
-          <View
-            style={[
-              styles.actions,
-              actions.length === 1 && styles.actionsSingle,
-              actions.length > 2 && styles.actionsStacked,
-            ]}
-          >
-            {actions.map((action) => {
-              const palette = toneStyles(action.tone);
-              return (
-                <TouchableOpacity
-                  key={action.label}
-                  style={[
-                    styles.actionBtn,
-                    actions.length === 2 && styles.actionBtnFlex,
-                    actions.length > 2 && styles.actionBtnFull,
-                    { backgroundColor: palette.backgroundColor },
-                  ]}
-                  onPress={action.onPress}
-                  activeOpacity={0.85}
-                >
-                  <AppText
-                    variant="subtitle"
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.85}
-                    style={[styles.actionLabel, { color: palette.textColor }]}
-                  >
-                    {action.label}
-                  </AppText>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-      </KeyboardAvoidingView>
+      {dialog}
     </Modal>
   );
 }
@@ -184,6 +207,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.xl,
+  },
+  inlineBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1000,
+    elevation: 1000,
   },
   card: {
     width: '100%',

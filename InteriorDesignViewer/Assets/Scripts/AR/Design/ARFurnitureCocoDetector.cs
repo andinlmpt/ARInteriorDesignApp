@@ -71,7 +71,11 @@ public class ARFurnitureCocoDetector : MonoBehaviour
     [Tooltip("Open Images scores run lower than COCO's; repeat sightings make up for it.")]
     [SerializeField] private float openImagesScoreThreshold = 0.2f;
     [SerializeField] private float openImagesFurnitureConfidence = 0.25f;
-    [SerializeField] private float scanIntervalSeconds = 2.0f;
+    [Tooltip("Pause after a detection before the next one. Each detection briefly costs a frame or two, " +
+             "so fewer of them keeps the walk smooth; things are still seen several times on the way.")]
+    [SerializeField] private float scanIntervalSeconds = 4.0f;
+    [Tooltip("Without depth, furniture further than this (m) isn't placed: the floor ray is too unsure there.")]
+    [SerializeField] private float maxFloorRayDistance = 3.5f;
     [Tooltip("A new frame is only captured while the phone turns slower than this (degrees per second).")]
     [SerializeField] private float maxTurnDegreesPerSecond = 35f;
     [Tooltip("…and moves slower than this (metres per second). Steady frames are sharper too.")]
@@ -83,6 +87,12 @@ public class ARFurnitureCocoDetector : MonoBehaviour
     static readonly Color LetterboxGrey = new Color(0.447f, 0.447f, 0.447f, 1f);
 
     float nextScanTime;
+    float lastCaptureMs;
+    float lastBeginMs;
+    float lastReadMs;
+    ARCameraBackground cameraBackground;
+    float layerBudget = 2f;
+    float usualFrameSeconds = 1f / 30f;
     bool loggedMissingModel;
     int nextSuggestionId;
     bool openImages;
@@ -193,6 +203,39 @@ public class ARFurnitureCocoDetector : MonoBehaviour
 #else
         yield break;
 #endif
+    }
+
+    /// <summary>The model is loaded and has run once (its GPU programs are compiled).</summary>
+    public bool IsWarm { get; private set; }
+
+    /// <summary>
+    /// Loads the model and runs it once on a blank frame. The first run compiles the GPU programs
+    /// and blocks for several seconds (7–8 s on a Realme GT Master); done here, when the scanner
+    /// opens and says so, instead of as a freeze the moment the walk starts.
+    /// </summary>
+    public void WarmUp()
+    {
+        if (IsWarm || IsScanning) return;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        TryLoadModel();
+        var loadMs = watch.Elapsed.TotalMilliseconds;
+        if (ready)
+        {
+            try
+            {
+                TextureConverter.ToTensor(inputRt, inputTensor, default);
+                worker.Schedule(inputTensor);
+                // Reading an output waits for the whole run, so every program is compiled now.
+                using var boxes = (worker.PeekOutput(0) as Tensor<float>)?.ReadbackAndClone();
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[ARFurnitureCocoDetector] Warm-up failed: {e.Message}");
+            }
+        }
+
+        IsWarm = true;
+        Debug.Log($"[Perf] Detector warm-up took {watch.Elapsed.TotalMilliseconds:F0} ms (model load {loadMs:F0} ms).");
     }
 
     void TryLoadModel()
@@ -334,10 +377,21 @@ public class ARFurnitureCocoDetector : MonoBehaviour
 
         if (completedDetections == null)
         {
-            if (!IsScanning && Time.unscaledTime >= nextScanTime && !IsMovingFast && TryCaptureFrame())
-                BeginInference();
+            if (!IsScanning && Time.unscaledTime >= nextScanTime && !IsMovingFast)
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                var captured = TryCaptureFrame();
+                lastCaptureMs = (float)watch.Elapsed.TotalMilliseconds;
+                if (captured)
+                {
+                    watch.Restart();
+                    BeginInference();
+                    lastBeginMs = (float)watch.Elapsed.TotalMilliseconds;
+                }
+            }
             return empty;
         }
+        var placeWatch = System.Diagnostics.Stopwatch.StartNew();
         var detections = completedDetections;
         completedDetections = null;
 
@@ -377,6 +431,16 @@ public class ARFurnitureCocoDetector : MonoBehaviour
             }
             else if (TryPlaceOnFloor(det.normalizedBox, floorY, out center))
             {
+                // Far away the ray meets the floor at a shallow angle: a little error is metres
+                // (a bed landed 4.5 m from where it was). Leave it for a closer look.
+                var flat = center - captureOrigin;
+                flat.y = 0f;
+                if (flat.magnitude > maxFloorRayDistance)
+                {
+                    notes.Add($"{what} dropped (too far to place without depth, {flat.magnitude:F1} m)");
+                    continue;
+                }
+
                 size = defaultSize;
                 yaw = FacingYaw(CaptureFlatForward());
                 method = "floor ray, default size";
@@ -421,6 +485,9 @@ public class ARFurnitureCocoDetector : MonoBehaviour
 
         Debug.Log($"[ARFurnitureCocoDetector] AR scan: {detections.Count} detections, {results.Count} furniture suggestions" +
             (notes.Count > 0 ? ": " + string.Join("; ", notes) : "."));
+        // Which step of a detection costs the frame it runs in (a long one is a visible freeze).
+        Debug.Log($"[Perf] Detection steps: capture {lastCaptureMs:F0} ms, start {lastBeginMs:F0} ms, " +
+                  $"read {lastReadMs:F0} ms, place {placeWatch.Elapsed.TotalMilliseconds:F0} ms.");
         return results;
     }
 
@@ -594,9 +661,22 @@ public class ARFurnitureCocoDetector : MonoBehaviour
             captureBottomLeft = arCamera.ViewportToWorldPoint(new Vector3(0, 0, arCamera.nearClipPlane));
             captureBottomRight = arCamera.ViewportToWorldPoint(new Vector3(1, 0, arCamera.nearClipPlane));
             captureTopLeft = arCamera.ViewportToWorldPoint(new Vector3(0, 1, arCamera.nearClipPlane));
-            arCamera.targetTexture = frameRt;
-            arCamera.Render();
-            arCamera.targetTexture = previousTarget;
+
+            // Copy just the camera image, as the screen shows it: far cheaper than rendering the
+            // whole scene a second time, and the scan's own walls and labels stay out of what the
+            // model looks at. Without the background material, render the camera as before.
+            if (cameraBackground == null) cameraBackground = arCamera.GetComponent<ARCameraBackground>();
+            var backgroundMaterial = cameraBackground != null && cameraBackground.enabled ? cameraBackground.material : null;
+            if (backgroundMaterial != null)
+            {
+                Graphics.Blit(null, frameRt, backgroundMaterial);
+            }
+            else
+            {
+                arCamera.targetTexture = frameRt;
+                arCamera.Render();
+                arCamera.targetTexture = previousTarget;
+            }
 
             // Depth for the same moment, so detections can be placed after the phone has moved on.
             if (occlusion == null && cameraManager != null)
@@ -639,15 +719,38 @@ public class ARFurnitureCocoDetector : MonoBehaviour
         }
         catch (Exception e)
         {
-            Debug.LogWarning($"[ARFurnitureCocoDetector] Inference failed: {e.Message}");
-            ReleaseModel();
-            loadAttempted = true;
+            OnInferenceFailed(e);
         }
+    }
+
+    /// <summary>
+    /// How many model layers to run this frame. Each layer is GPU work on top of the AR camera, so
+    /// when frames get slower than the phone's usual pace the detector backs off (down to one layer a
+    /// frame, and one while the phone turns), and creeps back up while frames stay quick. Detection
+    /// then takes a little longer instead of the scan stuttering.
+    /// </summary>
+    int LayersThisFrame()
+    {
+        var dt = Time.unscaledDeltaTime;
+        if (!IsScanning)
+        {
+            // The phone's usual frame time, learned while the detector is idle.
+            if (dt > 0f && dt < 0.2f) usualFrameSeconds = Mathf.Lerp(usualFrameSeconds, dt, 0.05f);
+            return 0;
+        }
+
+        if (dt > usualFrameSeconds * 1.3f + 0.004f)
+            layerBudget = Mathf.Max(1f, layerBudget - 1f);
+        else if (dt < usualFrameSeconds * 1.1f)
+            layerBudget = Mathf.Min(maxLayersPerFrame, layerBudget + 0.25f);
+
+        return IsMovingFast ? 1 : Mathf.Max(1, Mathf.FloorToInt(layerBudget));
     }
 
     void Update()
     {
         TrackCameraMotion();
+        var layersThisFrame = LayersThisFrame();
         if (!IsScanning) return;
         inferenceFrames++;
         try
@@ -658,7 +761,7 @@ public class ARFurnitureCocoDetector : MonoBehaviour
             {
                 // Spread the model over frames a few layers at a time, so the GPU work of one
                 // detection doesn't land in one frame (a visible camera stutter). Never wait for output.
-                for (var layers = 0; layers < maxLayersPerFrame; layers++)
+                for (var layers = 0; layers < layersThisFrame; layers++)
                 {
                     if (schedule.MoveNext()) continue;
                     (schedule as IDisposable)?.Dispose();
@@ -677,9 +780,13 @@ public class ARFurnitureCocoDetector : MonoBehaviour
             if (schedule != null || boxOutput == null) return;
             if (boxOutput.count > 0 && (!boxOutput.IsReadbackRequestDone()
                 || !classOutput.IsReadbackRequestDone() || !scoreOutput.IsReadbackRequestDone())) return;
+            var readWatch = System.Diagnostics.Stopwatch.StartNew();
             completedDetections = ReadDetections(boxOutput, classOutput, scoreOutput);
-            Debug.Log($"[Perf] Detection took {(Time.unscaledTime - inferenceStarted) * 1000f:F0} ms over {inferenceFrames} frames.");
+            lastReadMs = (float)readWatch.Elapsed.TotalMilliseconds;
+            Debug.Log($"[Perf] Detection took {(Time.unscaledTime - inferenceStarted) * 1000f:F0} ms over {inferenceFrames} frames " +
+                      $"(layers/frame now {layerBudget:F1}, usual frame {usualFrameSeconds * 1000f:F0} ms).");
             if (discardInFlight) completedDetections = null;
+            failedRunsInARow = 0;
             boxOutput = null;
             classOutput = null;
             scoreOutput = null;
@@ -687,10 +794,38 @@ public class ARFurnitureCocoDetector : MonoBehaviour
         }
         catch (Exception e)
         {
-            Debug.LogWarning($"[ARFurnitureCocoDetector] Inference failed: {e.Message}");
+            OnInferenceFailed(e);
+        }
+    }
+
+    /// <summary>A run failed one after another this many times: the detector is switched off for the scan.</summary>
+    const int MaxFailedRunsInARow = 3;
+    int failedRunsInARow;
+
+    /// <summary>
+    /// One failed run is dropped and the next one tries again. Switching the detector off at the
+    /// first failure ended furniture detection for the rest of the scan, and one run failed early in
+    /// every scan on the phone (2026-10-24, "Cannot access the data as it is not available").
+    /// </summary>
+    void OnInferenceFailed(Exception e)
+    {
+        failedRunsInARow++;
+        // The type and where it was thrown: the phone's logs have Unity stack traces turned off.
+        Debug.LogWarning($"[ARFurnitureCocoDetector] Inference failed ({failedRunsInARow} in a row): " +
+                         $"{e.GetType().Name}: {e.Message}\n{e.StackTrace}");
+        if (failedRunsInARow >= MaxFailedRunsInARow)
+        {
             ReleaseModel();
             loadAttempted = true;
+            return;
         }
+
+        (schedule as IDisposable)?.Dispose();
+        schedule = null;
+        boxOutput = null;
+        classOutput = null;
+        scoreOutput = null;
+        nextScanTime = Time.unscaledTime + scanIntervalSeconds;
     }
 
     /// <summary>Smoothed camera speed (same idea as <see cref="ARScanGuidance"/>), to skip blurry frames.</summary>

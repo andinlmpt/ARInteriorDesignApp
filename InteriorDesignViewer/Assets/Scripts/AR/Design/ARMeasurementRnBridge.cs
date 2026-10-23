@@ -76,7 +76,9 @@ public class ARMeasurementRnBridge : MonoBehaviour
 
         if (message == null || string.IsNullOrEmpty(message.method)) return;
 
-        Debug.Log($"[ARMeasurementRnBridge] ← {message.method}");
+        // Finger moves arrive every frame while dragging: logging them flooded the phone's log.
+        if (message.method != "plannerPointer")
+            Debug.Log($"[ARMeasurementRnBridge] ← {message.method}");
 
         switch (message.method)
         {
@@ -375,6 +377,8 @@ public class ARMeasurementRnBridge : MonoBehaviour
     /// </summary>
     void SoftClose(bool notifyRn)
     {
+        // Closed: the next open is a real reopen, however soon it comes.
+        lastScanStartedAt = -100f;
         if (exportRoutine != null)
         {
             StopCoroutine(exportRoutine);
@@ -419,9 +423,18 @@ public class ARMeasurementRnBridge : MonoBehaviour
     {
         // A repeat "open" right after a fresh start (RN retries, ping races) would restart the
         // scan — and reset tracking — again for nothing: answer it and keep the scan running.
+        // A reload already on its way covers this open too (several opens can arrive together
+        // when they were queued while Unity was busy).
+        if (reloadRoutine != null && !HasPendingDesignLayout)
+        {
+            Debug.Log("[ARMeasurementRnBridge] A reload is already under way — ignoring a repeat open.");
+            return;
+        }
+
+        // Only while that scan is still running: an open after it ended (confirmed, closed without
+        // a close message) is a real reopen, however soon it comes.
         var scan = UnityEngine.Object.FindFirstObjectByType<RoomScanController>();
-        if (reloadRoutine == null && !HasPendingDesignLayout && scan != null
-            && scan.Phase == RoomScanController.ScanPhase.Scanning
+        if (!HasPendingDesignLayout && scan != null && scan.Phase == RoomScanController.ScanPhase.Scanning
             && Time.unscaledTime - lastScanStartedAt < DuplicateOpenSeconds)
         {
             Debug.Log("[ARMeasurementRnBridge] Scan just started — ignoring a repeat open.");

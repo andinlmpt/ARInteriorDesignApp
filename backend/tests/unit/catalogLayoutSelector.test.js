@@ -1,5 +1,6 @@
 import {
   mapDocToPlannerItem,
+  plannerFootprint,
   selectCatalogFurnitureSet,
   sumCatalogPricePhp,
   estimateFurnitureCostPhp,
@@ -96,5 +97,29 @@ describe('catalogLayoutSelector', () => {
     expect(cost.subtotalPhp).toBe(21998);
     expect(cost.totalPhp).toBe(24198);
     expect(sumCatalogPricePhp(pool.slice(0, 2))).toBe(21998);
+  });
+
+  test('layouts use the 3D model size: AR shows the model, not the listed piece', () => {
+    // Listed as one 66" sofa; the model is the whole 3-piece set.
+    const set = mapDocToPlannerItem({
+      id: 'sofa-set', displayName: 'Sofa Set', category: 'sofa', pricePhp: 20000,
+      width: 1.68, depth: 0.76, height: 0.81,
+      modelSize: { width: 2.61, depth: 2.62, height: 0.81 },
+    });
+    expect(set.width).toBe(2.61);
+    expect(set.length).toBe(2.62);
+    expect(set.dimensions).toEqual({ width: 2.61, length: 2.62, height: 0.81 });
+
+    // Listed with its 75" length as the width: the model's long side is its depth.
+    const bed = plannerFootprint({ width: 1.905, depth: 0.914, height: 0.61, modelSize: { width: 1.58, depth: 2.61, height: 1.32 } });
+    expect(bed).toEqual({ width: 1.58, length: 2.61, height: 1.32 });
+  });
+
+  test('without a measured model the listed size is used', () => {
+    expect(plannerFootprint({ width: 1.2, depth: 0.6, height: 0.75, modelSize: null }))
+      .toEqual({ width: 1.2, length: 0.6, height: 0.75 });
+    expect(plannerFootprint({ width: 1.2, depth: 0.6, height: 0.75, modelSize: { width: 0, depth: 0.5, height: 0.7 } }))
+      .toEqual({ width: 1.2, length: 0.6, height: 0.75 });
+    expect(plannerFootprint({})).toEqual({ width: 1, length: 0.8, height: 0.8 });
   });
 });

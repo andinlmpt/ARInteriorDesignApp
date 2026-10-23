@@ -57,7 +57,18 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     [SerializeField] private int maxCorners = 24;
     [SerializeField] private bool showEdgeMeasurements = true;
     [SerializeField] private bool showLivePreviewMeasurement = true;
+    [Tooltip("A label on the height line too (the scan card already shows the live height).")]
+    [SerializeField] private bool showHeightLabel = false;
     [SerializeField] private bool keepMeasurementsAfterConfirm = false;
+
+    [Header("Steady corners")]
+    [Tooltip("After a tap the aim under the finger is followed until it holds within this (m) for the window below; the corner goes at the middle of it.")]
+    [SerializeField] private float steadyTolerance = 0.025f;
+    [SerializeField] private float steadyWindowSeconds = 0.35f;
+    [Tooltip("If the aim never holds that still, the steadiest moment within this long is used.")]
+    [SerializeField] private float steadyMaxSeconds = 1.5f;
+    [Tooltip("After ARCore finds its place again, taps wait this long: positions still jump just after.")]
+    [SerializeField] private float trackingSettleSeconds = 1f;
 
     /// <summary>
     /// Anchor for one tapped point. Anchors are created asynchronously, so the slot can be
@@ -104,6 +115,18 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     int lastHeightPreviewCm = int.MinValue;
     /// <summary>Follows the aim while looking up and keeps the last steady ceiling reading (see <see cref="ScanHeightFilter"/>).</summary>
     readonly ScanHeightFilter heightFilter = new();
+
+    // A tapped corner is placed once the aim under the finger holds still (see TickSteadyCorner).
+    readonly List<float> steadyTimes = new();
+    readonly List<Vector3> steadyPoints = new();
+    readonly List<float> sortScratch = new();
+    bool steadying;
+    Vector2 steadyScreenPoint;
+    float steadyStartedAt;
+    Vector3 steadyBest;
+    float steadyBestSpread;
+    bool trackingWasGood;
+    float trackingGoodSince = float.NegativeInfinity;
 
     public IReadOnlyList<Vector3> Corners => corners;
     public int CornerCount => corners.Count;
@@ -181,8 +204,77 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
 
     public event Action CornersChanged;
     public event Action HeightPhaseChanged;
+    /// <summary>A tap was ignored because ARCore isn't tracking well (with the reason it gave).</summary>
+    public event Action<NotTrackingReason> TapIgnored;
+
+    /// <summary>A tapped corner is waiting for the aim to hold still before it is placed.</summary>
+    public bool IsSteadying => steadying;
+    /// <summary>0–1 while <see cref="IsSteadying"/>.</summary>
+    public float SteadyProgress { get; private set; }
+    /// <summary>Where the waiting corner will go (valid while <see cref="IsSteadying"/>).</summary>
+    public Vector3 SteadyPoint { get; private set; }
+
+    /// <summary>
+    /// ARCore is tracking well and has been for a moment. Points tapped otherwise land in the wrong
+    /// place (in low light or right after it finds its place again, positions jump).
+    /// </summary>
+    public bool TrackingSettled =>
+        trackingWasGood && Time.unscaledTime - trackingGoodSince >= trackingSettleSeconds;
     /// <summary>Automatic outline only: the user tapped this floor point while outlining.</summary>
     public event Action<Vector3> AutoTapped;
+    /// <summary>Automatic outline only: the user pressed and held on this floor point (removes a corner there).</summary>
+    public event Action<Vector3> AutoLongPressed;
+
+    /// <summary>Holding a finger this long without moving it is a long press.</summary>
+    const float LongPressSeconds = 0.6f;
+    /// <summary>A finger that moves further than this (pixels) is neither a tap nor a long press.</summary>
+    const float PressSlopPixels = 24f;
+    int pressTouchId = -1;
+    Vector2 pressStart;
+    float pressStartedAt;
+    bool pressFired;
+
+    /// <summary>
+    /// Automatic outline: a short tap adds a corner (on release) and pressing and holding removes the
+    /// one under the finger. Removing by a second tap deleted corners by accident: a tap that seemed to
+    /// do nothing was tapped again (6 of 8 tapped corners went that way in one scan on the phone).
+    /// </summary>
+    void TickAutoPress()
+    {
+        if (Touch.activeTouches.Count != 1)
+        {
+            pressTouchId = -1;
+            return;
+        }
+
+        var touch = Touch.activeTouches[0];
+        if (touch.phase == TouchPhase.Began)
+        {
+            pressTouchId = IsPointerOverUI(touch.touchId) ? -1 : touch.touchId;
+            pressStart = touch.screenPosition;
+            pressStartedAt = Time.unscaledTime;
+            pressFired = false;
+            return;
+        }
+
+        if (touch.touchId != pressTouchId || pressFired) return;
+        if (Vector2.Distance(touch.screenPosition, pressStart) > PressSlopPixels)
+        {
+            pressTouchId = -1;
+            return;
+        }
+
+        var held = Time.unscaledTime - pressStartedAt;
+        var released = touch.phase is TouchPhase.Ended or TouchPhase.Canceled;
+        if (!released && held < LongPressSeconds) return;
+        if (touch.phase == TouchPhase.Canceled) return;
+
+        pressFired = true;
+        if (!TryGetFloorHit(pressStart, out var hit)) return;
+        hit.y = FindFloorY(hit);
+        if (held >= LongPressSeconds) AutoLongPressed?.Invoke(hit);
+        else AutoTapped?.Invoke(hit);
+    }
 
     void Awake()
     {
@@ -237,7 +329,16 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
 
     void Update()
     {
-        if (!active) return;
+        var trackingGood = ARAutoRoomScan.IsTrackingWell;
+        if (trackingGood && !trackingWasGood) trackingGoodSince = Time.unscaledTime;
+        trackingWasGood = trackingGood;
+
+        if (!active)
+        {
+            // A corner left waiting would otherwise be placed at a stale point when this comes back.
+            if (steadying) CancelSteadyCorner();
+            return;
+        }
 
         SyncAnchoredPoints();
 
@@ -266,25 +367,157 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         }
 
         UpdatePreview();
+        TickSteadyCorner();
+
+        if (autoOutline)
+        {
+            TickAutoPress();
+            return;
+        }
 
         if (Touch.activeTouches.Count != 1) return;
         var widthTouch = Touch.activeTouches[0];
         if (widthTouch.phase != TouchPhase.Began) return;
         if (IsPointerOverUI(widthTouch.touchId)) return;
 
-        if (!TryGetFloorHit(widthTouch.screenPosition, out var widthHit)) return;
-        if (autoOutline)
+        if (steadying) return;
+        if (!TrackingSettled)
         {
-            widthHit.y = FindFloorY(widthHit);
-            AutoTapped?.Invoke(widthHit);
+            TapIgnored?.Invoke(ARSession.notTrackingReason);
             return;
         }
 
-        TryAddCorner(widthHit);
+        if (!TryGetFloorHit(widthTouch.screenPosition, out _)) return;
+        BeginSteadyCorner(widthTouch.screenPosition);
     }
+
+    // ── Steady corners ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A tap starts following the aim under the finger instead of placing the corner at once: the
+    /// tap itself jolts the phone, and at 2–3 m a small shake is several centimetres.
+    /// </summary>
+    void BeginSteadyCorner(Vector2 screenPoint)
+    {
+        steadying = true;
+        steadyScreenPoint = screenPoint;
+        steadyStartedAt = Time.unscaledTime;
+        steadyBestSpread = float.PositiveInfinity;
+        steadyTimes.Clear();
+        steadyPoints.Clear();
+        SteadyProgress = 0f;
+        TickSteadyCorner();
+    }
+
+    void CancelSteadyCorner()
+    {
+        steadying = false;
+        SteadyProgress = 0f;
+        steadyTimes.Clear();
+        steadyPoints.Clear();
+    }
+
+    /// <summary>
+    /// Places the waiting corner at the middle of the last <c>steadyWindowSeconds</c> of aim once
+    /// they all lie within <c>steadyTolerance</c>, or at the steadiest such moment after
+    /// <c>steadyMaxSeconds</c>. Losing tracking drops it.
+    /// </summary>
+    void TickSteadyCorner()
+    {
+        if (!steadying) return;
+        if (loopClosed || autoOutline || IsInHeightPhase)
+        {
+            CancelSteadyCorner();
+            return;
+        }
+
+        if (!ARAutoRoomScan.IsTrackingWell)
+        {
+            CancelSteadyCorner();
+            TapIgnored?.Invoke(ARSession.notTrackingReason);
+            return;
+        }
+
+        var now = Time.unscaledTime;
+        if (TryGetFloorHit(steadyScreenPoint, out var hit))
+        {
+            hit.y = FindFloorY(hit);
+            steadyTimes.Add(now);
+            steadyPoints.Add(hit);
+        }
+
+        var drop = 0;
+        while (drop < steadyTimes.Count && now - steadyTimes[drop] > steadyWindowSeconds) drop++;
+        if (drop > 0)
+        {
+            steadyTimes.RemoveRange(0, drop);
+            steadyPoints.RemoveRange(0, drop);
+        }
+
+        var elapsed = now - steadyStartedAt;
+        SteadyProgress = Mathf.Clamp01(elapsed / steadyWindowSeconds);
+        if (steadyPoints.Count > 0)
+        {
+            var middle = MiddleOf(steadyPoints);
+            SteadyPoint = middle;
+            if (elapsed >= steadyWindowSeconds && steadyPoints.Count >= 4)
+            {
+                var spread = 0f;
+                foreach (var p in steadyPoints)
+                    spread = Mathf.Max(spread, Vector3.Distance(Flat(p), Flat(middle)));
+                if (spread < steadyBestSpread)
+                {
+                    steadyBestSpread = spread;
+                    steadyBest = middle;
+                }
+
+                if (spread <= steadyTolerance)
+                {
+                    FinishSteadyCorner(middle, spread);
+                    return;
+                }
+            }
+        }
+
+        if (elapsed < steadyMaxSeconds) return;
+        if (float.IsPositiveInfinity(steadyBestSpread))
+        {
+            // The aim never stayed on the floor long enough to tell where the corner is.
+            CancelSteadyCorner();
+            return;
+        }
+
+        FinishSteadyCorner(steadyBest, steadyBestSpread);
+    }
+
+    void FinishSteadyCorner(Vector3 point, float spread)
+    {
+        var waited = Time.unscaledTime - steadyStartedAt;
+        CancelSteadyCorner();
+        Debug.Log($"[ARDesignCornerRoomBuilder] Corner placed after {waited:F2}s, aim within {spread * 100f:F1} cm.");
+        TryAddCorner(point);
+    }
+
+    /// <summary>Middle of the points on the floor: the median on each axis, so one jolt doesn't pull it.</summary>
+    Vector3 MiddleOf(List<Vector3> points)
+    {
+        sortScratch.Clear();
+        foreach (var p in points) sortScratch.Add(p.x);
+        sortScratch.Sort();
+        var x = sortScratch[sortScratch.Count / 2];
+        sortScratch.Clear();
+        foreach (var p in points) sortScratch.Add(p.z);
+        sortScratch.Sort();
+        var z = sortScratch[sortScratch.Count / 2];
+        return new Vector3(x, points[0].y, z);
+    }
+
+    RoomScanController.ScanPhase lastPhase;
 
     void OnPhase(RoomScanController.ScanPhase phase)
     {
+        var previous = lastPhase;
+        lastPhase = phase;
         active = phase == RoomScanController.ScanPhase.Scanning
                  || phase == RoomScanController.ScanPhase.ReadyToConfirm;
         roomLocked = phase == RoomScanController.ScanPhase.Confirmed;
@@ -331,7 +564,12 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
             if (markers[i] != null) markers[i].SetActive(true);
         }
 
-        if (phase == RoomScanController.ScanPhase.Scanning && corners.Count == 0)
+        // A new scan starts clean. Back from ReadyToConfirm is the same scan: before the first corner
+        // "ready" comes from plane coverage, which dips whenever ARCore briefly stops tracking the
+        // floor planes (looking up, turning fast), and clearing then dropped the floor point —
+        // back to the floor step every few seconds while measuring the height on the phone.
+        if (phase == RoomScanController.ScanPhase.Scanning && corners.Count == 0
+            && previous != RoomScanController.ScanPhase.ReadyToConfirm)
             Clear();
 
         if (IsInHeightPhase && !heightBaseSet)
@@ -366,6 +604,12 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     {
         if (!IsInHeightPhase || heightBaseSet || !FloorPointAllowed) return false;
         if (placementIndicator == null || !placementIndicator.IsLockedOnFloor) return false;
+        if (!TrackingSettled)
+        {
+            // The automatic scan sets the floor point by itself and simply tries again.
+            if (!autoOutline) TapIgnored?.Invoke(ARSession.notTrackingReason);
+            return false;
+        }
 
         TrySetHeightBase(placementIndicator.CurrentPose.position);
         return heightBaseSet;
@@ -484,9 +728,18 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     }
 
     /// <summary>Close the floor outline (last corner joins the first). Further taps are ignored until reopened.</summary>
-    public bool CloseLoop()
+    public bool CloseLoop() => CloseLoop(null);
+
+    /// <summary>
+    /// Closes the outline. <paramref name="closingPoint"/> is where corner 1 was tapped again (if it
+    /// was): the gap to corner 1 is drift from walking round the room, spread over every corner.
+    /// Walls a few degrees off square are then squared (see <see cref="RoomOutlineCleanup"/>).
+    /// </summary>
+    bool CloseLoop(Vector3? closingPoint)
     {
         if (!CanClose) return false;
+        CancelSteadyCorner();
+        if (!autoOutline) CleanUpOutline(closingPoint);
         loopClosed = true;
         HideLivePreview();
         ApplyWidthReticle();
@@ -533,6 +786,11 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
 
     public void UndoLastCorner()
     {
+        if (steadying)
+        {
+            CancelSteadyCorner();
+            return;
+        }
         if (corners.Count == 0) return;
         // Keep the seeded height-base corner while width outline is active.
         if (heightLocked && corners.Count <= 1) return;
@@ -553,6 +811,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     /// </summary>
     public void ResetCorners()
     {
+        CancelSteadyCorner();
         if (corners.Count == 0) return;
         var keep = heightLocked ? 1 : 0;
         if (corners.Count <= keep) return;
@@ -792,6 +1051,13 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         if (loopClosed) return;
         worldPoint.y = FindFloorY(worldPoint);
 
+        // Close the loop by tapping near the first corner. Where it was tapped shows the drift.
+        if (corners.Count >= 3 && Vector3.Distance(Flat(worldPoint), Flat(corners[0])) <= closeSnapDistance)
+        {
+            CloseLoop(worldPoint);
+            return;
+        }
+
         // Snap near the height base so the outline stays anchored to it.
         if (heightLocked && heightBaseSet
             && Vector3.Distance(Flat(worldPoint), Flat(heightFloorBase)) <= closeSnapDistance)
@@ -799,23 +1065,87 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
             worldPoint = heightFloorBase;
         }
 
-        // Close the loop by tapping near the first corner.
-        if (corners.Count >= 3 && Vector3.Distance(Flat(worldPoint), Flat(corners[0])) <= closeSnapDistance)
+        if (corners.Count >= maxCorners)
         {
-            CloseLoop();
+            Debug.Log($"[ARDesignCornerRoomBuilder] Corner ignored: already {maxCorners} corners.");
             return;
         }
 
-        if (corners.Count >= maxCorners) return;
-
         // Ignore accidental double-taps on the same spot.
         if (corners.Count > 0 && Vector3.Distance(Flat(worldPoint), Flat(corners[^1])) < 0.12f)
+        {
+            // Logged: on the phone, placed corners seemed to vanish and the log couldn't say why.
+            Debug.Log($"[ARDesignCornerRoomBuilder] Corner ignored: " +
+                      $"{Vector3.Distance(Flat(worldPoint), Flat(corners[^1])) * 100f:F0} cm from the last one.");
             return;
+        }
 
         corners.Add(worldPoint);
         cornerAnchors.Add(PinWorldPoint(worldPoint));
+        Debug.Log($"[ARDesignCornerRoomBuilder] Corner {corners.Count} added at ({worldPoint.x:F2}, {worldPoint.z:F2}).");
         RebuildVisuals();
         CornersChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Spreads the closing gap and squares near-square walls. Corners that move are pinned again
+    /// where they now are, so ARCore's anchor updates don't pull them back. Nothing changes if the
+    /// result would cross itself.
+    /// </summary>
+    void CleanUpOutline(Vector3? closingPoint)
+    {
+        var n = corners.Count;
+        if (n < RoomPolygonUtil.MinCorners) return;
+
+        var flat = new List<Vector2>(n);
+        foreach (var c in corners) flat.Add(new Vector2(c.x, c.z));
+        var gapCm = 0f;
+        var gapSpread = false;
+        if (closingPoint.HasValue)
+        {
+            var closing = new Vector2(closingPoint.Value.x, closingPoint.Value.z);
+            gapCm = Vector2.Distance(closing, flat[0]) * 100f;
+            foreach (var shift in RoomOutlineCleanup.SpreadClosingGap(flat, closing))
+                gapSpread |= shift != Vector2.zero;
+        }
+
+        var squared = false;
+        foreach (var shift in RoomOutlineCleanup.Square(flat))
+            squared |= shift != Vector2.zero;
+
+        var cleaned = new List<Vector3>(n);
+        for (var i = 0; i < n; i++) cleaned.Add(new Vector3(flat[i].x, corners[i].y, flat[i].y));
+        if (RoomPolygonUtil.IsSelfIntersecting(cleaned))
+        {
+            Debug.LogWarning("[ARDesignCornerRoomBuilder] Outline clean-up would cross itself — kept as tapped.");
+            return;
+        }
+
+        var maxMove = 0f;
+        for (var i = 0; i < n; i++)
+        {
+            var move = Vector3.Distance(cleaned[i], corners[i]);
+            if (move < 0.001f) continue;
+            maxMove = Mathf.Max(maxMove, move);
+            // Corner 1 is the height base (they share an anchor): they move together, or the
+            // height line and corner 1 drift apart.
+            var isHeightBase = heightBaseSet && Vector3.Distance(Flat(corners[i]), Flat(heightFloorBase)) < 0.01f;
+            corners[i] = cleaned[i];
+            if (i < cornerAnchors.Count)
+            {
+                var sharedAnchor = cornerAnchors[i] != null && cornerAnchors[i] == heightBaseAnchor;
+                if (sharedAnchor) ReleaseHeightBaseAnchor();
+                else ReleaseCornerSlot(cornerAnchors[i]);
+                cornerAnchors[i] = PinWorldPoint(cleaned[i]);
+                if (sharedAnchor) heightBaseAnchor = cornerAnchors[i];
+            }
+
+            if (isHeightBase) heightFloorBase = cleaned[i];
+        }
+
+        Debug.Log($"[ARDesignCornerRoomBuilder] Room closed: gap to corner 1 {gapCm:F1} cm " +
+                  $"({(gapSpread ? "spread over the corners" : "left as is")}), " +
+                  $"{(squared ? "walls squared" : "no squaring")}, corners moved up to {maxMove * 100f:F1} cm.");
     }
 
     void UpdateHeightPreview(bool forceLocked = false)
@@ -854,7 +1184,9 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
         LiveHeightMeters = heightMeters;
         HasLiveHeightPreview = true;
 
-        if (!showLivePreviewMeasurement)
+        // The scan card shows the live height; a label here sat right under the phone at the
+        // start of the height step and covered half the screen.
+        if (!showLivePreviewMeasurement || !showHeightLabel)
         {
             SetHeightMeasureVisible(false);
             return;
@@ -1458,6 +1790,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
 
     public void Clear()
     {
+        CancelSteadyCorner();
         loopClosed = false;
         corners.Clear();
         foreach (var slot in cornerAnchors)

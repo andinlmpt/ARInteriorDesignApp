@@ -22,6 +22,8 @@ public class ARScanDiagnostics : MonoBehaviour
 {
     const float LogInterval = 2f;
     const int MaxWallsListed = 6;
+    /// <summary>The camera picture's brightness is the mean of this many × this many samples.</summary>
+    const int BrightnessGrid = 16;
     static readonly Vector2[] MappingCheckPoints = { new(0.5f, 0.35f), new(0.3f, 0.6f), new(0.7f, 0.6f) };
     static readonly string[] VariantNames = { "as is", "flip v", "flip u", "flip both" };
 
@@ -78,7 +80,11 @@ public class ARScanDiagnostics : MonoBehaviour
     void OnCameraFrame(ARCameraFrameEventArgs args)
     {
         if (args.displayMatrix.HasValue) latestDisplayMatrix = args.displayMatrix;
+        // Only filled in ARCore's ambient light mode; the camera picture is measured otherwise.
+        latestBrightness = args.lightEstimation.averageBrightness;
     }
+
+    float? latestBrightness;
 
     void Update()
     {
@@ -101,6 +107,43 @@ public class ARScanDiagnostics : MonoBehaviour
         if (guidance == null) guidance = FindAnyObjectByType<ARScanGuidance>();
         if (guidance == null) return;
         line.Append($" | guide={guidance.Current} turn={guidance.TurnSpeed:0}deg/s move={guidance.MoveSpeed:0.00}m/s");
+        // For telling a lit room from a dim one (no threshold is trusted yet).
+        float? brightness = TryCameraBrightness(out var picture) ? picture : latestBrightness;
+        line.Append(brightness.HasValue ? $" light={brightness.Value:0.00}" : " light=?");
+    }
+
+    /// <summary>
+    /// Average brightness of the camera picture, 0–1: the mean of its luma plane on a coarse grid.
+    /// ARCore's own estimate (averageBrightness) is empty in the HDR light mode the scan asks for,
+    /// so on the phone the log only ever said "light=?".
+    /// </summary>
+    bool TryCameraBrightness(out float brightness)
+    {
+        brightness = 0f;
+        if (cameraManager == null || !cameraManager.TryAcquireLatestCpuImage(out var image)) return false;
+        try
+        {
+            if (image.format != XRCpuImage.Format.AndroidYuv420_888) return false;
+            var plane = image.GetPlane(0);
+            var data = plane.data;
+            long sum = 0;
+            for (var gy = 0; gy < BrightnessGrid; gy++)
+            {
+                var y = (2 * gy + 1) * image.height / (2 * BrightnessGrid);
+                for (var gx = 0; gx < BrightnessGrid; gx++)
+                {
+                    var x = (2 * gx + 1) * image.width / (2 * BrightnessGrid);
+                    sum += data[y * plane.rowStride + x * plane.pixelStride];
+                }
+            }
+
+            brightness = sum / (255f * BrightnessGrid * BrightnessGrid);
+            return true;
+        }
+        finally
+        {
+            image.Dispose();
+        }
     }
 
     void AppendPlanes(StringBuilder line)
@@ -168,6 +211,12 @@ public class ARScanDiagnostics : MonoBehaviour
 
     void AppendDepth(StringBuilder line)
     {
+        if (occlusionManager == null)
+        {
+            line.Append(" | depth=off");
+            return;
+        }
+
         var support = occlusionManager.descriptor != null
             ? occlusionManager.descriptor.environmentDepthImageSupported
             : Supported.Unknown;

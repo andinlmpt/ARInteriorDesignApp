@@ -28,6 +28,11 @@ public static class ScanFloorAim
         public float wallReach;
         /// <summary>A floor point further than this behind a wall means the aim is on the wall itself: no floor.</summary>
         public float maxBehindWall;
+        /// <summary>
+        /// A floor point this little past a detected wall stays where it is: ARCore's wall can sit a
+        /// little in front of the real one, and the real corner is where the user aims.
+        /// </summary>
+        public float trustPastWall;
         /// <summary>A corner this close to the aim pulls it in.</summary>
         public float cornerSnap;
 
@@ -37,7 +42,8 @@ public static class ScanFloorAim
             maxDistance = 6f,
             wallReach = 0.75f,
             maxBehindWall = 1.5f,
-            cornerSnap = 0.3f,
+            trustPastWall = 0.3f,
+            cornerSnap = 0.15f,
         };
     }
 
@@ -104,12 +110,17 @@ public static class ScanFloorAim
         var kind = Kind.Floor;
         if (walls != null && TryFirstWallCrossing(from, to, walls, settings.wallReach, out var crossing))
         {
-            if (Vector2.Distance(crossing, to) > settings.maxBehindWall) return Kind.None;
+            var behind = Vector2.Distance(crossing, to);
+            if (behind > settings.maxBehindWall) return Kind.None;
 
-            // Just in front of the wall.
-            var back = from - crossing;
-            to = back.sqrMagnitude > 1e-6f ? crossing + back.normalized * 0.01f : crossing;
-            kind = Kind.WallBase;
+            // Only a little past the line: the detected wall is probably just off; keep the aim.
+            if (behind > settings.trustPastWall)
+            {
+                // Just in front of the wall.
+                var back = from - crossing;
+                to = back.sqrMagnitude > 1e-6f ? crossing + back.normalized * 0.01f : crossing;
+                kind = Kind.WallBase;
+            }
         }
 
         if (corners != null)
