@@ -976,7 +976,9 @@ function planSingle(groups, rugs, room, preferredWall, variant, seed, features) 
   const placed = [];
   const dropped = [];
 
-  ordered.forEach((group) => {
+  const queue = [...ordered];
+  while (queue.length > 0) {
+    const group = queue.shift();
     const frames = group.kind === 'center' ? centerFrames(group, room) : wallFrames(group, room);
     const candidates = frames.map((frame) => placeGroup(group, frame));
     if (group.primaryRole === 'tv-stand' && ctx.sofaPlacement) {
@@ -985,9 +987,23 @@ function planSingle(groups, rugs, room, preferredWall, variant, seed, features) 
     candidates.push(...anchoredCandidates(group, existingPlacements));
     let valid = candidates.filter((c) => isValidPlacement(c, placed, room, true, features));
     if (valid.length === 0) valid = candidates.filter((c) => isValidPlacement(c, placed, room, false, features));
+    if (valid.length === 0 && group.members.length > 1) {
+      // A sofa with its armchair (or a bed with nightstands) that doesn't fit together: each piece
+      // gets its own try, the main one first. Dropping the whole group left a 7.4 m² room with
+      // a love seat that fits on its own completely empty (phone test, 2026-10-24).
+      const singles = group.members.map((m, i) => finalizeGroup({
+        key: `single-${m.entry.id}`,
+        kind: i === 0 ? group.kind : 'wall',
+        primaryRole: m.entry.role,
+        members: [member(m.entry, 0, 0, 0)],
+      }));
+      if (group === ctx.primaryGroup) ctx.primaryGroup = singles[0];
+      queue.unshift(...singles);
+      continue;
+    }
     if (valid.length === 0) {
       group.members.forEach((m) => dropped.push(m.entry.item.name));
-      return;
+      continue;
     }
     let best = valid[0];
     let bestScore = -Infinity;
@@ -1002,7 +1018,7 @@ function planSingle(groups, rugs, room, preferredWall, variant, seed, features) 
     if (group === ctx.primaryGroup) ctx.primaryPlacement = best;
     if (group.primaryRole === 'sofa' && !ctx.sofaPlacement) ctx.sofaPlacement = best;
     if (group.primaryRole === 'bed' && !ctx.bedPlacement) ctx.bedPlacement = best;
-  });
+  }
 
   const placedItems = placed.flatMap((p) => p.items);
   const rugItems = placeRugs(rugs, placedItems, room, ctx.primaryPlacement);

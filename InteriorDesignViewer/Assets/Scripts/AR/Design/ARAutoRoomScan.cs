@@ -41,18 +41,27 @@ public class ARAutoRoomScan : MonoBehaviour
         OutlineComplete,
         /// <summary>A tap while tracking was lost: it would have landed in the wrong place.</summary>
         TapIgnored,
+        /// <summary>A tap on a corner: taps only add, pressing and holding removes.</summary>
+        HoldToRemove,
     }
 
-    const string EnabledPrefKey = "arAutoScanEnabled";
+    // New key: phones from before Auto went off by default kept "on" under "arAutoScanEnabled",
+    // so they never got the corner-by-corner flow.
+    const string EnabledPrefKey = "arAutoScanEnabledV2";
     const string StatsFileName = "auto-scan-stats.jsonl";
 
     [Header("Holding still")]
-    [SerializeField] private float floorHoldSeconds = 0.8f;
+    [Tooltip("The floor point (corner 1) sets itself after the dot is held still this long. At 0.8 s it " +
+             "set itself on the way to the corner (5 times in one scan); tapping sets it at once.")]
+    [SerializeField] private float floorHoldSeconds = 2f;
     [SerializeField] private float floorHoldRadius = 0.05f;
     [Tooltip("Seconds the live height must stay put (see ScanHeightFilter) before it locks itself.")]
     [SerializeField] private float heightHoldSeconds = 1.2f;
     [Tooltip("The height only locks itself above this (lower readings are furniture or mid-wall).")]
     [SerializeField] private float minAutoHeight = 1.8f;
+    [Tooltip("…nor above this: a reading this high is ARCore drifting (in a dim room it locked 5.00 m, " +
+             "the builder's cap). A really high ceiling is still confirmed with a tap.")]
+    [SerializeField] private float maxAutoHeight = 3.5f;
     [Tooltip("Camera forward.y needed before the height locks itself (looking up).")]
     [SerializeField] private float minLookUp = 0.35f;
     [SerializeField] private float cornerHoldSeconds = 1.2f;
@@ -70,10 +79,19 @@ public class ARAutoRoomScan : MonoBehaviour
     [Tooltip("A corner must be found this many times in a row before it joins the outline.")]
     [SerializeField] private int confirmAfterEvaluations = 3;
     [SerializeField] private int dropAfterMisses = 6;
+    [Tooltip("A corner already in the outline goes only after this many rounds unseen (20 = 5 s). After " +
+             "1.5 s, found corners flickered in and out while ARCore re-fitted the walls on the phone.")]
+    [SerializeField] private int dropConfirmedAfterMisses = 20;
     [SerializeField] private float cornerMatchDistance = 0.3f;
     [SerializeField] private float removeTapRadius = 0.3f;
     [SerializeField] private float suppressRadius = 0.35f;
-    [SerializeField] private float tapSnapToWall = 0.2f;
+    [Tooltip("With three corners or more, a tap this close to corner 1 (the floor point) closes the room, " +
+             "as by hand, and holding still there adds no corner. On the phone, coming back to corner 1 " +
+             "added a fifth corner beside it again and again.")]
+    [SerializeField] private float closeTapRadius = 0.5f;
+    [Tooltip("A corner placed by hand this close to a blue wall line goes onto it; further away it stays " +
+             "where the user aimed (the detected wall can be off the real one).")]
+    [SerializeField] private float tapSnapToWall = 0.08f;
 
     [Header("Help after (seconds)")]
     [SerializeField] private float heightHelpSeconds = 8f;
@@ -82,7 +100,7 @@ public class ARAutoRoomScan : MonoBehaviour
     [Header("Look")]
     [SerializeField] private Color wallColor = new(0.45f, 0.78f, 1f, 0.95f);
     [Tooltip("See-through fill for each wall found so far (floor to the measured height).")]
-    [SerializeField] private Color wallPanelColor = new(0.45f, 0.78f, 1f, 0.12f);
+    [SerializeField] private Color wallPanelColor = new(0.45f, 0.78f, 1f, 0.07f);
     [SerializeField] private Color targetColor = new(1f, 0.55f, 0.15f, 1f);
 
     sealed class TrackedCorner
@@ -144,6 +162,8 @@ public class ARAutoRoomScan : MonoBehaviour
     readonly List<AutoWallGeometry.WallPiece> pieces = new();
     readonly List<TrackedCorner> tracked = new();
     readonly List<Vector2> placed = new();
+    /// <summary>Corners in <see cref="placed"/> that were found from the walls (and locked), not placed by hand.</summary>
+    readonly List<Vector2> locked = new();
     readonly List<Vector2> suppressed = new();
     readonly List<HistoryEntry> history = new();
     readonly List<AutoWallGeometry.Corner> outlineCorners = new();
@@ -155,6 +175,8 @@ public class ARAutoRoomScan : MonoBehaviour
     readonly List<Note> pendingNotes = new();
     List<AutoWallGeometry.Wall> walls = new();
     readonly AutoWallTracker wallTracker = new(AutoWallTracker.Settings.Default);
+    /// <summary>A wall not seen just now is still drawn when it's at least this long (m).</summary>
+    const float ShownRememberedWallLength = 1.5f;
     List<AutoWallGeometry.OpenEnd> openEnds = new();
     bool[] innerWalls = Array.Empty<bool>();
 
@@ -190,6 +212,19 @@ public class ARAutoRoomScan : MonoBehaviour
     bool dwellRunning;
     float dwellStartedAt;
     Vector3 dwellAnchor;
+
+    /// <summary>
+    /// The floor point just undone. It doesn't set itself there again until the aim has moved off it:
+    /// the phone was still aimed at the same spot, so 0.8 s later it came straight back and Undo
+    /// looked broken (12 trips back to the floor step in one scan on the phone).
+    /// </summary>
+    Vector3 lastFloorPoint;
+    bool floorWaitsToMoveOff;
+    const float FloorMoveOffDistance = 0.3f;
+
+    /// <summary>Corner 1 (the floor point) while it's in the outline: a tap back there closes the room.</summary>
+    Vector2 startCorner;
+    bool hasStartCorner;
 
     AutoScanStats stats;
     float sessionStartedAt;
@@ -267,7 +302,9 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void Awake()
     {
-        Enabled = PlayerPrefs.GetInt(EnabledPrefKey, 1) == 1;
+        // Off by default: the main flow is corner by corner (a floor corner, the height, then
+        // ceiling corners, which furniture doesn't hide). Automatic walls stay one tap away.
+        Enabled = PlayerPrefs.GetInt(EnabledPrefKey, 0) == 1;
         scanController = FindFirstObjectByType<RoomScanController>();
         builder = FindFirstObjectByType<ARDesignCornerRoomBuilder>();
         planeManager = FindFirstObjectByType<ARPlaneManager>();
@@ -290,11 +327,28 @@ public class ARAutoRoomScan : MonoBehaviour
         ceilingDrop = CreateLine("CeilingDrop", 0.012f, wallMaterial, false);
     }
 
+    /// <summary>
+    /// A corner is already there (its marker and outline lines show it): no second line on it.
+    /// </summary>
+    bool NearPlacedCorner(Vector3 floorPoint)
+    {
+        var p = XZ(floorPoint);
+        foreach (var c in builder.Corners)
+        {
+            if (Vector2.Distance(XZ(c), p) <= DropLineCornerClearance) return true;
+        }
+
+        return false;
+    }
+
+    const float DropLineCornerClearance = 0.25f;
+
     /// <summary>Aiming at a ceiling corner: a line from it straight down to where the corner goes.</summary>
     void DrawCeilingDrop()
     {
         if (ceilingDrop == null) return;
-        var show = AimFromCeiling && indicator != null && indicator.IsTracking && indicator.IsLockedOnFloor;
+        var show = AimFromCeiling && indicator != null && indicator.IsTracking && indicator.IsLockedOnFloor
+                   && !NearPlacedCorner(indicator.WorldPosition);
         if (ceilingDrop.enabled != show) ceilingDrop.enabled = show;
         if (!show) return;
 
@@ -306,7 +360,11 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void OnEnable()
     {
-        if (builder != null) builder.AutoTapped += OnTapped;
+        if (builder != null)
+        {
+            builder.AutoTapped += OnTapped;
+            builder.AutoLongPressed += OnLongPressed;
+        }
         if (scanController != null) scanController.PhaseChanged += OnScanPhase;
         // By hand or automatic, the floor aim reaches into corners.
         if (indicator != null) indicator.ExtendedAim = ResolveAim;
@@ -314,7 +372,11 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void OnDisable()
     {
-        if (builder != null) builder.AutoTapped -= OnTapped;
+        if (builder != null)
+        {
+            builder.AutoTapped -= OnTapped;
+            builder.AutoLongPressed -= OnLongPressed;
+        }
         if (scanController != null) scanController.PhaseChanged -= OnScanPhase;
         if (indicator != null) indicator.ExtendedAim = null;
     }
@@ -420,20 +482,29 @@ public class ARAutoRoomScan : MonoBehaviour
         CurrentStep = step;
         stepStartedAt = Time.unscaledTime;
         ResetDwell();
+        // Scan logs explain themselves: each step change, with the floor and height it starts from.
+        Debug.Log($"[AutoScan] Step {previous} → {step} (floor y={builder.FloorY:F2}, height {builder.WallHeight:F2} m, " +
+                  $"tracking epoch {ARBootstrap.TrackingEpoch})");
 
         switch (step)
         {
             case Step.Floor:
-                if (stats == null) StartSession();
+                var sameScan = stats != null;
+                if (!sameScan) StartSession();
                 else if (previous is Step.Height or Step.Walls or Step.Closed) stats.backToStart++;
                 floorSetAt = heightSetAt = closedAt = -1f;
-                ClearWalls();
-                // Load the detector now (a short pause) rather than mid-walk in the walls step.
-                ARFurnitureCocoDetector.EnsureOn(gameObject).Preload();
+                // Back to the floor point in the same scan (Undo past the height): the walls seen
+                // are still right, so only the corners go. A new scan or a tracking reset starts clean.
+                if (sameScan && WallsStillValid) ClearCorners();
+                else ClearWalls();
+                floorWaitsToMoveOff = sameScan && previous is Step.Height or Step.Walls or Step.Closed;
+                // The detector is loaded and warmed up by the scan HUD once AR is tracking steadily:
+                // a long pause while ARCore is still starting left the camera black.
                 break;
             case Step.Height:
                 if (stats == null) StartSession();
                 floorSetAt = Time.unscaledTime;
+                lastFloorPoint = builder.HeightBasePoint;
                 break;
             case Step.Walls:
                 if (stats == null) StartSession();
@@ -441,9 +512,13 @@ public class ARAutoRoomScan : MonoBehaviour
                 {
                     heightSetAt = Time.unscaledTime;
                     if (stats != null) stats.heightM = builder.WallHeight;
-                    ClearWalls();
+                    // Back from measuring the height again: the walls seen are still right (the
+                    // floor step clears them when the scan really starts over). Only corners go.
+                    if (previous is Step.Off || !WallsStillValid) ClearWalls();
+                    else ClearCorners();
                     // Hand-tapped corners from a manual start carry over.
                     if (builder.CornerCount > 0) ImportBuilderCorners();
+                    SeedFloorCorner();
                 }
                 lastProgressAt = Time.unscaledTime;
                 nextEvaluateAt = 0f;
@@ -528,6 +603,17 @@ public class ARAutoRoomScan : MonoBehaviour
         }
 
         var p = indicator.WorldPosition;
+        if (floorWaitsToMoveOff)
+        {
+            if (Flat(p - lastFloorPoint).magnitude < FloorMoveOffDistance)
+            {
+                ResetDwell();
+                return;
+            }
+
+            floorWaitsToMoveOff = false;
+        }
+
         HasDwellPoint = true;
         DwellPoint = p;
         if (!dwellRunning || Flat(p - dwellAnchor).magnitude > floorHoldRadius)
@@ -551,7 +637,7 @@ public class ARAutoRoomScan : MonoBehaviour
         DwellPoint = builder.HeightBasePoint + Vector3.up * live;
 
         var lookUp = arCamera != null ? arCamera.transform.forward.y : 0f;
-        if (!builder.HasLiveHeightPreview || live < minAutoHeight || lookUp < minLookUp)
+        if (!builder.HasLiveHeightPreview || live < minAutoHeight || live > maxAutoHeight || lookUp < minLookUp)
         {
             DwellProgress = 0f;
             return;
@@ -601,7 +687,9 @@ public class ARAutoRoomScan : MonoBehaviour
         pieces.Clear();
         var vertical = CollectPieces(floorY, pieces);
         // Steady walls: planes come and go between rounds, the walls shown shouldn't.
-        walls = wallTracker.Update(AutoWallGeometry.MergeWalls(pieces, settings));
+        walls = wallTracker.Update(AutoWallGeometry.MergeWalls(AutoWallGeometry.DropOffAxisPieces(pieces), settings));
+        // On the copies shown, so the tracker keeps following what ARCore actually sees.
+        AutoWallGeometry.SquareWalls(walls);
         innerWalls = AutoWallGeometry.FindInnerWalls(walls, settings);
         TrackCorners(AutoWallGeometry.FindCorners(walls, settings));
 
@@ -654,7 +742,8 @@ public class ARAutoRoomScan : MonoBehaviour
         {
             nextLogAt = Time.unscaledTime + 2f;
             Debug.Log($"[AutoScan] vertical planes={vertical} pieces={pieces.Count} walls={WallCount} " +
-                      $"corners={CornerCount} (auto {outlineCorners.Count}, hand {placed.Count}) open ends={OpenEndCount}");
+                      $"corners={CornerCount} (found {locked.Count}, hand {placed.Count - locked.Count}, seen {tracked.Count}) open ends={OpenEndCount} " +
+                      $"floor y={floorY:F2}{(builder.IsOutlineSelfIntersecting ? " CROSSES ITSELF (can't close)" : "")}");
         }
 
         Changed?.Invoke();
@@ -732,12 +821,15 @@ public class ARAutoRoomScan : MonoBehaviour
             if (IsSuppressed(c.point) || IsNearPlaced(c.point)) continue;
 
             TrackedCorner best = null;
-            var bestDistance = cornerMatchDistance;
+            var bestDistance = float.MaxValue;
             foreach (var t in tracked)
             {
                 if (t.matched) continue;
+                // An outline corner gone unseen (kept 5 s) is picked up a little further away: the
+                // walls were re-fitted. Otherwise a second corner showed up beside the stale one.
+                var reach = t.confirmed && t.misses > 0 ? cornerMatchDistance * 2f : cornerMatchDistance;
                 var d = Vector2.Distance(t.point, c.point);
-                if (d <= bestDistance)
+                if (d <= reach && d < bestDistance)
                 {
                     bestDistance = d;
                     best = t;
@@ -755,14 +847,7 @@ public class ARAutoRoomScan : MonoBehaviour
             best.seen++;
             best.misses = 0;
             best.matched = true;
-            if (!best.confirmed && best.seen >= confirmAfterEvaluations)
-            {
-                best.confirmed = true;
-                history.Add(new HistoryEntry { auto = true, autoId = best.id });
-                pendingNotes.Add(Note.CornerFound);
-                if (stats != null) stats.cornersAutoFound++;
-                lastProgressAt = Time.unscaledTime;
-            }
+            if (best.seen >= confirmAfterEvaluations) LockCorner(best);
         }
 
         for (var i = tracked.Count - 1; i >= 0; i--)
@@ -770,8 +855,34 @@ public class ARAutoRoomScan : MonoBehaviour
             var t = tracked[i];
             if (t.matched) continue;
             t.misses++;
-            if (t.misses > dropAfterMisses) tracked.RemoveAt(i);
+            if (t.misses > (t.confirmed ? dropConfirmedAfterMisses : dropAfterMisses)) tracked.RemoveAt(i);
         }
+    }
+
+    /// <summary>
+    /// A corner seen where two walls meet a few rounds running stays, like one placed by hand. Found
+    /// corners used to come and go with the walls: in a plain, dim room the outline went 4 → 1
+    /// corners while the user watched (2026-10-24). Undo and press-and-hold still remove it, and it
+    /// isn't found again there.
+    /// </summary>
+    void LockCorner(TrackedCorner corner)
+    {
+        tracked.Remove(corner);
+        if (IsNearPlaced(corner.point)) return;
+        placed.Add(corner.point);
+        locked.Add(corner.point);
+        history.Add(new HistoryEntry { auto = false, placed = corner.point });
+        pendingNotes.Add(Note.CornerFound);
+        if (stats != null) stats.cornersAutoFound++;
+        lastProgressAt = Time.unscaledTime;
+    }
+
+    /// <summary>Takes a placed corner out; a locked found one is kept from coming straight back.</summary>
+    void UnplaceAt(int index)
+    {
+        var point = placed[index];
+        placed.RemoveAt(index);
+        if (locked.Remove(point)) suppressed.Add(point);
     }
 
     int CountRealWalls()
@@ -837,7 +948,7 @@ public class ARAutoRoomScan : MonoBehaviour
 
     /// <summary>
     /// Aiming at the orange marker — or further along that wall, where the real corner may be —
-    /// and holding still places a corner there, on the wall's line.
+    /// and holding still places a corner where the dot is (on the wall's line only when that close).
     /// </summary>
     void TickCornerHold()
     {
@@ -856,7 +967,9 @@ public class ARAutoRoomScan : MonoBehaviour
                         && (targetEnd == 0
                             ? t <= wall.tMin + settings.cornerInset && t >= wall.tMin - settings.cornerReach
                             : t >= wall.tMax - settings.cornerInset && t <= wall.tMax + settings.cornerReach);
-        if (!nearMarker && !alongWall)
+        // A corner is already here (the one just placed, most often): holding on stacked another
+        // one every second while the phone stayed still. Back at corner 1 a tap closes the room.
+        if ((!nearMarker && !alongWall) || IsNearPlaced(aim2) || AtStartCorner(aim2))
         {
             ResetDwell();
             return;
@@ -874,7 +987,8 @@ public class ARAutoRoomScan : MonoBehaviour
         if (DwellProgress < 1f) return;
 
         ResetDwell();
-        AddPlaced(AutoWallGeometry.SnapToLine(wall, aim2));
+        // The user is pointing at the real corner; the blue line may be off the real wall.
+        AddPlaced(wall.DistanceToLine(aim2) <= tapSnapToWall ? AutoWallGeometry.SnapToLine(wall, aim2) : aim2);
         if (stats != null) stats.cornersHeld++;
         Evaluate();
     }
@@ -890,17 +1004,39 @@ public class ARAutoRoomScan : MonoBehaviour
 
         var p = XZ(world);
 
-        // Tapping a corner removes it (a found one stays away).
-        if (TryRemoveCornerNear(p))
+        // Back at corner 1 the room closes, as by hand (Finish does the same).
+        if (AtStartCorner(p))
         {
-            pendingNotes.Add(Note.CornerRemoved);
-            if (stats != null) stats.cornersRemoved++;
-            Evaluate();
+            if (builder.CanClose) builder.CloseLoop();
+            return;
+        }
+
+        // A tap never removes: on a corner it only says how to. Removing with a second tap deleted
+        // corners by accident when a tap that seemed to do nothing was tapped again.
+        if (FindCornerNear(p, out _, out _))
+        {
+            Noted?.Invoke(Note.HoldToRemove);
             return;
         }
 
         AddPlaced(SnapToNearestWall(p));
         if (stats != null) stats.cornersTapped++;
+        Evaluate();
+    }
+
+    /// <summary>Press and hold on a corner removes it (a found one stays away).</summary>
+    void OnLongPressed(Vector3 world)
+    {
+        if (CurrentStep != Step.Walls) return;
+        if (!IsTrackingWell)
+        {
+            Noted?.Invoke(Note.TapIgnored);
+            return;
+        }
+
+        if (!TryRemoveCornerNear(XZ(world))) return;
+        pendingNotes.Add(Note.CornerRemoved);
+        if (stats != null) stats.cornersRemoved++;
         Evaluate();
     }
 
@@ -939,9 +1075,25 @@ public class ARAutoRoomScan : MonoBehaviour
 
     bool TryRemoveCornerNear(Vector2 p)
     {
+        if (!FindCornerNear(p, out var placedIndex, out var autoCorner)) return false;
+        if (autoCorner != null)
+        {
+            RemoveAuto(autoCorner);
+            return true;
+        }
+
+        var point = placed[placedIndex];
+        UnplaceAt(placedIndex);
+        history.RemoveAll(h => !h.auto && h.placed == point);
+        return true;
+    }
+
+    /// <summary>The corner a tap at <paramref name="p"/> is on: a placed one, or a confirmed found one.</summary>
+    bool FindCornerNear(Vector2 p, out int placedIndex, out TrackedCorner autoCorner)
+    {
         var bestDistance = removeTapRadius;
-        var placedIndex = -1;
-        TrackedCorner autoCorner = null;
+        placedIndex = -1;
+        autoCorner = null;
         for (var i = 0; i < placed.Count; i++)
         {
             var d = Vector2.Distance(placed[i], p);
@@ -964,21 +1116,7 @@ public class ARAutoRoomScan : MonoBehaviour
             }
         }
 
-        if (autoCorner != null)
-        {
-            RemoveAuto(autoCorner);
-            return true;
-        }
-
-        if (placedIndex >= 0)
-        {
-            var point = placed[placedIndex];
-            placed.RemoveAt(placedIndex);
-            history.RemoveAll(h => !h.auto && h.placed == point);
-            return true;
-        }
-
-        return false;
+        return autoCorner != null || placedIndex >= 0;
     }
 
     void RemoveAuto(TrackedCorner corner)
@@ -1025,7 +1163,7 @@ public class ARAutoRoomScan : MonoBehaviour
             {
                 var index = placed.IndexOf(entry.placed);
                 if (index < 0) continue;
-                placed.RemoveAt(index);
+                UnplaceAt(index);
             }
 
             pendingNotes.Add(Note.CornerRemoved);
@@ -1037,22 +1175,47 @@ public class ARAutoRoomScan : MonoBehaviour
         return false;
     }
 
+    /// <summary>
+    /// Three corners, one of them square: most rooms are rectangles, so the fourth corner is where
+    /// those two walls end. Placing it by hand added extra corners and outlines that crossed
+    /// themselves, and closing with three made a triangle.
+    /// </summary>
+    public bool CanFinishAsRectangle(out Vector2 fourth)
+    {
+        fourth = default;
+        if (CurrentStep != Step.Walls || builder.CornerCount != 3 || builder.IsLoopClosed) return false;
+        return AutoWallGeometry.TryRectangleCorner(
+            XZ(builder.Corners[0]), XZ(builder.Corners[1]), XZ(builder.Corners[2]), out fourth);
+    }
+
+    /// <summary>Adds the fourth corner of the rectangle (Undo takes it back like any placed corner).</summary>
+    public bool FinishAsRectangle()
+    {
+        if (!CanFinishAsRectangle(out var fourth)) return false;
+        AddPlaced(fourth);
+        if (stats != null) stats.cornersTapped++;
+        Evaluate();
+        return true;
+    }
+
     /// <summary>Drops every corner (found, placed, removed) and looks at the walls again.</summary>
     public void StartWallsOver()
     {
         ClearWalls();
         if (stats != null) stats.backToStart++;
+        SeedFloorCorner();
         builder.SetCorners(lastPushed);
         Evaluate();
     }
 
+    /// <summary>The walls known were seen in this tracking session (a tracking reset moves every plane).</summary>
+    bool WallsStillValid => ARBootstrap.TrackingEpoch == wallsEpoch;
+    int wallsEpoch;
+
     void ClearWalls()
     {
-        tracked.Clear();
-        placed.Clear();
-        suppressed.Clear();
-        history.Clear();
-        lastPushed.Clear();
+        wallsEpoch = ARBootstrap.TrackingEpoch;
+        ClearCorners();
         openEnds.Clear();
         walls.Clear();
         wallTracker.Clear();
@@ -1060,13 +1223,54 @@ public class ARAutoRoomScan : MonoBehaviour
         centerSum = Vector2.zero;
         centerSamples = 0;
         lastWallCount = 0;
+        WallCount = OpenEndCount = 0;
+        HideVisuals();
+    }
+
+    /// <summary>Drops every corner (found, placed, removed) but keeps the walls seen so far.</summary>
+    void ClearCorners()
+    {
+        tracked.Clear();
+        placed.Clear();
+        locked.Clear();
+        suppressed.Clear();
+        history.Clear();
+        lastPushed.Clear();
         lastCornerCount = 0;
         wasComplete = false;
         pendingNotes.Clear();
-        WallCount = CornerCount = OpenEndCount = 0;
+        CornerCount = 0;
         HasTarget = false;
-        HideVisuals();
+        hasStartCorner = false;
     }
+
+    /// <summary>
+    /// The floor point is corner 1, as by hand: the walk goes round the room and back to it. Left
+    /// out of the outline, the walk's first line never reached it. Not in the undo history, so Undo
+    /// past the last corner goes back to the height, as by hand; press and hold still removes it.
+    /// </summary>
+    void SeedFloorCorner()
+    {
+        hasStartCorner = false;
+        if (!builder.HasHeightBase) return;
+        var p = XZ(builder.HeightBasePoint);
+        // Corners tapped by hand before Auto was switched on already start with it.
+        var index = placed.FindIndex(q => Vector2.Distance(q, p) <= suppressRadius);
+        if (index < 0)
+        {
+            placed.Insert(0, p);
+            index = 0;
+        }
+
+        startCorner = placed[index];
+        hasStartCorner = true;
+    }
+
+    /// <summary>Corner 1 is still in the outline and there's a room's worth of corners: tapping it closes the room.</summary>
+    public bool CanCloseAtStart =>
+        hasStartCorner && CornerCount >= RoomPolygonUtil.MinCorners && placed.Contains(startCorner);
+
+    bool AtStartCorner(Vector2 p) => CanCloseAtStart && Vector2.Distance(p, startCorner) <= closeTapRadius;
 
     void ImportBuilderCorners()
     {
@@ -1099,6 +1303,29 @@ public class ARAutoRoomScan : MonoBehaviour
     // ── Visuals ───────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Wall <paramref name="i"/> runs along a longer wall (nearly parallel, within half a metre,
+    /// mostly overlapping it): the same real wall estimated twice, which drew overlapping blue.
+    /// </summary>
+    bool LiesOnLongerWall(int i)
+    {
+        var w = walls[i];
+        var mid = (w.End(0) + w.End(1)) * 0.5f;
+        var cos = Mathf.Cos(15f * Mathf.Deg2Rad);
+        for (var j = 0; j < walls.Count; j++)
+        {
+            if (j == i || innerWalls[j]) continue;
+            var other = walls[j];
+            if (other.Length <= w.Length) continue;
+            if (Mathf.Abs(Vector2.Dot(other.dir, w.dir)) < cos) continue;
+            if (other.DistanceToLine(mid) > 0.5f) continue;
+            var t = other.Project(mid);
+            if (t >= other.tMin && t <= other.tMax) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Each wall found so far: a line along its foot and a see-through panel up to the measured
     /// height over the part that was seen, so the user can tell which walls are captured.
     /// </summary>
@@ -1106,12 +1333,20 @@ public class ARAutoRoomScan : MonoBehaviour
     {
         var height = Mathf.Max(0.5f, builder.WallHeight);
         var used = 0;
+        var recent = wallTracker.RecentlySeen;
         for (var i = 0; i < walls.Count; i++)
         {
             if (innerWalls[i] || walls[i].Length < settings.minCornerWallLength) continue;
+            // Only what reads as a wall: wall-length pieces, and anything shorter only while it's
+            // being seen. Remembered fragments (a cabinet side, a door frame) don't clutter the room.
+            var seenNow = i >= recent.Count || recent[i];
+            if (walls[i].Length < minTargetWallLength || (!seenNow && walls[i].Length < ShownRememberedWallLength))
+                continue;
+            // One blue panel per real wall: a shorter estimate lying on a longer one isn't drawn.
+            if (LiesOnLongerWall(i)) continue;
             if (used >= wallLines.Count)
             {
-                wallLines.Add(CreateLine($"AutoWall_{used}", 0.02f, wallMaterial, false));
+                wallLines.Add(CreateLine($"AutoWall_{used}", 0.012f, wallMaterial, false));
                 wallPanels.Add(wallPanelMaterial != null ? CreatePanel($"AutoWallPanel_{used}") : null);
             }
 
@@ -1250,8 +1485,9 @@ public class ARAutoRoomScan : MonoBehaviour
     {
         if (stats == null) return;
         stats.cornersFinal = builder.CornerCount;
-        stats.cornersFinalAuto = Mathf.Max(0, builder.CornerCount - placed.Count);
-        stats.cornersFinalByHand = Mathf.Min(placed.Count, builder.CornerCount);
+        var byHand = placed.Count - locked.Count;
+        stats.cornersFinalAuto = Mathf.Max(0, builder.CornerCount - byHand);
+        stats.cornersFinalByHand = Mathf.Min(byHand, builder.CornerCount);
         stats.openEndsAtClose = OpenEndCount;
         if (builder.CornerCount >= RoomPolygonUtil.MinCorners)
         {

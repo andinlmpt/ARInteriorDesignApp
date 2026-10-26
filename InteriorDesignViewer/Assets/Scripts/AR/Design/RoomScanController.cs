@@ -257,6 +257,12 @@ public class RoomScanController : MonoBehaviour
         cornerBuilder?.PrepareForRescan();
         FindFirstObjectByType<ARDesignSpatialMappingController>()?.ResetToOutline();
 
+        // Every new scan gets a fresh AR map, however it was opened. A scan opened from the main
+        // screen kept the old one: in a dim room it drifted from scan to scan (the floor read
+        // -1.17, -0.97, -1.46, -1.62 then -1.79 m and the height 3.31 m within ten minutes).
+        // The reload path resets too; the second request inside the cooldown is skipped.
+        FindFirstObjectByType<ARBootstrap>()?.ResetTrackingForNewScan();
+
         SetPhase(ScanPhase.Scanning);
     }
 
@@ -856,7 +862,10 @@ public class RoomScanController : MonoBehaviour
     {
         if (Phase == phase) return;
 
+        Debug.Log($"[RoomScanController] Phase {Phase} → {phase}");
         Phase = phase;
+        // Before anyone hears of the new phase: the room plan turns plane detection off as it opens.
+        ARDepthSnapshot.SetDepthRunning(phase is ScanPhase.Scanning or ScanPhase.ReadyToConfirm);
         RecomputeStatus();
         PhaseChanged?.Invoke(phase);
         PushStatus();

@@ -39,12 +39,14 @@ public class ReactNativeUnityView extends FrameLayout {
       return;
     }
 
-    // pause Unity on blur, resume on focus
+    // pause Unity on blur, resume on focus. Through ReactNativeUnity so _isUnityPaused follows:
+    // UPlayer.pause() left it false, so focus coming back (a dialog closing) never resumed Unity
+    // and the AR screen stayed frozen on its last frame.
     if (hasWindowFocus && _isUnityPaused) {
       // view.requestFocus();
-      view.resume();
+      ReactNativeUnity.resume();
     } else if (!hasWindowFocus && !_isUnityPaused) {
-      view.pause();
+      ReactNativeUnity.pause();
     }
   }
 

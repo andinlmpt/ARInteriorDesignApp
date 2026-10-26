@@ -298,10 +298,38 @@ public class ARDesignEdgeVisualizer : MonoBehaviour
 /// <summary>Keeps world-space UI labels facing the camera.</summary>
 public class ARDesignBillboard : MonoBehaviour
 {
+    /// <summary>Closer than this (m) the label is hidden: it would cover the view.</summary>
+    const float HideCloserThan = 0.45f;
+    /// <summary>From this far (m) the label has its full size; closer it shrinks so it stays small on screen.</summary>
+    const float FullSizeFrom = 1.6f;
+    const float MinScale = 0.35f;
+
+    Vector3 baseScale;
+    UnityEngine.UI.Graphic[] graphics;
+    bool shown = true;
+
+    void Awake()
+    {
+        baseScale = transform.localScale;
+        graphics = GetComponentsInChildren<UnityEngine.UI.Graphic>(true);
+    }
+
     void LateUpdate()
     {
         var cam = Camera.main;
         if (cam == null) return;
-        transform.rotation = Quaternion.LookRotation(transform.position - cam.transform.position, Vector3.up);
+        var toLabel = transform.position - cam.transform.position;
+        transform.rotation = Quaternion.LookRotation(toLabel, Vector3.up);
+
+        // A measurement label near the phone grew to fill the screen; keep it label-sized.
+        var distance = toLabel.magnitude;
+        transform.localScale = baseScale * Mathf.Clamp(distance / FullSizeFrom, MinScale, 1f);
+        var show = distance >= HideCloserThan;
+        if (show == shown) return;
+        shown = show;
+        foreach (var g in graphics)
+        {
+            if (g != null) g.enabled = show;
+        }
     }
 }

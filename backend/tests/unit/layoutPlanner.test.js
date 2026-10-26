@@ -77,6 +77,27 @@ describe('layoutPlanner', () => {
     expect(Math.hypot(gapX, gapZ)).toBeLessThanOrEqual(0.15);
   });
 
+  it('still places the sofa when its armchair does not fit beside it', () => {
+    // A small room and an armchair as big as a love seat: together they fit nowhere.
+    const room = { width: 3.2, length: 1.7, height: 2.4 };
+    const furniture = [
+      { id: 'loveseat', type: 'sofa', name: 'Love Seat', width: 1.78, length: 0.54, height: 0.56, category: 'sofa' },
+      { id: 'armchair', type: 'armchair', name: 'Big Accent Chair', width: 1.37, length: 1.52, height: 1.32, category: 'chair' },
+    ];
+    const [layout] = planLayouts(room, furniture, { count: 1, seed: 3 });
+    const names = layout.furniture.map((item) => item.name);
+    expect(names).toContain('Love Seat');
+    const solid = layout.furniture.map(footprint);
+    for (let i = 0; i < solid.length; i += 1) {
+      const s = solid[i];
+      expect(s.x).toBeGreaterThanOrEqual(-0.001);
+      expect(s.z).toBeGreaterThanOrEqual(-0.001);
+      expect(s.x + s.w).toBeLessThanOrEqual(room.width + 0.001);
+      expect(s.z + s.d).toBeLessThanOrEqual(room.length + 0.001);
+      for (let j = i + 1; j < solid.length; j += 1) expect(overlaps(s, solid[j])).toBe(false);
+    }
+  });
+
   it('returns options anchored on different walls', () => {
     const layouts = planLayouts({ width: 5, length: 6, height: 2.7 }, LIVING_ROOM, { count: 3, seed: 3 });
     const walls = new Set(layouts.map((layout) => layout.primaryWall));

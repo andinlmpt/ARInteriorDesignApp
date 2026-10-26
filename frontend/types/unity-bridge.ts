@@ -27,7 +27,11 @@ export type UnityToRNEvent =
   | 'measurementPlanClosed'
   | 'requestRnExport3d'
   | 'measuredFurnitureReady'
-  | 'layoutAlignment';
+  | 'layoutAlignment'
+  /** Unity is about to load and warm up the object detector (busy for several seconds). */
+  | 'scannerPreparing'
+  /** The detector is ready; the scan can go on. */
+  | 'scannerReady';
 
 export type RNToUnityMethod =
   | 'selectFurniture'

@@ -20,6 +20,11 @@ public class ARScanGuidance : MonoBehaviour
         LowDetail,
         NoFloor,
         CameraBusy,
+        /// <summary>
+        /// Tracking is back, but ARCore lost it for lack of light a moment ago: in a dim room its map
+        /// drifts, so floor, height and walls disagree from one reading to the next.
+        /// </summary>
+        Dim,
     }
 
     [Tooltip("Turning faster than this (degrees per second) shows \"Move slowly\".")]
@@ -32,6 +37,10 @@ public class ARScanGuidance : MonoBehaviour
     [SerializeField] private float holdSeconds = 1.5f;
     [Tooltip("Seconds without a floor aim before \"Point at the floor\" is shown.")]
     [SerializeField] private float noFloorAfterSeconds = 2.5f;
+    [Tooltip("Seconds the \"room is too dark\" note stays after ARCore last lost tracking for lack of " +
+             "light. In a dim room on the phone the floor read from -0.97 to -2.13 m and the height " +
+             "from 1.89 to 5.00 m in one session, between short losses of tracking.")]
+    [SerializeField] private float darkMemorySeconds = 20f;
 
     public Issue Current { get; private set; }
 
@@ -50,6 +59,7 @@ public class ARScanGuidance : MonoBehaviour
         Issue.LowDetail => "Point at something with more detail",
         Issue.NoFloor => "Point at the floor",
         Issue.CameraBusy => "Camera is busy",
+        Issue.Dim => "Room is too dark",
         _ => string.Empty,
     };
 
@@ -62,6 +72,7 @@ public class ARScanGuidance : MonoBehaviour
         Issue.LowDetail => "Plain walls are hard to track. Include edges, furniture or the floor",
         Issue.NoFloor => "Aim the camera down at the floor",
         Issue.CameraBusy => "Turn off the phone's flashlight, then use Light here instead",
+        Issue.Dim => "Measurements drift in low light. Turn on more lights, or tap Light at the top right",
         _ => string.Empty,
     };
 
@@ -81,6 +92,10 @@ public class ARScanGuidance : MonoBehaviour
     float candidateSince;
     float shownUntil;
     float floorMissingSince = -1f;
+    float ignoreMotionUntil = -1f;
+    float lastDarkAt = float.NegativeInfinity;
+    const float LongFrameSeconds = 0.25f;
+    const float CatchUpSeconds = 0.5f;
 
     public static ARScanGuidance EnsureOn(GameObject host)
     {
@@ -126,7 +141,9 @@ public class ARScanGuidance : MonoBehaviour
         // ARCore's own reason wins: it knows why tracking is struggling.
         switch (ARSession.notTrackingReason)
         {
-            case NotTrackingReason.InsufficientLight: return Issue.TooDark;
+            case NotTrackingReason.InsufficientLight:
+                lastDarkAt = now;
+                return Issue.TooDark;
             case NotTrackingReason.ExcessiveMotion: return Issue.TooFast;
             case NotTrackingReason.InsufficientFeatures: return Issue.LowDetail;
             case NotTrackingReason.Relocalizing: return Issue.Relocalizing;
@@ -147,6 +164,9 @@ public class ARScanGuidance : MonoBehaviour
             floorMissingSince = -1f;
         }
 
+        if (now - lastDarkAt < darkMemorySeconds)
+            return Issue.Dim;
+
         return Issue.None;
     }
 
@@ -162,7 +182,15 @@ public class ARScanGuidance : MonoBehaviour
 
         var t = arCamera.transform;
         var dt = Time.unscaledDeltaTime;
-        if (hasLastPose && dt > 1e-4f)
+        var now = Time.unscaledTime;
+        // A long frame (the detector warm-up, a scene load) isn't a fast swing: ARCore catches up
+        // over the next frames and the jump read as "Move slowly" right after the freeze.
+        if (dt > LongFrameSeconds) ignoreMotionUntil = now + CatchUpSeconds;
+        if (now < ignoreMotionUntil)
+        {
+            turnSpeed = moveSpeed = 0f;
+        }
+        else if (hasLastPose && dt > 1e-4f)
         {
             var turn = Quaternion.Angle(lastRotation, t.rotation) / dt;
             var move = Vector3.Distance(lastPosition, t.position) / dt;

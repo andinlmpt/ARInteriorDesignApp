@@ -284,4 +284,17 @@ public static class ScanPlacement
         Debug.Log($"[ScanPlacement] Layout placed where the room was scanned (yaw {yawDegrees:F1}°).");
         return true;
     }
+
+    /// <summary>
+    /// The floor the last room was scanned on, when that scan is from this tracking session. Only
+    /// ever a measured floor: false before a scan, or after a tracking reset moved everything.
+    /// </summary>
+    public static bool TryGetScanFloorY(out float floorY)
+    {
+        floorY = 0f;
+        if (lastScanCorners == null || lastScanEpoch != ARBootstrap.TrackingEpoch) return false;
+        floorY = float.PositiveInfinity;
+        foreach (var c in lastScanCorners) floorY = Mathf.Min(floorY, c.y);
+        return !float.IsInfinity(floorY);
+    }
 }

@@ -31,6 +31,13 @@ public class ARBootstrap : MonoBehaviour
     RoomScanController scanController;
     ARDesignLayoutModeController layoutMode;
 
+    /// <summary>
+    /// Plain logs go out without a stack trace: on Android each one carried three lines of trace,
+    /// which cost the phone a little and filled its log buffer in seconds. Warnings and errors keep theirs.
+    /// </summary>
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    static void TrimLogStackTraces() => Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
+
     void Awake()
     {
         if (arSession == null)
@@ -102,7 +109,10 @@ public class ARBootstrap : MonoBehaviour
     /// </summary>
     public void ResetTrackingForNewScan()
     {
-        if (!isActiveAndEnabled || arSession == null || IsPlannerOrbitActive() || IsRealRoomLayoutActive()) return;
+        // No layout checks here: a new scan replaces any layout shown before it (planner or real
+        // room), so there are no placed pieces to keep. Skipping the reset after a layout view left
+        // the old map in place, often skewed by pauses, and the next scan measured a 3.1 m ceiling.
+        if (!isActiveAndEnabled || arSession == null) return;
         StartCoroutine(ResetWhenIdle());
     }
 
@@ -110,8 +120,32 @@ public class ARBootstrap : MonoBehaviour
     {
         // A resume/focus restart may be running; the reset must not be skipped because of it.
         while (starting) yield return null;
+        if (Time.unscaledTime - lastResetAt < ResetCooldownSeconds)
+        {
+            Debug.Log("[ARBootstrap] New scan — tracking was just reset, earlier planes are already gone.");
+            yield break;
+        }
+
         Debug.Log("[ARBootstrap] New scan — resetting AR tracking (clears earlier planes).");
         yield return EnsureSessionRunning(resetTracking: true);
+    }
+
+    /// <summary>Resets within this long of each other count as one (each restarts ARCore's camera).</summary>
+    const float ResetCooldownSeconds = 3f;
+    float lastResetAt = float.NegativeInfinity;
+
+    /// <param name="force">A session still stuck after the wait needs its reset even inside the cooldown.</param>
+    void ResetSession(string reason, bool force = false)
+    {
+        if (!force && Time.unscaledTime - lastResetAt < ResetCooldownSeconds)
+        {
+            Debug.Log($"[ARBootstrap] Skipped a second reset ({reason}) — one just happened.");
+            return;
+        }
+
+        lastResetAt = Time.unscaledTime;
+        arSession.Reset();
+        TrackingEpoch++;
     }
 
     /// <summary>Public entry so ARDesignScene can force a camera recovery.</summary>
@@ -242,10 +276,7 @@ public class ARBootstrap : MonoBehaviour
             // Xiaomi / ARCore often leaves the camera texture black after splash.
             sessionReady = true;
             if (resetTracking)
-            {
-                arSession.Reset();
-                TrackingEpoch++;
-            }
+                ResetSession("new scan");
 
             var wait = 0f;
             while (wait < 2.5f &&
@@ -260,8 +291,7 @@ public class ARBootstrap : MonoBehaviour
                 ARSession.state == ARSessionState.Ready)
             {
                 Debug.LogWarning($"[ARBootstrap] Session stuck in {ARSession.state} — resetting.");
-                arSession.Reset();
-                TrackingEpoch++;
+                ResetSession("stuck", force: true);
             }
 
             Debug.Log($"[ARBootstrap] AR session state={ARSession.state}");

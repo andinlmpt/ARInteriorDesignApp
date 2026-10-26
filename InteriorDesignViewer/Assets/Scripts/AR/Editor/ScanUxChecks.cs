@@ -65,15 +65,21 @@ public static class ScanUxChecks
         Check(ScanFloorAim.Resolve(camera, AimAt(0f, 4f), 0f, walls, null, s, out _) == ScanFloorAim.Kind.None,
             "aiming up the wall isn't the floor");
 
-        // Slightly behind the corner, past both seen parts: stopped by the walls, near the corner.
+        // Slightly behind the detected corner: the detected walls may be a little off the real
+        // ones, so a small overshoot stays where the user aims.
         kind = ScanFloorAim.Resolve(camera, AimAt(1.1f, 2.1f), 0f, walls, null, s, out p);
-        Check(kind == ScanFloorAim.Kind.WallBase && Vector2.Distance(new Vector2(p.x, p.z), new Vector2(1f, 2f)) < 0.12f,
-            $"aim past the corner stops at the walls ({p.x:F3}, {p.z:F3})");
+        Check(kind == ScanFloorAim.Kind.Floor && Near(p.x, 1.1f) && Near(p.z, 2.1f),
+            $"a small overshoot past the walls stays where aimed ({p.x:F3}, {p.z:F3})");
+        kind = ScanFloorAim.Resolve(camera, AimAt(-0.1f, 2.2f), 0f, walls, null, s, out p);
+        Check(kind == ScanFloorAim.Kind.Floor && Near(p.z, 2.2f), "20 cm past a wall line is still the floor the user aims at");
 
         kind = ScanFloorAim.Resolve(camera, AimAt(1.1f, 2.1f), 0f, walls, corners, s, out p);
         Check(kind == ScanFloorAim.Kind.Corner && Near(p.x, 1f) && Near(p.z, 2f), "and snaps onto the corner");
-        kind = ScanFloorAim.Resolve(camera, AimAt(0.85f, 1.9f), 0f, walls, corners, s, out p);
+        kind = ScanFloorAim.Resolve(camera, AimAt(0.92f, 1.93f), 0f, walls, corners, s, out p);
         Check(kind == ScanFloorAim.Kind.Corner && Near(p.x, 1f) && Near(p.z, 2f), "aim just in front of the corner snaps onto it");
+        kind = ScanFloorAim.Resolve(camera, AimAt(0.8f, 1.85f), 0f, walls, corners, s, out p);
+        Check(kind == ScanFloorAim.Kind.Floor && Near(p.x, 0.8f) && Near(p.z, 1.85f),
+            "25 cm from a detected corner the aim isn't pulled onto it");
         kind = ScanFloorAim.Resolve(camera, AimAt(0.4f, 1.5f), 0f, walls, corners, s, out p);
         Check(kind == ScanFloorAim.Kind.Floor && Near(p.x, 0.4f) && Near(p.z, 1.5f), "aim away from the corner stays put");
 

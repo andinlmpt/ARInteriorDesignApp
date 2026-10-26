@@ -174,7 +174,9 @@ public class ARSceneBridge : MonoBehaviour
             return;
         }
 
-        Debug.Log($"[ARSceneBridge] ← {message.method}");
+        // Gestures arrive every frame while dragging: logging them flooded the phone's log.
+        if (message.method != "furnitureGesture")
+            Debug.Log($"[ARSceneBridge] ← {message.method}");
 
         switch (message.method)
         {
@@ -313,12 +315,20 @@ public class ARSceneBridge : MonoBehaviour
     {
         if (SceneManager.GetActiveScene().name == MeasurementSceneName)
             return;
+        // The scene switches at the end of the frame. Opens queued while Unity was starting arrive
+        // together, and each one loaded the scan scene again (three loads in 100 ms, AR switched
+        // off and on each time) — load it once.
+        if (measurementLoadRequested)
+            return;
+        measurementLoadRequested = true;
 
         // Idle teardown before scene swap — do not restart furniture placement.
         SoftCloseFurniture(notifyRn: false);
         PendingBootAction = null;
         SceneManager.LoadScene(MeasurementSceneName);
     }
+
+    bool measurementLoadRequested;
 
     /// <summary>
     /// Ensures ARDesignScene is active and unlocks furniture placement.

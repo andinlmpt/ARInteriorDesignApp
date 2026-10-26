@@ -42,6 +42,15 @@ public static class AutoWallGeometryChecks
         Check(outline.Count == 4 && !AutoWallGeometry.CrossesItself(outline) && Mathf.Abs(Area(outline) - 12f) < 0.6f,
             "placed corners complete the outline");
 
+        // No walls found: the floor point (corner 1) and the corners walked to after it make the
+        // room, with corner 1 joined to corner 2 (it used to be left out of the outline).
+        var walked = new List<Vector2>(room);
+        var walkedOutline = AutoWallGeometry.OrderOutline(new List<AutoWallGeometry.Corner>(), walked, new Vector2(2f, 1.5f));
+        var first = walkedOutline.IndexOf(room[0]);
+        Check(walkedOutline.Count == 4 && first >= 0 && !AutoWallGeometry.CrossesItself(walkedOutline)
+              && (walkedOutline[(first + 1) % 4] == room[1] || walkedOutline[(first + 3) % 4] == room[1]),
+            "walked corners join corner 1 to corner 2");
+
         // A wardrobe front 0.6 m in front of the back wall is furniture, not a wall.
         var wardrobe = new List<AutoWallGeometry.WallPiece>(pieces) { Piece(new Vector2(2.6f, 2.4f), new Vector2(1.4f, 2.4f), 2.4f) };
         var wardrobeCorners = AutoWallGeometry.FindCorners(AutoWallGeometry.MergeWalls(wardrobe, s), s);
@@ -153,11 +162,12 @@ public static class AutoWallGeometryChecks
             t.Update(AutoWallGeometry.MergeWalls(new List<AutoWallGeometry.WallPiece>(seen), s));
         var none = Array.Empty<AutoWallGeometry.WallPiece>();
 
-        // A wall shows from its second sighting, not on a one-frame flash.
+        // A wall shows once it has been seen a few times, not on a short-lived flash.
         var tracker = new AutoWallTracker(ts);
         var north = Part(room[0], room[1], 0.1f, 0.5f);
-        Check(Round(tracker, north).Count == 0, "new wall waits for a second sighting");
-        Check(Round(tracker, north).Count == 1, "wall shows on its second sighting");
+        for (var i = 1; i < ts.confirmAfter; i++)
+            Check(Round(tracker, north).Count == 0, $"new wall waits (sighting {i})");
+        Check(Round(tracker, north).Count == 1, "wall shows once seen often enough");
 
         // Its plane drops out for a while: the wall stays.
         List<AutoWallGeometry.Wall> shown = null;
@@ -181,23 +191,102 @@ public static class AutoWallGeometryChecks
         for (var i = 0; i < 4; i++) shown = Round(flash, none);
         Check(shown.Count == 0 && flash.KnownCount == 0, "one-round flash is dropped");
 
-        // A wall seen only twice goes once it has been gone a long time; a well-seen one stays.
+        // A wall seen only briefly goes once it has been gone a long time; a well-seen one stays.
         var weak = new AutoWallTracker(ts);
-        Round(weak, Part(room[1], room[2], 0.2f, 0.8f));
-        Round(weak, Part(room[1], room[2], 0.2f, 0.8f));
+        for (var i = 0; i < ts.confirmAfter; i++) Round(weak, Part(room[1], room[2], 0.2f, 0.8f));
+        Check(weak.KnownCount == 1, "briefly seen wall is shown");
         for (var i = 0; i <= ts.dropWeakAfter; i++) shown = Round(weak, none);
         Check(shown.Count == 0, "briefly seen wall goes after a long absence");
         var strong = new AutoWallTracker(ts);
         for (var i = 0; i < ts.keepAfterSeen; i++) Round(strong, Part(room[1], room[2], 0.2f, 0.8f));
         for (var i = 0; i <= ts.dropWeakAfter * 2; i++) shown = Round(strong, none);
         Check(shown.Count == 1, "well-seen wall stays until the scan starts over");
+        Check(strong.RecentlySeen.Count == 1 && !strong.RecentlySeen[0], "a remembered wall isn't marked as seen just now");
+
+        // A short piece (a cabinet side) seen many times still goes once it's been gone a while.
+        var piece = new AutoWallTracker(ts);
+        for (var i = 0; i < ts.keepAfterSeen; i++) Round(piece, Part(room[1], room[2], 0.4f, 0.6f));
+        Check(piece.RecentlySeen.Count == 1 && piece.RecentlySeen[0], "a wall in view is seen just now");
+        for (var i = 0; i <= ts.dropWeakAfter; i++) shown = Round(piece, none);
+        Check(shown.Count == 0, "short well-seen piece goes after a long absence");
+
+        // The same wall estimated twice, 25 cm apart (ARCore re-estimating a plain wall), is one wall.
+        var twice = new AutoWallTracker(ts);
+        for (var i = 0; i < ts.confirmAfter; i++)
+            shown = Round(twice, Part(room[0], room[1], 0.1f, 0.6f), Part(room[0], room[1], 0.4f, 0.9f, 0f, 0.25f));
+        Check(shown.Count == 1, "the same wall seen twice, 25 cm apart, is one wall");
+
+        // An 80 cm piece (a cabinet side) meeting a wall makes no corner.
+        var stub = AutoWallGeometry.MergeWalls(new List<AutoWallGeometry.WallPiece>
+        {
+            Part(room[0], room[1], 0.1f, 0.9f),
+            Piece(new Vector2(2f, 0.05f), new Vector2(2f, 0.85f), 1.9f),
+        }, s);
+        Check(AutoWallGeometry.FindCorners(stub, s).Count == 0, "a short piece against a wall makes no corner");
+
+        // Curtain folds and furniture sides at odd angles are dropped; the room's walls, a short
+        // piece square to them and a long angled wall all stay.
+        var mixed = new List<AutoWallGeometry.WallPiece>
+        {
+            Part(room[0], room[1], 0.1f, 0.9f),
+            Part(room[1], room[2], 0.1f, 0.9f),
+            Part(room[2], room[3], 0.1f, 0.9f),
+            Piece(new Vector2(1f, 1f), new Vector2(1.6f, 1.5f), 1.5f),
+            Piece(new Vector2(0.5f, 2f), new Vector2(2.3f, 3.2f), 4f),
+            Piece(new Vector2(0.2f, 0.5f), new Vector2(0.2f, 1.3f), 1.9f),
+        };
+        var kept = AutoWallGeometry.DropOffAxisPieces(mixed);
+        Check(kept.Count == 5 && !kept.Contains(mixed[3]), "a short piece at 40 degrees to the room is dropped");
+        Check(kept.Contains(mixed[4]), "a long angled wall stays");
+        Check(kept.Contains(mixed[5]), "a short piece square to the room stays");
+        var tilted = new List<AutoWallGeometry.WallPiece>();
+        foreach (var p in mixed) tilted.Add(Piece(Rotate(p.a, 30f), Rotate(p.b, 30f), p.weight));
+        Check(AutoWallGeometry.DropOffAxisPieces(tilted).Count == 5, "a room at any heading keeps its walls");
+
+        // Walls a few degrees off (as ARCore reports them) come out square, about their middles;
+        // the room keeps its heading and an angled wall stays angled.
+        var skew = new[] { 4f, -3f, 5f, -2f };
+        var skewed = new List<AutoWallGeometry.WallPiece>();
+        for (var i = 0; i < 4; i++)
+            skewed.Add(Piece(Rotate(Vector2.Lerp(room[i], room[(i + 1) % 4], 0.2f), 30f),
+                Rotate(Vector2.Lerp(room[i], room[(i + 1) % 4], 0.8f), 30f), 4f, skew[i]));
+        skewed.Add(Piece(Rotate(new Vector2(0.5f, 2f), 30f), Rotate(new Vector2(2.3f, 3.2f), 30f), 4f));
+        var squared = AutoWallGeometry.MergeWalls(skewed, s);
+        var middles = new List<Vector2>();
+        foreach (var w in squared) middles.Add((w.End(0) + w.End(1)) * 0.5f);
+        AutoWallGeometry.SquareWalls(squared);
+        // The room's heading is the walls' weighted average (+1.5° here), never pulled by the angled wall.
+        var roomHeading = float.NaN;
+        var square = true;
+        for (var i = 0; i < squared.Count; i++)
+        {
+            var heading = Mathf.Atan2(squared[i].dir.y, squared[i].dir.x) * Mathf.Rad2Deg;
+            var isAngled = Vector2.Distance(middles[i], Rotate(new Vector2(1.4f, 2.6f), 30f)) < 0.1f;
+            if (!isAngled && float.IsNaN(roomHeading)) roomHeading = heading;
+            var offRoom = Mathf.Abs(Mathf.Repeat(heading - roomHeading + 45f, 90f) - 45f);
+            square &= isAngled ? offRoom > 20f : offRoom < 0.05f;
+            square &= Vector2.Distance((squared[i].End(0) + squared[i].End(1)) * 0.5f, middles[i]) < 0.001f;
+        }
+        var headingError = Mathf.Abs(Mathf.Repeat(roomHeading - 30f + 45f, 90f) - 45f);
+        Check(squared.Count == 5 && square && headingError < 2.5f, "walls a few degrees off come out square to the room");
+
+        // Three corners of a room (any order, a little off square) give the fourth opposite the square one.
+        Check(AutoWallGeometry.TryRectangleCorner(room[1], room[3], room[0], out var fourth)
+              && Vector2.Distance(fourth, room[2]) < 0.001f, "three corners finish the rectangle");
+        var rotated = new[] { Rotate(room[0], 30f), Rotate(room[1], 30f), Rotate(room[2] + new Vector2(0.1f, 0f), 30f) };
+        Check(AutoWallGeometry.TryRectangleCorner(rotated[0], rotated[1], rotated[2], out fourth)
+              && Vector2.Distance(fourth, Rotate(room[3] + new Vector2(0.1f, 0f), 30f)) < 0.001f,
+            "a turned, slightly skewed room still finishes");
+        Check(!AutoWallGeometry.TryRectangleCorner(new Vector2(0, 0), new Vector2(4, 0), new Vector2(2, 1), out _),
+            "a flat triangle isn't a rectangle");
+        Check(!AutoWallGeometry.TryRectangleCorner(new Vector2(0, 0), new Vector2(0.5f, 0), new Vector2(0, 3), out _),
+            "a corner with a too-short wall isn't used");
 
         // The four walls of a room stay four (perpendicular walls never match each other), with all corners.
         var rect = new AutoWallTracker(ts);
         var rectPieces = new AutoWallGeometry.WallPiece[4];
         for (var i = 0; i < 4; i++) rectPieces[i] = Part(room[i], room[(i + 1) % 4], 0.2f, 0.8f);
-        Round(rect, rectPieces);
-        shown = Round(rect, rectPieces);
+        for (var i = 0; i < ts.confirmAfter; i++) shown = Round(rect, rectPieces);
         var rectCorners = AutoWallGeometry.FindCorners(shown, s);
         Check(shown.Count == 4 && rectCorners.Count == 4, "steady room walls keep their corners");
         foreach (var p in room) Check(Near(rectCorners, p, 0.02f), $"steady room corner {p}");

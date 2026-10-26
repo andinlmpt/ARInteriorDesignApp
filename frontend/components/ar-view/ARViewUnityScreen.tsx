@@ -45,6 +45,7 @@ import type {
   PlacementSafetyPayload,
   ExportResultPayload,
   LayoutAlignmentPayload,
+  UnityOutboundMessage,
 } from '@/types/unity-bridge';
 import { RoomMeasurementService } from '@/services/RoomMeasurementService';
 import { projectService } from '@/services/ProjectService';
@@ -493,13 +494,14 @@ export function ARViewUnityScreen() {
       setStatusMessage('Opening your layout in AR…');
       modeBootedRef.current = true;
       measureNeedsReloadRef.current = false;
-      if (synced) {
-        markUnityPlayerWarm();
-        setUnityReady(true);
-        setUnityTimedOut(false);
-      } else {
-        unityRef.current?.resumeUnityPlayer?.();
-      }
+      // Unity is listening on either scene: openDesignLayoutInAr from ARDesignScene loads the
+      // measurement scene itself. Waiting for ARRoomMeasurement here never ended, because nothing
+      // else opens it in this flow, so the layout was never sent.
+      sessionBootAckRef.current = true;
+      markUnityPlayerWarm();
+      setUnityReady(true);
+      setUnityTimedOut(false);
+      if (!synced) unityRef.current?.resumeUnityPlayer?.();
       return;
     }
 
@@ -766,6 +768,26 @@ export function ARViewUnityScreen() {
 
   // Do NOT bulk-prefetch GLBs on open — sofa files are 70–250 MB and loading
   // many at once OOMs / freeze the device. Models load on place (with disk cache).
+
+  /**
+   * Unity loads and warms up its object detector once per session; that blocks Unity for several
+   * seconds. A spinner here keeps moving (RN draws it, not Unity), so the frozen camera doesn't
+   * look like a hang.
+   */
+  const [scannerPreparing, setScannerPreparing] = useState(false);
+  const scannerPreparingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleScannerPreparingMessage = useCallback((message: UnityOutboundMessage) => {
+    if (message.event !== 'scannerPreparing' && message.event !== 'scannerReady') return;
+    const preparing = message.event === 'scannerPreparing';
+    setScannerPreparing(preparing);
+    if (scannerPreparingTimeoutRef.current) clearTimeout(scannerPreparingTimeoutRef.current);
+    scannerPreparingTimeoutRef.current = preparing
+      ? setTimeout(() => setScannerPreparing(false), 30000)
+      : null;
+  }, []);
+  useEffect(() => () => {
+    if (scannerPreparingTimeoutRef.current) clearTimeout(scannerPreparingTimeoutRef.current);
+  }, []);
 
   const handleUnityUnavailable = useCallback(() => {
     setUnityTimedOut(true);
@@ -1359,6 +1381,7 @@ export function ARViewUnityScreen() {
           ref={unityRef}
           style={styles.unityLayer}
           onUnityReady={handleUnityReady}
+          onUnityMessage={handleScannerPreparingMessage}
           onReloadComplete={handleReloadComplete}
           onMeasuredFurnitureReady={handleMeasuredFurnitureReady}
           onLayoutAlignment={handleLayoutAlignment}
@@ -1621,6 +1644,16 @@ export function ARViewUnityScreen() {
           />
         )}
 
+      {scannerPreparing && (
+        <View style={styles.scannerPreparing} pointerEvents="none">
+          <View style={styles.scannerPreparingCard}>
+            <ActivityIndicator size="large" color="#FFFFFF" />
+            <Text style={styles.scannerPreparingTitle}>Getting the scanner ready…</Text>
+            <Text style={styles.scannerPreparingBody}>A few seconds · only when the scanner opens</Text>
+          </View>
+        </View>
+      )}
+
       {measureHandoffPending && !furnitureUiReady && (
         <View style={styles.measureChrome} pointerEvents="box-none">
           <TouchableOpacity
@@ -1684,6 +1717,7 @@ export function ARViewUnityScreen() {
       ) : null}
 
       <AppDialog
+        inline
         visible={exitConfirmVisible}
         title={isApplyLayoutFlow ? 'Exit AR view?' : 'Exit room scan?'}
         message={
@@ -1712,6 +1746,7 @@ export function ARViewUnityScreen() {
       />
 
       <AppDialog
+        inline
         visible={exportResultDialog?.kind === 'success'}
         title="3D layout exported"
         message={
@@ -1762,6 +1797,7 @@ export function ARViewUnityScreen() {
       />
 
       <AppDialog
+        inline
         visible={exportResultDialog?.kind === 'error'}
         title="Export failed"
         message={exportResultDialog?.kind === 'error' ? exportResultDialog.message : undefined}
@@ -1789,6 +1825,33 @@ export function ARViewUnityScreen() {
 }
 
 const styles = StyleSheet.create({
+  scannerPreparing: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  scannerPreparingCard: {
+    alignItems: 'center',
+    paddingHorizontal: 28,
+    paddingVertical: 22,
+    borderRadius: 18,
+    backgroundColor: 'rgba(20,22,28,0.88)',
+    maxWidth: 300,
+  },
+  scannerPreparingTitle: {
+    marginTop: 14,
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  scannerPreparingBody: {
+    marginTop: 6,
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 13,
+    textAlign: 'center',
+  },
   container: {
     flex: 1,
     backgroundColor: '#000000',

@@ -27,6 +27,16 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
     float nextAutoScan;
     float nextEarlyScan;
     public bool IsScanning => cocoDetector != null && cocoDetector.IsScanning;
+
+    /// <summary>The detector has loaded and run once, so the walk won't freeze on its first detection.</summary>
+    public bool IsDetectorWarm => cocoDetector != null && cocoDetector.IsWarm;
+
+    /// <summary>Loads and runs the detector once now (a few seconds' freeze, meant for when the scanner opens).</summary>
+    public void WarmUpDetector()
+    {
+        cocoDetector = ARFurnitureCocoDetector.EnsureOn(gameObject);
+        cocoDetector?.WarmUp();
+    }
     public int Revision { get; private set; }
 
     /// <summary>Furniture spotted so far while the room outline is still open.</summary>
@@ -136,7 +146,25 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
 
         var inside = earlySightings.FindAll(s => RoomPolygonUtil.PointInsidePolygonXZ(s.center, corners));
         earlySightings.Clear();
-        MergeIntoPending(inside, pending);
+        MergeIntoPending(inside.ConvertAll(s => FitToRoom(s, corners, closed: true)), pending);
+    }
+
+    /// <summary>
+    /// The box turned square to the nearest wall and, in a closed room, cut back where it runs
+    /// through a wall (see <see cref="RoomBoxFit"/>). The floor height and box height stay as found.
+    /// </summary>
+    public static FurnitureAutoSuggestion FitToRoom(FurnitureAutoSuggestion s, IReadOnlyList<Vector3> corners, bool closed)
+    {
+        if (corners == null || corners.Count < 2) return s;
+        var outline = new List<Vector2>(corners.Count);
+        foreach (var c in corners) outline.Add(new Vector2(c.x, c.z));
+
+        var center = new Vector2(s.center.x, s.center.z);
+        var size = new Vector2(s.size.x, s.size.z);
+        RoomBoxFit.Fit(outline, closed, ref center, ref size, ref s.yaw);
+        s.center = new Vector3(center.x, s.center.y, center.y);
+        s.size = new Vector3(size.x, s.size.y, size.y);
+        return s;
     }
 
     void Awake()
@@ -168,7 +196,8 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
         cocoDetector = ARFurnitureCocoDetector.EnsureOn(gameObject);
         if (cocoDetector != null)
         {
-            found.AddRange(cocoDetector.TryDetect(corners, floorY, raycastManager, obstacles));
+            foreach (var s in cocoDetector.TryDetect(corners, floorY, raycastManager, obstacles))
+                found.Add(FitToRoom(s, corners, cornerBuilder.IsLoopClosed));
             CollectOpeningSightings();
         }
 

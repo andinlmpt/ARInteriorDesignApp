@@ -360,8 +360,8 @@ MonoBehaviour:
   anchorManager: {fileID: 0}
   anchorCorners: 1
   edgeColor: {r: 1, g: 1, b: 1, a: 0.98}
-  floorLineWidth: 0.028
-  wallLineWidth: 0.022
+  floorLineWidth: 0.016
+  wallLineWidth: 0.012
   wallHeight: 2.5
   requireHeightBeforeCorners: 1
   requireStartButtonForHeightBase: 1
@@ -396,8 +396,8 @@ MonoBehaviour:
   planeManager: {fileID: 1786306640}
   floorEdgeColor: {r: 1, g: 1, b: 1, a: 0.95}
   wallEdgeColor: {r: 0.72, g: 0.55, b: 0.95, a: 0.9}
-  floorLineWidth: 0.018
-  wallLineWidth: 0.014
+  floorLineWidth: 0.016
+  wallLineWidth: 0.012
   floorLift: 0.008
   minPlaneArea: 0.08
   showEdgeLengthLabels: 1
