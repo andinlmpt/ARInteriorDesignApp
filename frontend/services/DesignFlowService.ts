@@ -1,4 +1,4 @@
-import { callApi } from './apiClient';
+import { ApiError, callApi } from './apiClient';
 import { designItemColor } from '@/utils/designItemColors';
 import { mapFurnitureIdToUnity } from '@/config/unity-furniture-map';
 import { roomLocalToUnity } from '@/utils/roomLocalToUnity';
@@ -37,6 +37,16 @@ interface GenerateDesignResponse extends GenerativeDesignOutput {
   preferences?: DesignPreferencesInput;
   finalLayout?: CustomizedDesignLayout | null;
   finalizedAt?: number;
+}
+
+export type RoomFitReason = 'too-tall' | 'too-big' | 'no-space';
+
+export interface RoomFitResult {
+  /** The room the check used (the scanned outline's size), metres. */
+  room: { width: number; length: number; height: number };
+  /** Existing furniture the scan marked in the room. */
+  existingCount: number;
+  unfit: { id: string; reason: RoomFitReason }[];
 }
 
 function toLayoutItem(item: DesignLayoutItem | NonNullable<DesignProposal['layout']>['furniture'][number], index: number): DesignLayoutItem {
@@ -149,6 +159,26 @@ export class DesignFlowService {
     };
   }
 
+  /**
+   * Catalog pieces that can't fit the scanned room (too big, too tall, or no free floor left by the
+   * furniture already there), so the preferences screen leaves them out of the recommendations.
+   */
+  static async getRoomFit(
+    room: { width: number; length: number; height: number },
+    measurementId?: string,
+  ): Promise<RoomFitResult> {
+    const response = await callApi<RoomFitResult>('/designs/room-fit', {
+      method: 'POST',
+      body: { dimensions: room, measurementId },
+      timeoutMs: 20000,
+    });
+    return {
+      room: response.room,
+      existingCount: response.existingCount ?? 0,
+      unfit: Array.isArray(response.unfit) ? response.unfit : [],
+    };
+  }
+
   /** Persist the AR-customized layout (design flow step 7). */
   static async saveFinalDesign(
     layout: CustomizedDesignLayout,
@@ -169,6 +199,23 @@ export class DesignFlowService {
       },
       timeoutMs: 30000,
     });
+  }
+
+  /**
+   * The project's newest design (a saved one first), so opening a saved project shows its design
+   * instead of starting over at the preferences. Null when the project has no design yet.
+   */
+  static async getLatestProjectSession(
+    projectId: string,
+  ): Promise<{ sessionId: string; finalized: boolean } | null> {
+    try {
+      return await callApi<{ sessionId: string; finalized: boolean }>(
+        `/designs/project/${encodeURIComponent(projectId)}`,
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null;
+      throw error;
+    }
   }
 
   static async getSession(

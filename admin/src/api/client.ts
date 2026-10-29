@@ -49,7 +49,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    const message = data.message || data.error || `Request failed (${response.status})`;
+    const fallback = response.status === 429
+      ? 'Too many requests right now. Please wait a minute and try again.'
+      : `Request failed (${response.status})`;
+    const message = data.message || data.error || fallback;
     throw new Error(message);
   }
 

@@ -329,9 +329,32 @@ function buildGroups(entries) {
   return { groups, rugs };
 }
 
+/**
+ * After the main pieces, what the room is used for comes before what decorates it. By size alone,
+ * a 3 × 3.5 m living room gave the TV's wall to the armchair and the TV was dropped while the
+ * lamp and bookshelf stayed (adviser, 2026-10-28).
+ */
+const SECONDARY_PRIORITY = {
+  // The coffee table is set in front of the sofa before the TV takes the wall across from it;
+  // the other way round, the TV's walkway pushed the table against a side wall.
+  'coffee-table': 450,
+  'tv-stand': 400,
+  nightstand: 350,
+  'desk-chair': 300,
+  chair: 300,
+  'dining-chair': 300,
+  stool: 300,
+  wardrobe: 250,
+  dresser: 200,
+  armchair: 200,
+  storage: 100,
+  'side-table': 50,
+  lamp: 20,
+};
+
 function groupPriority(group) {
   const primaryIndex = PRIMARY_ROLES.indexOf(group.primaryRole);
-  const base = primaryIndex >= 0 ? 1000 - primaryIndex * 50 : 0;
+  const base = primaryIndex >= 0 ? 1000 - primaryIndex * 50 : SECONDARY_PRIORITY[group.primaryRole] || 0;
   return base + group.gw * group.gd * 10;
 }
 
@@ -366,7 +389,15 @@ function placeGroup(group, frame) {
   return { group, frame, items, zones };
 }
 
-function wallFrames(group, room) {
+/** Gap left beside furniture when a piece is set next to it (the optimizer keeps the same). */
+const BESIDE_GAP = 0.3;
+
+/**
+ * Spots along each wall for a group. Besides 25 cm steps, it tries next to each of `blockers`
+ * (furniture, door zones), so a piece that fits a gap isn't missed between steps. A blocker with
+ * `gap` keeps that much space (furniture); door zones already include theirs.
+ */
+function wallFrames(group, room, blockers = []) {
   const frames = [];
   WALL_ORDER.forEach((wall) => {
     const horizontal = wall === 'north' || wall === 'south';
@@ -376,6 +407,14 @@ function wallFrames(group, room) {
     const maxOff = along - PAD - group.gw;
     const offsets = new Set([PAD, maxOff, (along - group.gw) / 2]);
     for (let off = PAD; off < maxOff; off += 0.25) offsets.add(off);
+    blockers.forEach((b) => {
+      const start = horizontal ? b.x : b.z;
+      const size = horizontal ? b.w : b.d;
+      const gap = b.gap ?? 0.02;
+      [start + size + gap, start - group.gw - gap].forEach((off) => {
+        if (off >= PAD - 1e-6 && off <= maxOff + 1e-6) offsets.add(clamp(off, PAD, maxOff));
+      });
+    });
     offsets.forEach((off) => {
       const base = { rot: WALL_ROTATION[wall], gw: group.gw, gd: group.gd, wall, offset: off, along };
       if (wall === 'north') frames.push({ ...base, ox: off, oz: PAD });
@@ -413,7 +452,10 @@ function isValidPlacement(candidate, placed, room, strict, features = NO_FEATURE
     }
     for (const other of placed) {
       if (other.items.some((o) => rectsOverlap(item.rect, o.rect))) return false;
-      if (strict && other.zones.some((z) => rectsOverlap(item.rect, z))) return false;
+      // A coffee table set in front of its sofa belongs in the sofa's walkway.
+      if (strict && other.group.key !== candidate.anchorGroupKey && other.zones.some((z) => rectsOverlap(item.rect, z))) {
+        return false;
+      }
     }
   }
   if (strict) {
@@ -550,7 +592,26 @@ function existingPlacement(e) {
     items: [{ entry, groupKey: e.groupKey, rect: e.rect, rotation: e.rotation }],
     zones: [],
     existing: e,
+    anchor: { id: e.id, role: e.role, groupKey: e.groupKey, planned: false },
   };
+}
+
+/**
+ * Each piece of a group this layout already placed, shaped like an existing piece, so the pieces
+ * that go with it can be set around it. When a sofa's group didn't fit in one piece, its coffee
+ * table used to land against any free wall, beside the sofa or across the room (adviser, 2026-10-28).
+ */
+function plannedAnchors(placement) {
+  return placement.items.map((item) => {
+    const { width, length } = item.entry.item;
+    return {
+      group: { key: placement.group.key, members: [{ entry: item.entry, u: 0, v: 0, rot: 0, lw: width, ld: length }] },
+      frame: { rot: item.rotation, ox: item.rect.x, oz: item.rect.z, gw: width, gd: length, wall: null },
+      items: [item],
+      zones: [],
+      anchor: { id: item.entry.id, role: item.entry.role, groupKey: placement.group.key, planned: true },
+    };
+  });
 }
 
 /** Where a piece goes next to the furniture it belongs with, in that furniture's frame (back edge v = 0). */
@@ -574,16 +635,19 @@ const ANCHORED_SPOTS = {
   stool: [['island'], (a, it) => [{ u: (a.lw - it.width) / 2, v: a.ld + 0.05, rot: 180 }]],
 };
 
-/** Candidates that put a single piece with an existing piece it belongs with (a coffee table at your sofa). */
-function anchoredCandidates(group, existingPlacements) {
+/**
+ * Candidates that put a single piece with a piece it belongs with: a coffee table at your sofa, or
+ * at the sofa this layout just placed. `anchors` are existing placements and plannedAnchors().
+ */
+function anchoredCandidates(group, anchors) {
   if (group.members.length !== 1) return [];
   const dep = group.members[0].entry;
   const rule = ANCHORED_SPOTS[dep.role];
   if (!rule) return [];
   const [anchorRoles, spots] = rule;
   const candidates = [];
-  existingPlacements
-    .filter((p) => anchorRoles.includes(p.existing.role))
+  anchors
+    .filter((p) => anchorRoles.includes(p.anchor.role))
     .forEach((anchor) => {
       const a = anchor.group.members[0];
       spots(a, dep.item).forEach((spot) => {
@@ -591,9 +655,10 @@ function anchoredCandidates(group, existingPlacements) {
         const rotation = (spot.rot + anchor.frame.rot) % 360;
         candidates.push({
           group,
-          frame: { ...anchor.frame, anchorId: anchor.existing.id },
-          anchorId: anchor.existing.id,
-          items: [{ entry: dep, groupKey: anchor.existing.groupKey, rect, rotation }],
+          frame: { ...anchor.frame, anchorId: anchor.anchor.id },
+          anchorId: anchor.anchor.id,
+          anchorGroupKey: anchor.anchor.planned ? anchor.anchor.groupKey : null,
+          items: [{ entry: dep, groupKey: anchor.anchor.groupKey, rect, rotation }],
           zones: NEEDS_FRONT_ROLES.has(dep.role) ? [frontZone(rect, rotation)] : [],
         });
       });
@@ -623,6 +688,22 @@ function placeRugs(rugs, placedItems, room, primaryPlacement) {
 // ----------------------------------------------------------------------------
 // Scoring
 // ----------------------------------------------------------------------------
+
+const FRONT_DIR = { 0: [0, 1], 90: [1, 0], 180: [0, -1], 270: [-1, 0] };
+
+/** Where `point` is from a placed piece's centre: `ahead` the way it faces, `side` across that. */
+function relativeTo(item, point) {
+  const c = rectCenter(item.rect);
+  const [fx, fz] = FRONT_DIR[((item.rotation % 360) + 360) % 360] || FRONT_DIR[0];
+  const dx = point.x - c.x;
+  const dz = point.z - c.z;
+  return { ahead: dx * fx + dz * fz, side: Math.abs(dx * fz - dz * fx) };
+}
+
+/** A placed piece's depth along the way it faces, and its width across that. */
+function facingSize(item) {
+  return item.rotation % 180 === 0 ? { depth: item.rect.d, width: item.rect.w } : { depth: item.rect.w, width: item.rect.d };
+}
 
 function polygonArea(polygon) {
   let area = 0;
@@ -744,15 +825,32 @@ function scoreLayout(items, room, features = NO_FEATURES) {
   const doors = features.doorZones;
   const doorsOk = doors.filter((zone) => !solid.some((o) => rectsOverlap(zone, o.rect)) && reachable(zone)).length;
   const doorAccess = doors.length > 0 ? Math.round((100 * doorsOk) / doors.length) : 100;
-  const clearance = doors.length > 0 ? Math.round(0.7 * frontClearance + 0.3 * doorAccess) : frontClearance;
-
   const windowsBlocked = features.windowZones.filter((zone) => solid.some((item) => blocksWindow(item, zone))).length;
+  // A tall piece in front of a window costs points: it used to show only in the cons, so the best
+  // of the tries could be a layout with the wardrobe against the window.
+  const clearance = Math.max(0, (doors.length > 0 ? Math.round(0.7 * frontClearance + 0.3 * doorAccess) : frontClearance)
+    - 25 * windowsBlocked);
   const deskNearWindow = features.windowZones.length > 0 && solid
     .filter((i) => i.entry.role === 'desk')
     .some((desk) => features.windowZones.some((zone) => rectGap(desk.rect, zone) <= 0.6));
 
   const byRole = (role) => solid.filter((i) => i.entry.role === role);
   const relationResults = [];
+  /** Where people sit together: the nearest coffee table, else the floor in front of the nearest sofa. */
+  const seatingCentre = (piece) => {
+    const all = [...solid, ...existing].filter((o) => o !== piece);
+    const closest = (role) => all
+      .filter((o) => o.entry.role === role)
+      .reduce((best, o) => (!best || rectGap(piece.rect, o.rect) < rectGap(piece.rect, best.rect) ? o : best), null);
+    const table = closest('coffee-table');
+    if (table && rectGap(piece.rect, table.rect) <= 2.5) return rectCenter(table.rect);
+    const sofa = closest('sofa');
+    if (!sofa) return null;
+    const c = rectCenter(sofa.rect);
+    const [fx, fz] = FRONT_DIR[((sofa.rotation % 360) + 360) % 360] || FRONT_DIR[0];
+    const reach = facingSize(sofa).depth / 2 + 0.8;
+    return { x: c.x + fx * reach, z: c.z + fz * reach };
+  };
   // Closest new or existing piece of one of `roles`; `lastAnchor` remembers which, for the pros.
   let lastAnchor = null;
   const nearest = (item, roles) => {
@@ -778,12 +876,30 @@ function scoreLayout(items, room, features = NO_FEATURES) {
     const gap = nearest(n, ['bed']);
     if (gap != null) relate('nightstand', gap <= 0.15 ? 1 : gap <= 0.6 ? 0.5 : 0);
   });
+  // In front of the sofa and centred on it, 30–70 cm off. Distance alone let a table beside the
+  // sofa's arm score as well as one in front of it.
   byRole('coffee-table').forEach((t) => {
-    const gap = nearest(t, ['sofa']);
-    if (gap != null) relate('coffee', gap >= 0.3 && gap <= 0.7 ? 1 : gap <= 1.2 ? 0.5 : 0);
+    if (nearest(t, ['sofa']) == null) return;
+    const sofa = lastAnchor;
+    const { ahead, side } = relativeTo(sofa, rectCenter(t.rect));
+    const size = facingSize(sofa);
+    const tableDepth = sofa.rotation % 180 === 0 ? t.rect.d : t.rect.w;
+    const gap = ahead - size.depth / 2 - tableDepth / 2;
+    const inFront = gap > -0.05 && side <= size.width / 2;
+    const parallel = t.rotation % 180 === sofa.rotation % 180;
+    let ok = 0;
+    if (inFront && parallel && side <= size.width * 0.25 && gap >= 0.3 && gap <= 0.7) ok = 1;
+    else if (inFront && gap <= 1.2) ok = 0.5;
+    relate('coffee', ok);
   });
   const newSofas = byRole('sofa');
   const sofas = newSofas.length > 0 ? newSofas : existing.filter((i) => i.entry.role === 'sofa');
+  // Pieces that may stand in front of a sofa: what you use from it.
+  const inFrontOk = new Set(['coffee-table', 'rug', 'armchair', 'tv-stand', 'sofa']);
+  const standsInFront = (sofa, depth) => {
+    const zone = frontZone(sofa.rect, sofa.rotation, depth);
+    return solid.some((o) => !inFrontOk.has(o.entry.role) && overlapArea(o.rect, zone) > 0.02);
+  };
   byRole('tv-stand').forEach((tv) => {
     if (sofas.length === 0) return;
     const sofa = sofas[0];
@@ -795,6 +911,9 @@ function scoreLayout(items, room, features = NO_FEATURES) {
     const distance = Math.hypot(tc.x - sc.x, tc.z - sc.z);
     let ok = facing ? 0.6 + 0.4 * (1 - Math.min(1, axisOffset / 1.5)) : 0.2;
     if (distance < 1.8 || distance > 5.5) ok *= 0.6;
+    // Nothing standing between the sofa and the TV (a floor lamp ended up in the view).
+    const viewing = Math.max(0, relativeTo(sofa, tc).ahead - facingSize(sofa).depth / 2);
+    if (facing && standsInFront(sofa, viewing)) ok *= 0.5;
     relate('tv', ok);
   });
   byRole('desk-chair').concat(byRole('chair')).forEach((ch) => {
@@ -809,18 +928,44 @@ function scoreLayout(items, room, features = NO_FEATURES) {
     const gap = nearest(st, ['island', 'table']);
     if (gap != null) relate('stool', gap <= 0.2 ? 1 : 0);
   });
+  // Close to the seating and turned towards it (the coffee table, else the floor in front of the
+  // sofa). Distance alone let an armchair facing the wall score full marks.
   byRole('armchair').forEach((a) => {
     const gap = nearest(a, ['sofa', 'coffee-table']);
-    if (gap != null) relate('armchair', gap <= 1.2 ? 1 : gap <= 2.5 ? 0.5 : 0);
+    if (gap == null) return;
+    const anchor = lastAnchor;
+    const close = gap <= 1.2 ? 1 : gap <= 2.5 ? 0.5 : 0;
+    const target = seatingCentre(a);
+    let facing = 1;
+    if (target) {
+      const { ahead, side } = relativeTo(a, target);
+      const cos = ahead / Math.max(0.01, Math.hypot(ahead, side));
+      facing = cos >= 0.3 ? 1 : cos >= -0.2 ? 0.4 : 0;
+    }
+    lastAnchor = anchor;
+    relate('armchair', close * facing);
   });
+  // Beside the seat, not out in front of it: a lamp in front of the sofa is in the way.
+  const inFrontOfSeating = (piece) => sofas.some((sofa) => overlapArea(piece.rect, frontZone(sofa.rect, sofa.rotation, 1.2)) > 0.02);
   byRole('side-table').forEach((s) => {
     const gap = nearest(s, ['sofa', 'armchair', 'bed']);
-    if (gap != null) relate('side-table', gap <= 0.2 ? 1 : gap <= 0.8 ? 0.5 : 0);
+    if (gap != null) relate('side-table', inFrontOfSeating(s) ? 0 : gap <= 0.2 ? 1 : gap <= 0.8 ? 0.5 : 0);
   });
   byRole('lamp').forEach((l) => {
     const gap = nearest(l, ['sofa', 'armchair', 'bed', 'desk']);
-    if (gap != null) relate('lamp', gap <= 0.6 ? 1 : gap <= 1.5 ? 0.5 : 0);
+    if (gap != null) relate('lamp', inFrontOfSeating(l) ? 0 : gap <= 0.6 ? 1 : gap <= 1.5 ? 0.5 : 0);
   });
+  // The main piece (sofa or bed) centred on the wall behind it. A sofa pushed into a corner, with
+  // the rest of the wall free, used to score like a well-placed one (95 for a lone sofa).
+  const main = ['bed', 'sofa'].map((role) => byRole(role)[0]).find(Boolean);
+  if (main) {
+    const along = main.rotation % 180 === 0 ? room.width : room.length;
+    const centre = main.rotation % 180 === 0 ? main.rect.x + main.rect.w / 2 : main.rect.z + main.rect.d / 2;
+    const offset = Math.abs(centre - along / 2) / (along / 2);
+    lastAnchor = null;
+    relate('centre', offset <= 0.15 ? 1 : Math.max(0.3, 1 - (offset - 0.15) * 1.2));
+  }
+
   const relations = relationResults.length > 0
     ? Math.round((100 * relationResults.reduce((sum, r) => sum + r.ok, 0)) / relationResults.length)
     : 100;
@@ -902,7 +1047,9 @@ function describeLayout(score, dropped) {
     && newRelations.some((r) => r.key === key);
 
   if (relationOk('nightstand')) pros.push('Nightstand sits right beside the bed');
-  if (relationOk('coffee')) pros.push('Coffee table is within reach of the sofa');
+  if (relationOk('centre')) pros.push('Main piece is centred on its wall');
+  if (relationOk('coffee')) pros.push('Coffee table sits in front of the sofa');
+  if (relationOk('armchair')) pros.push('Armchair faces the seating area');
   if (relationOk('tv')) pros.push('TV faces the sofa at a comfortable distance');
   if (relationOk('desk-chair')) pros.push('Chair is pulled up to the desk');
   if (relationOk('dining')) pros.push('Chairs are arranged around the dining table');
@@ -924,6 +1071,12 @@ function describeLayout(score, dropped) {
   if (score.flow < 60) cons.push('Walkways are tight or broken up');
   if (score.clearance < 70) cons.push('Some pieces lack 60 cm of space in front');
   if (score.relationResults.some((r) => r.key === 'tv' && r.ok < 0.6)) cons.push('TV is not facing the sofa');
+  if (score.relationResults.some((r) => r.key === 'coffee' && r.ok < 0.5)) cons.push('Coffee table is not in front of the sofa');
+  if (score.relationResults.some((r) => (r.key === 'lamp' || r.key === 'side-table') && r.ok === 0)) {
+    cons.push('A lamp or side table stands in front of the sofa');
+  }
+  if (score.relationResults.some((r) => r.key === 'armchair' && r.ok < 0.4)) cons.push('Armchair does not face the seating area');
+  if (score.relationResults.some((r) => r.key === 'centre' && r.ok < 0.6)) cons.push('Main piece sits off to one side of its wall');
   if (score.occupancy < 0.1) cons.push('Room feels sparse for this much floor space');
   if (score.occupancy > 0.5) cons.push('Room feels crowded');
   if (f.doorCount > 0 && f.doorAccess < 100) cons.push('A doorway is hard to reach from the main walkway');
@@ -979,12 +1132,17 @@ function planSingle(groups, rugs, room, preferredWall, variant, seed, features) 
   const queue = [...ordered];
   while (queue.length > 0) {
     const group = queue.shift();
-    const frames = group.kind === 'center' ? centerFrames(group, room) : wallFrames(group, room);
+    const blockers = [
+      ...features.obstacles.map((o) => ({ ...o, gap: BESIDE_GAP })),
+      ...features.doorZones,
+      ...placed.flatMap((p) => p.items.map((i) => ({ ...i.rect, gap: BESIDE_GAP }))),
+    ];
+    const frames = group.kind === 'center' ? centerFrames(group, room) : wallFrames(group, room, blockers);
     const candidates = frames.map((frame) => placeGroup(group, frame));
     if (group.primaryRole === 'tv-stand' && ctx.sofaPlacement) {
       candidates.push(...facingSofaCandidates(group, ctx.sofaPlacement));
     }
-    candidates.push(...anchoredCandidates(group, existingPlacements));
+    candidates.push(...anchoredCandidates(group, [...existingPlacements, ...placed.flatMap(plannedAnchors)]));
     let valid = candidates.filter((c) => isValidPlacement(c, placed, room, true, features));
     if (valid.length === 0) valid = candidates.filter((c) => isValidPlacement(c, placed, room, false, features));
     if (valid.length === 0 && group.members.length > 1) {
@@ -998,7 +1156,13 @@ function planSingle(groups, rugs, room, preferredWall, variant, seed, features) 
         members: [member(m.entry, 0, 0, 0)],
       }));
       if (group === ctx.primaryGroup) ctx.primaryGroup = singles[0];
-      queue.unshift(...singles);
+      // The main piece goes next; the rest wait their turn with everything else (the TV before
+      // the lamp), and are then set around the main piece where they can be.
+      queue.unshift(singles[0]);
+      queue.push(...singles.slice(1));
+      const [next, ...rest] = queue;
+      rest.sort((a, b) => groupPriority(b) - groupPriority(a));
+      queue.splice(0, queue.length, next, ...rest);
       continue;
     }
     if (valid.length === 0) {
@@ -1183,6 +1347,139 @@ export function planLayouts(room, furniture, options = {}) {
   });
 }
 
+const FIT_STEP = 0.1;
+
+/**
+ * Whether a footprint can stand somewhere in the room, turned either way, given `features`.
+ * Tries a 10 cm grid plus the spots right against each obstacle and door zone, so a snug gap
+ * between two pieces isn't missed.
+ */
+function fitsSomewhere(item, room, features) {
+  const blockers = [...features.obstacles, ...features.doorZones];
+  return [0, 90].some((rot) => {
+    const { w, d } = footprint(item, rot);
+    const maxX = room.width - PAD - w;
+    const maxZ = room.length - PAD - d;
+    if (maxX < PAD - 0.001 || maxZ < PAD - 0.001) return false;
+    const positions = (max, edges) => {
+      const list = [];
+      for (let v = PAD; v < max; v += FIT_STEP) list.push(v);
+      list.push(Math.max(PAD, max));
+      edges.forEach((v) => {
+        if (v >= PAD - 0.001 && v <= max + 0.001) list.push(clamp(v, PAD, Math.max(PAD, max)));
+      });
+      return list;
+    };
+    const xs = positions(maxX, blockers.flatMap((b) => [b.x + b.w, b.x - w]));
+    const zs = positions(maxZ, blockers.flatMap((b) => [b.z + b.d, b.z - d]));
+    return xs.some((x) => zs.some((z) => isValidPlacement(
+      { items: [{ rect: { x, z, w, d } }], zones: [] },
+      [],
+      room,
+      false,
+      features,
+    )));
+  });
+}
+
+/** Pieces the planner only ever stands against a wall (a sofa, a bed, a TV console). */
+const WALL_FIT_ROLES = new Set([...WALL_HUG_ROLES, 'tv-stand']);
+
+/** Whether a footprint fits against one of the walls, at the spots the planner tries. */
+function fitsAgainstWall(item, room, features) {
+  const blockers = [...features.obstacles.map((o) => ({ ...o, gap: BESIDE_GAP })), ...features.doorZones];
+  return wallFrames({ gw: item.width, gd: item.length }, room, blockers).some((frame) => isValidPlacement(
+    { items: [{ rect: transformRect({ u: 0, v: 0, lw: item.width, ld: item.length }, frame) }], zones: [] },
+    [],
+    room,
+    false,
+    features,
+  ));
+}
+
+/**
+ * Whether one piece fits the scanned room on its own: under the ceiling, inside the outline, and
+ * clear of the furniture already there and of the doors. Used to leave pieces that can't fit out of
+ * the recommendations (adviser, 2026-10-28: in a small room full of chairs and tables, pieces
+ * that had no room were still offered and ended up drawn over the chairs).
+ * @param {{width:number,length:number,height:number}} room
+ * @param {{width:number,length:number,height:number,name?:string,type?:string,category?:string}} item
+ * @param {object} [features] same as planLayouts options.features
+ * @returns {{fits:boolean, reason:null|'too-tall'|'too-big'|'no-space'}}
+ *   too-big: it doesn't fit even the empty room; no-space: only the existing furniture or a door
+ *   is in the way.
+ */
+export function checkRoomFit(room, item, features) {
+  const width = Number(item.width);
+  const length = Number(item.length);
+  if (!(width > 0 && length > 0)) return { fits: true, reason: null };
+  if (Number(room.height) > 0 && Number(item.height) > room.height) return { fits: false, reason: 'too-tall' };
+  // Rugs lie under the furniture and the planner trims them to the room.
+  if (classifyFurniture(item) === 'rug') return { fits: true, reason: null };
+  const f = normalizeFeatures(features, room);
+  const sized = { width, length };
+  // A sofa or bed must fit against a wall, as the planner places it: one that only fitted out in
+  // the middle of the room was recommended and then dropped from the layout.
+  const fits = WALL_FIT_ROLES.has(classifyFurniture(item)) ? fitsAgainstWall : fitsSomewhere;
+  if (!fits(sized, room, { ...NO_FEATURES, polygon: f.polygon })) return { fits: false, reason: 'too-big' };
+  if (!fits(sized, room, f)) return { fits: false, reason: 'no-space' };
+  return { fits: true, reason: null };
+}
+
+/** The catalog product a placed piece is (its id without the "-v1-2" layout suffix). */
+export function catalogIdOf(item) {
+  return item.catalogId || String(item.id || '').replace(/-v\d+-\d+$/, '');
+}
+
+/**
+ * Two layouts look the same to a user when the same pieces face the same ways (so stand at the
+ * same walls); sliding a piece along its wall is not a different option.
+ */
+export function sameArrangement(a, b) {
+  const signature = (items) => items
+    .map((item) => `${catalogIdOf(item)}@${((Number(item.position?.rotation) || 0) % 360 + 360) % 360}`)
+    .sort()
+    .join('|');
+  return signature(a) === signature(b);
+}
+
+/**
+ * The layouts offered for a room: one per furniture set, each started on a different wall and moved
+ * on to the next while it repeats an earlier option. The optimizer can pull every start back to the
+ * same arrangement, so later tries keep the planner's own layout. An option that still repeats after
+ * every try is left out: two copies of one layout read as "the same layout twice" (adviser, 2026-10-28).
+ * @returns {Array<{variant:number, plan:object}>} variant = index into `sets`
+ */
+export function planOptions(room, sets, { features, seed = Date.now(), walls = WALL_ORDER.length } = {}) {
+  const options = [];
+  sets.forEach((set, variant) => {
+    let first = null;
+    for (let attempt = 0; attempt < walls * 3; attempt += 1) {
+      const [plan] = planLayouts(room, set, {
+        count: 1,
+        firstVariant: (variant + (attempt % walls)) % walls,
+        seed: seed + variant * 7919 + attempt * 104729,
+        features,
+        optimize: attempt < walls,
+      });
+      if (!plan) continue;
+      first = first || plan;
+      if (!options.some((o) => sameArrangement(o.plan.furniture, plan.furniture))) {
+        options.push({ variant, plan });
+        return;
+      }
+    }
+    if (options.length === 0 && first) options.push({ variant, plan: first });
+  });
+  // A clearly worse second option (the TV not facing the sofa in a tight room) is left out: one
+  // good layout reads better than a good one and a poor one.
+  const best = Math.max(...options.map((o) => o.plan.score.overall));
+  return options.filter((o) => o.plan.score.overall >= best - OPTION_SCORE_MARGIN);
+}
+
+/** How far below the best layout's score another option may be and still be offered. */
+const OPTION_SCORE_MARGIN = 8;
+
 /**
  * What the scan found, in the planner's room-local frame, for drawing next to a layout:
  * existing furniture (facing the way the planner takes it to face) and where doors and windows sit.
@@ -1224,4 +1521,4 @@ function roundSpan(span) {
   return { x1: round2(span.x1), z1: round2(span.z1), x2: round2(span.x2), z2: round2(span.z2) };
 }
 
-export default { planLayouts, classifyFurniture, describeRoomFeatures };
+export default { planLayouts, planOptions, sameArrangement, classifyFurniture, describeRoomFeatures, checkRoomFit };

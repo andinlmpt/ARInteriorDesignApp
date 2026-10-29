@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { adminApi, type Store, type StoreStatus } from '../api/client';
+import { IconButton, IconCheck, IconClose, IconEye, IconPause, IconRestore } from '../components/ActionIcons';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { useConsoleContext } from '../components/Layout';
 import { Modal } from '../components/Modal';
@@ -112,38 +113,40 @@ export function StoresListPage() {
     }
   }
 
-  /** Actions available for a store in its current status. */
-  function actionsFor(store: Store) {
+  /**
+   * Actions available for a store in its current status: icons in the table row, words in the
+   * details dialog's footer (next to "Close", a lone icon read poorly).
+   */
+  function actionsFor(store: Store, asText = false) {
+    const action = (label: string, status: Decision, tone: 'success' | 'danger', icon: JSX.Element) =>
+      asText ? (
+        <button
+          key={label}
+          type="button"
+          className={tone === 'danger' ? 'btn btn-danger' : 'btn btn-dark'}
+          onClick={() => openDecision(store, status)}
+        >
+          {label}
+        </button>
+      ) : (
+        <IconButton key={label} label={label} tone={tone} onClick={() => openDecision(store, status)}>
+          {icon}
+        </IconButton>
+      );
     switch (store.status) {
       case 'pending':
         return (
           <>
-            <button type="button" className="btn btn-dark" onClick={() => openDecision(store, 'approved')}>
-              Accept
-            </button>
-            <button type="button" className="btn btn-ghost" onClick={() => openDecision(store, 'rejected')}>
-              Reject
-            </button>
+            {action('Accept store', 'approved', 'success', <IconCheck />)}
+            {action('Reject store', 'rejected', 'danger', <IconClose />)}
           </>
         );
       case 'approved':
-        return (
-          <button type="button" className="btn btn-ghost" onClick={() => openDecision(store, 'suspended')}>
-            Suspend
-          </button>
-        );
+        return action('Suspend store', 'suspended', 'danger', <IconPause />);
       case 'suspended':
-        return (
-          <button type="button" className="btn btn-ghost" onClick={() => openDecision(store, 'approved')}>
-            Reinstate
-          </button>
-        );
+        return action('Reinstate store', 'approved', 'success', <IconRestore />);
       case 'rejected':
-        return (
-          <button type="button" className="btn btn-ghost" onClick={() => openDecision(store, 'approved')}>
-            Accept
-          </button>
-        );
+        return action('Accept store', 'approved', 'success', <IconCheck />);
       default:
         return null;
     }
@@ -231,9 +234,9 @@ export function StoresListPage() {
                     </td>
                     <td>
                       <div className="table-actions">
-                        <button type="button" className="btn btn-ghost" onClick={() => setViewing(store)}>
-                          View
-                        </button>
+                        <IconButton label="View details" onClick={() => setViewing(store)}>
+                          <IconEye />
+                        </IconButton>
                         {actionsFor(store)}
                       </div>
                     </td>
@@ -257,7 +260,7 @@ export function StoresListPage() {
               <button type="button" className="btn btn-ghost" onClick={() => setViewing(null)}>
                 Close
               </button>
-              {actionsFor(viewing)}
+              {actionsFor(viewing, true)}
             </>
           ) : null
         }

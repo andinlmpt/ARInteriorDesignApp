@@ -5,6 +5,7 @@ import { PageHeader } from '../components/PageHeader';
 import { SearchBar } from '../components/SearchBar';
 import { resolveAssetUrl } from '../utils/assetUrl';
 import { compareModelSize, modelSizeWarning } from '../utils/modelSize';
+import { IconBan, IconButton, IconRestore, IconStore } from '../components/ActionIcons';
 
 const UNASSIGNED = 'unassigned';
 
@@ -226,32 +227,31 @@ export function ProductsOverviewPage() {
                       <td>
                         <div className="table-actions">
                           {item.takenDown ? (
-                            <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => restore(item)}>
-                              Restore
-                            </button>
+                            <IconButton label="Restore to the app" tone="success" disabled={busy} onClick={() => restore(item)}>
+                              <IconRestore />
+                            </IconButton>
                           ) : (
-                            <button
-                              type="button"
-                              className="btn btn-ghost"
+                            <IconButton
+                              label="Take down"
+                              tone="danger"
                               onClick={() => {
                                 setReason('');
                                 setError('');
                                 setTakeDown(item);
                               }}
                             >
-                              Take down
-                            </button>
+                              <IconBan />
+                            </IconButton>
                           )}
-                          <button
-                            type="button"
-                            className="btn btn-ghost"
+                          <IconButton
+                            label={item.storeId ? 'Change store' : 'Assign store'}
                             onClick={() => {
                               setAssignStoreId(item.storeId || '');
                               setAssigning(item);
                             }}
                           >
-                            {item.storeId ? 'Change store' : 'Assign store'}
-                          </button>
+                            <IconStore />
+                          </IconButton>
                         </div>
                       </td>
                     </tr>

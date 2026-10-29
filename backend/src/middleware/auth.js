@@ -1,7 +1,8 @@
 /**
  * Authentication middleware
  * Supports JWT tokens and API keys (for backward compatibility)
- * Uses hardcoded users (no MongoDB required)
+ * Accounts are in MongoDB; without it (development only), accounts made with sign-up are kept in
+ * memory (data/hardcodedUsers.js, which has no built-in accounts).
  */
 
 import { findUserById, findUserByEmail } from '../data/hardcodedUsers.js';
@@ -12,8 +13,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-producti
 const isDev = () =>
   process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production';
 
-// Never decode a failed verification as an authenticated identity.
-async function verifyToken(token) {
+// Never decode a failed verification as an authenticated identity. Also used by the rate limiter
+// (server.js) to count signed-in requests per user.
+export async function verifyToken(token) {
   try {
     if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) return null;
     const jwt = await import('jsonwebtoken');

@@ -43,6 +43,8 @@ import type {
   ARPhotoCapturedPayload,
   SelectionPayload,
   PlacementSafetyPayload,
+  PlacementCheckPayload,
+  PlacementIssue,
   ExportResultPayload,
   LayoutAlignmentPayload,
   UnityOutboundMessage,
@@ -66,6 +68,14 @@ const UNITY_MOUNT_DELAY_MS = 1200;
 /** Unity's old AR Furniture scene — never opened now, but a warm player can still be on it. */
 const FURNITURE_UNITY_SCENE = 'ARDesignScene';
 const MEASUREMENT_UNITY_SCENE = 'ARRoomMeasurement';
+/** Longest wait, when leaving, for Unity to report the measurement closed (see pauseUnityThen). */
+const UNITY_CLOSE_WAIT_MS = 800;
+/** After a message to Unity, time for it to run before Unity is paused. */
+const UNITY_MESSAGE_GRACE_MS = 250;
+/** After Unity's "closed" message, time to end that frame. */
+const UNITY_FRAME_GRACE_MS = 100;
+/** After pausing Unity, before the screen (and Unity's view) goes. */
+const UNITY_PAUSE_SETTLE_MS = 150;
 
 function normalizeUnitySceneName(sceneName?: string | null): string | null {
   if (sceneName === FURNITURE_UNITY_SCENE || sceneName === MEASUREMENT_UNITY_SCENE) {
@@ -147,6 +157,43 @@ export function ARViewUnityScreen() {
   const measuredFurnitureActiveRef = useRef(false);
   /** Prevents requestClose ↔ handleBack feedback loops that crash UaaL on reopen. */
   const closingRef = useRef(false);
+  /** Leaving is under way (Unity is being paused first): a second tap does nothing. */
+  const exitingRef = useRef(false);
+  /** Called when Unity reports the measurement closed, while leaving waits for it. */
+  const planClosedWaiterRef = useRef<(() => void) | null>(null);
+
+  /**
+   * Pauses Unity, then runs `navigate` (which closes this screen). Closing the screen at once took
+   * Unity's drawing surface mid-frame; the view library's pause then timed out after 2 s and the app
+   * crashed with signal 11 a few seconds later, every time a scan was left (phone logs, 2026-10-30).
+   * With `waitForPlanClosed`, it first waits for Unity to report the measurement closed (normally a
+   * few ms; at most UNITY_CLOSE_WAIT_MS), so Unity has finished that frame before it is paused.
+   */
+  const pauseUnityThen = useCallback((navigate: () => void, waitForPlanClosed: boolean) => {
+    const pauseAndGo = () => {
+      planClosedWaiterRef.current = null;
+      try {
+        unityRef.current?.pauseUnityPlayer?.();
+      } catch {
+        /* the native view is already gone */
+      }
+      setTimeout(navigate, UNITY_PAUSE_SETTLE_MS);
+    };
+    if (!waitForPlanClosed) {
+      setTimeout(pauseAndGo, UNITY_MESSAGE_GRACE_MS);
+      return;
+    }
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(fallback);
+      // Let Unity end the frame that closed the measurement.
+      setTimeout(pauseAndGo, UNITY_FRAME_GRACE_MS);
+    };
+    const fallback = setTimeout(finish, UNITY_CLOSE_WAIT_MS);
+    planClosedWaiterRef.current = finish;
+  }, []);
   /** One soft-reload per screen mount when already on ARRoomMeasurement. */
   const measureNeedsReloadRef = useRef(true);
   /** Ensures open/reload runs once per AR screen mount (ping must not re-boot). */
@@ -161,6 +208,10 @@ export function ARViewUnityScreen() {
   const applyTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const applyProposalRef = useRef<DesignProposalV2 | null>(null);
   const applyRoomRef = useRef<{ width: number; length: number; height: number } | null>(null);
+  /** Pieces that overlap another piece or run through a wall (Unity's latest placementCheck). */
+  const [placementIssues, setPlacementIssues] = useState<PlacementIssue[]>([]);
+  /** Resolves the Finish tap's own check with the next placementCheck from Unity. */
+  const placementCheckWaiterRef = useRef<((payload: PlacementCheckPayload | null) => void) | null>(null);
   const applyGenerationRef = useRef<DesignFlowGenerationResult | null>(null);
   /** Set when a layout is sent to Unity; the next non-empty layoutChanged reports it placed. */
   const applyAwaitingPlacementRef = useRef(false);
@@ -741,7 +792,55 @@ export function ARViewUnityScreen() {
     handlePlacementSafety: handleCustomizeSafety,
   } = customization;
 
+  /** "Sofa overlaps Coffee table · Chair goes through a wall" — each pair once. */
+  const describePlacementIssues = useCallback((issues: PlacementIssue[]) => {
+    const nameOf = (modelId: string) => catalogItems.find((item) => item.id === modelId)?.name || 'A piece';
+    const seen = new Set<string>();
+    const lines: string[] = [];
+    issues.forEach((issue) => {
+      const key = issue.hitsWall
+        ? `wall|${issue.instanceId}`
+        : `pair|${[issue.modelId, issue.otherModelId].sort().join('|')}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      lines.push(issue.hitsWall
+        ? `${nameOf(issue.modelId)} goes through a wall`
+        : `${nameOf(issue.modelId)} overlaps ${issue.otherModelId ? nameOf(issue.otherModelId) : 'another piece'}`);
+    });
+    return lines.slice(0, 3).join(' · ') + (lines.length > 3 ? ` (+${lines.length - 3} more)` : '');
+  }, [catalogItems]);
+
+  const showPlacementIssues = useCallback((issues: PlacementIssue[]) => {
+    showToast(`Fix first: ${describePlacementIssues(issues)}. Move or remove the piece, then tap Finish.`, 5000);
+  }, [describePlacementIssues, showToast]);
+
+  const handlePlacementCheck = useCallback((payload: PlacementCheckPayload) => {
+    setPlacementIssues(payload.issues);
+    const waiter = placementCheckWaiterRef.current;
+    placementCheckWaiterRef.current = null;
+    waiter?.(payload);
+  }, []);
+
+  /** Unity's check of every piece right now; null when it doesn't answer (older Unity build). */
+  const requestPlacementCheck = useCallback(() => new Promise<PlacementCheckPayload | null>((resolve) => {
+    const timer = setTimeout(() => {
+      placementCheckWaiterRef.current = null;
+      resolve(null);
+    }, 1500);
+    placementCheckWaiterRef.current = (payload) => {
+      clearTimeout(timer);
+      resolve(payload);
+    };
+    unityRef.current?.checkPlacement();
+  }), []);
+
   const handleFinishDesign = useCallback(async () => {
+    // Blocked while any piece overlaps another or runs through a wall (adviser, 2026-10-28).
+    const check = await requestPlacementCheck();
+    if (check?.hasErrors) {
+      showPlacementIssues(check.issues);
+      return;
+    }
     try {
       unityRef.current?.getCurrentLayout();
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -757,7 +856,7 @@ export function ARViewUnityScreen() {
     } catch {
       showToast('Could not save your edits. Please try again.', 4000);
     }
-  }, [activeProjectId, customization, router, showToast]);
+  }, [activeProjectId, customization, requestPlacementCheck, router, showPlacementIssues, showToast]);
 
   const furnitureUiReady =
     unityReady && measuredFurnitureActive && measurePlanReady && placementUnlocked;
@@ -1058,7 +1157,7 @@ export function ARViewUnityScreen() {
         showToast('Room measurement saved');
         measurementFlowCompleteRef.current = true;
         setMeasurementModalVisible(false);
-        router.replace({
+        pauseUnityThen(() => router.replace({
           pathname: '/design-preferences',
           params: {
             projectId: activeProjectId || '',
@@ -1069,7 +1168,7 @@ export function ARViewUnityScreen() {
             dimensionLabel: confirmedPayload.dimensionLabel || '',
             flow: 'design',
           },
-        });
+        }), false);
         return;
       }
     } catch {
@@ -1086,6 +1185,7 @@ export function ARViewUnityScreen() {
     isDesignFlow,
     measureRoomName,
     measurementSaved,
+    pauseUnityThen,
     router,
     savingMeasurement,
     showToast,
@@ -1106,7 +1206,7 @@ export function ARViewUnityScreen() {
     measurementFlowCompleteRef.current = true;
     setMeasurementModalVisible(false);
     if (confirmedPayload) {
-      router.replace({
+      pauseUnityThen(() => router.replace({
         pathname: '/design-preferences',
         params: {
           projectId: activeProjectId || '',
@@ -1117,9 +1217,9 @@ export function ARViewUnityScreen() {
           dimensionLabel: confirmedPayload.dimensionLabel || '',
           flow: 'design',
         },
-      });
+      }), false);
     }
-  }, [activeProjectId, confirmedPayload, router, savingMeasurement]);
+  }, [activeProjectId, confirmedPayload, pauseUnityThen, router, savingMeasurement]);
 
   const handleLayoutChanged = useCallback((payload: LayoutPayload) => {
     const furniture = payload.furniture ?? [];
@@ -1343,12 +1443,14 @@ export function ARViewUnityScreen() {
   );
 
   const exitAr = useCallback((destination?: '/projects') => {
-    if (closingRef.current) return;
+    if (closingRef.current || exitingRef.current) return;
+    exitingRef.current = true;
     setExitConfirmVisible(false);
 
     resetMeasureSessionLocally();
+    const furniture = activeUnityScene === FURNITURE_UNITY_SCENE;
     try {
-      if (activeUnityScene === FURNITURE_UNITY_SCENE) {
+      if (furniture) {
         unityRef.current?.pauseFurniture();
       } else {
         unityRef.current?.pauseMeasurement();
@@ -1358,8 +1460,9 @@ export function ARViewUnityScreen() {
     }
     measureNeedsReloadRef.current = true;
 
-    leaveArScreen(destination);
-  }, [activeUnityScene, leaveArScreen, resetMeasureSessionLocally]);
+    // The furniture scene sends no "closed" message: give it a frame's grace instead.
+    pauseUnityThen(() => leaveArScreen(destination), !furniture);
+  }, [activeUnityScene, leaveArScreen, pauseUnityThen, resetMeasureSessionLocally]);
 
   const confirmExitAr = useCallback(() => exitAr(), [exitAr]);
 
@@ -1395,6 +1498,7 @@ export function ARViewUnityScreen() {
           onLayoutChanged={handleLayoutChanged}
           onFurnitureSelected={handleFurnitureSelected}
           onPlacementSafety={handlePlacementSafety}
+          onPlacementCheck={handlePlacementCheck}
           onFurnitureLockBlocked={handleFurnitureLockBlocked}
           onHistoryChanged={handleHistoryChanged}
           onFurnitureInstancePlaced={(payload) => {
@@ -1449,6 +1553,7 @@ export function ARViewUnityScreen() {
             }
           }}
           onMeasurementPlanClosed={() => {
+            planClosedWaiterRef.current?.();
             // SoftClose / scene handoff closes the measurement plan — keep UI unlocked
             // while measured furniture placement is starting on ARDesignScene.
             if (measuredFurnitureActiveRef.current) return;
@@ -1614,6 +1719,8 @@ export function ARViewUnityScreen() {
           onFinish={() => {
             void handleFinishDesign();
           }}
+          finishBlocked={placementIssues.length > 0}
+          onFinishBlocked={() => showPlacementIssues(placementIssues)}
           onTurnAround={!alignment?.canTurn
             ? undefined
             : () => {
@@ -1649,7 +1756,7 @@ export function ARViewUnityScreen() {
           <View style={styles.scannerPreparingCard}>
             <ActivityIndicator size="large" color="#FFFFFF" />
             <Text style={styles.scannerPreparingTitle}>Getting the scanner ready…</Text>
-            <Text style={styles.scannerPreparingBody}>A few seconds · only when the scanner opens</Text>
+            <Text style={styles.scannerPreparingBody}>A few seconds · longer the first time after an install</Text>
           </View>
         </View>
       )}

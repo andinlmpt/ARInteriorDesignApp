@@ -449,6 +449,17 @@
   padding-right: 20px;
 }
 
+/* Shown on phones and narrow windows only (below). */
+.menu-toggle,
+.topbar-brand,
+.drawer-backdrop {
+  display: none;
+}
+
+/*
+ * Phones and narrow windows: the sidebar becomes a drawer opened from the top bar. Before, it sat
+ * above every page with all its links, so each page started a full screen down (2026-10-30).
+ */
 @media (max-width: 960px) {
   .admin-shell {
     grid-template-columns: 1fr;
@@ -458,13 +469,32 @@
   }
 
   .sidebar {
-    position: sticky;
+    position: fixed;
     top: 0;
-    z-index: 10;
-    width: auto;
-    height: auto;
-    max-height: none;
-    overflow: visible;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    width: min(300px, 84vw);
+    height: 100%;
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+  }
+
+  .admin-shell--menu-open .sidebar {
+    transform: none;
+    box-shadow: 0 0 40px rgba(17, 24, 39, 0.18);
+  }
+
+  .drawer-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    border: 0;
+    padding: 0;
+    background: rgba(15, 23, 42, 0.4);
+    cursor: pointer;
   }
 
   .content-column {
@@ -473,21 +503,251 @@
   }
 
   .topbar {
-    padding: 16px 18px 0;
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    gap: 10px;
+    padding: 10px 12px;
+    background: #fff;
+    border-bottom: 1px solid #eceff3;
+  }
+
+  .menu-toggle {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 12px;
+    background: transparent;
+    color: #111827;
+    cursor: pointer;
+  }
+
+  .menu-toggle:hover {
+    background: #f3f4f6;
+  }
+
+  .menu-toggle svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* Stores are waiting for review (the count is in the menu). */
+  .menu-toggle-dot {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #dc2626;
+  }
+
+  .topbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .topbar-brand .brand-logo {
+    width: 30px;
+    height: 30px;
+  }
+
+  .topbar-brand strong {
+    overflow: hidden;
+    font-size: 0.95rem;
+    color: #111827;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   .main {
-    padding: 16px 18px 24px;
     height: auto;
+    padding: 16px 16px 28px;
     overflow: visible;
-    margin-left: 0;
   }
 
   .page-fill {
     overflow: visible;
   }
 
+  /* Rows are cards on a phone (global.css): the list scrolls with the page. */
   .table-card {
-    max-height: 70vh;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .table-scroll {
+    overflow: visible;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
+}
+
+html.console-menu-open {
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------- phones */
+
+@media (max-width: 720px) {
+  /* The title and its description get the full width; search and filters go underneath. */
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .page-header h1 {
+    font-size: 1.45rem;
+  }
+
+  .page-actions {
+    width: 100%;
+  }
+
+  .page-actions > * {
+    flex: 1 1 auto;
+  }
+
+  .page-actions > .search-bar {
+    flex-basis: 100%;
+  }
+
+  /* One swipeable row of filters instead of several wrapped lines. */
+  .main .filter-tabs {
+    flex-wrap: nowrap;
+    margin: 0 -16px 14px;
+    padding: 0 16px 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .main .filter-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .main .filter-tab {
+    flex-shrink: 0;
+  }
+
+  /*
+   * Each table row becomes a card: values two to a line, each under its column heading (data-label,
+   * set by useTableCellLabels). The first column is the card's title; actions run along the bottom.
+   */
+  .main .table,
+  .main .table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .main .table thead {
+    display: none;
+  }
+
+  .main .table-card {
+    padding: 0;
+  }
+
+  .main .table tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 16px;
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .main .table tbody tr:last-child {
+    border-bottom: none;
+  }
+
+  .main .table td,
+  .main .table-scroll .table td:first-child,
+  .main .table-scroll .table td:last-child {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border: none;
+    overflow-wrap: anywhere;
+  }
+
+  .main .table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .main .table td:first-child,
+  .main .table td[data-label='Detail'],
+  .main .table td[data-label='Actions'],
+  .main .table td[data-label='Preview'] + td {
+    grid-column: 1 / -1;
+  }
+
+  .main .table td:first-child::before,
+  .main .table td[data-label='Actions']::before,
+  .main .table td[data-label='']::before,
+  .main .table td[data-label='Preview'] + td::before {
+    content: none;
+  }
+
+  /* A cell spanning the whole table ("No products yet") stays one block. */
+  .main .table td[colspan] {
+    grid-column: 1 / -1;
+  }
+
+  .main .table td[data-label='Actions'] .table-actions {
+    flex-wrap: wrap;
+    padding-top: 4px;
+  }
+
+  /* Dashboard numbers two to a row. */
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .stat-card {
+    padding: 16px;
+  }
+
+  .stat-card h3 {
+    font-size: 0.7rem;
+  }
+
+  .stat-card p {
+    font-size: 1.6rem;
+  }
+
+  /* Dialogs use nearly the whole screen; footer buttons share the row. */
+  .modal-backdrop {
+    padding: 12px;
+  }
+
+  .modal-panel {
+    max-height: calc(100vh - 24px);
+  }
+
+  .modal-footer {
+    flex-wrap: wrap;
+  }
+
+  .modal-footer > .btn {
+    flex: 1 1 auto;
   }
 }

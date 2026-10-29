@@ -1,6 +1,7 @@
 /**
  * Filters the "Required furniture" choices on the design preferences screen
- * by room type and remaining ₱ budget. Style is a soft preference (sort only).
+ * by room type, remaining ₱ budget and whether the piece fits the scanned room.
+ * Style is a soft preference (sort only).
  */
 
 import type { DesignRequiredItem } from '@/types/design-flow';
@@ -14,6 +15,8 @@ export interface RequiredFurnitureFilter {
   style: string;
   budgetPhp: number;
   selectedIds: string[];
+  /** Pieces that can't fit the scanned room (from the backend's room-fit check). */
+  unfitIds?: ReadonlySet<string>;
 }
 
 export interface RequiredFurnitureResult {
@@ -23,6 +26,8 @@ export interface RequiredFurnitureResult {
   remainingPhp: number;
   /** In-room pieces hidden only because they exceed the remaining budget. */
   hiddenOverBudget: number;
+  /** In-room pieces hidden because they don't fit the scanned room. */
+  hiddenUnfit: number;
   overBudget: boolean;
 }
 
@@ -45,13 +50,14 @@ export function matchesRoomAndStyle(item: DesignRequiredItem, roomType: string, 
 
 export function filterRequiredFurniture(
   options: DesignRequiredItem[],
-  { roomType, style, budgetPhp, selectedIds }: RequiredFurnitureFilter,
+  { roomType, style, budgetPhp, selectedIds, unfitIds }: RequiredFurnitureFilter,
 ): RequiredFurnitureResult {
   const selected = options.filter((item) => selectedIds.includes(item.id));
   const selectedTotalPhp = selected.reduce((sum, item) => sum + (item.pricePhp ?? 0), 0);
   const remainingPhp = budgetPhp - selectedTotalPhp;
 
   let hiddenOverBudget = 0;
+  let hiddenUnfit = 0;
 
   const applyFilters = (requireRoom: boolean) =>
     options
@@ -59,6 +65,11 @@ export function filterRequiredFurniture(
         if (selectedIds.includes(item.id)) return true;
         if (requireRoom && !matchesRoom(item, roomType)) return false;
         if (isOutOfStock(item.quantity)) return false;
+        // Picked pieces stay listed so they can be unpicked; the rest must fit the room.
+        if (unfitIds?.has(item.id)) {
+          if (requireRoom || matchesRoom(item, roomType)) hiddenUnfit += 1;
+          return false;
+        }
         const price = item.pricePhp ?? 0;
         if (price > 0 && price > remainingPhp) {
           if (requireRoom || matchesRoom(item, roomType)) {
@@ -80,6 +91,7 @@ export function filterRequiredFurniture(
   const selectableCount = visible.filter((item) => !selectedIds.includes(item.id)).length;
   if (roomType && selectableCount === 0) {
     hiddenOverBudget = 0;
+    hiddenUnfit = 0;
     visible = applyFilters(false);
   }
 
@@ -88,6 +100,7 @@ export function filterRequiredFurniture(
     selectedTotalPhp,
     remainingPhp,
     hiddenOverBudget,
+    hiddenUnfit,
     overBudget: remainingPhp < 0,
   };
 }

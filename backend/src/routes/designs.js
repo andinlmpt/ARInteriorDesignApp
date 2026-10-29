@@ -20,6 +20,13 @@ router.use(optionalAuth);
 router.post('/generate', aiDesignController.generateDesign);
 
 /**
+ * POST /api/v1/designs/room-fit
+ * Catalog pieces that can't fit the scanned room (left out of the recommended furniture).
+ * Body: { dimensions, measurementId?, floorPolygon?, openings?, obstacles? }
+ */
+router.post('/room-fit', aiDesignController.roomFit);
+
+/**
  * POST /api/v1/designs/finalize
  * Persist the user's customized layout (design flow step 7).
  */
@@ -30,6 +37,13 @@ router.post('/finalize', aiDesignController.finalizeDesign);
  * Get furniture catalog for a room type
  */
 router.get('/furniture/:roomType', aiDesignController.getFurnitureCatalog);
+
+/**
+ * GET /api/v1/designs/project/:projectId
+ * The project's newest design (a saved one first), so a saved project reopens its design.
+ * Declared before /:id, which would otherwise take "project" as a session id.
+ */
+router.get('/project/:projectId', aiDesignController.getLatestProjectSession);
 
 /**
  * GET /api/v1/designs/:id

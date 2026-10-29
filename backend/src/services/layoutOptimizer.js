@@ -77,6 +77,24 @@ function intersection(a, b) {
 
 const grow = (r, p) => ({ x: r.x - p, z: r.z - p, w: r.w + 2 * p, d: r.d + 2 * p });
 const center = (r) => ({ x: r.x + r.w / 2, z: r.z + r.d / 2 });
+
+/** Where an armchair should look: the floor in front of a sofa, or the middle of a coffee table. */
+function seatTarget(anchor, anchorPose) {
+  const c = center(rectOf(anchor, anchorPose));
+  if (anchor.role !== 'sofa') return c;
+  const [fx, fz] = FRONT[anchorPose.rot];
+  const reach = dims(anchor, 0).d / 2 + 0.8;
+  return { x: c.x + fx * reach, z: c.z + fz * reach };
+}
+
+/** The piece faces `point` to within about 70°. */
+function facesTowards(rect, rot, point) {
+  const c = center(rect);
+  const [fx, fz] = FRONT[rot];
+  const dx = point.x - c.x;
+  const dz = point.z - c.z;
+  return (dx * fx + dz * fz) / Math.max(0.01, Math.hypot(dx, dz)) >= 0.3;
+}
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
 function gapBetween(a, b) {
@@ -212,8 +230,17 @@ function idealPose(dep, anchor, anchorPose, relation, offset, rng) {
   } else {
     const angle = rng() * 2 * Math.PI;
     const c = center(rectOf(anchor, anchorPose));
-    const { w, d } = dims(dep, ar);
-    return { x: c.x + offset * Math.cos(angle) - w / 2, z: c.z + offset * Math.sin(angle) - d / 2, rot: ar };
+    const px = c.x + offset * Math.cos(angle);
+    const pz = c.z + offset * Math.sin(angle);
+    // An armchair turns towards the seating; other pieces keep the anchor's direction.
+    let rot = ar;
+    if (dep.role === 'armchair') {
+      const t = seatTarget(anchor, anchorPose);
+      const toward = (r) => (t.x - px) * FRONT[r][0] + (t.z - pz) * FRONT[r][1];
+      rot = ROTATIONS.reduce((best, r) => (toward(r) > toward(best) ? r : best), ar);
+    }
+    const { w, d } = dims(dep, rot);
+    return { x: px - w / 2, z: pz - d / 2, rot };
   }
   const c = toWorld(anchor, anchorPose, u, v);
   const { w, d } = dims(dep, rot);
@@ -439,6 +466,18 @@ function createScorer(room, items, features) {
       terms.pair += cost;
       if (['front', 'opposite', 'around'].includes(relation) && items[i].role !== 'coffee-table') {
         terms.facing += poses[i].rot === (poses[bestJ].rot + 180) % 360 ? 0 : 1;
+      }
+      // A coffee table runs along the sofa; turned across it, it read as a mistake.
+      if (items[i].role === 'coffee-table') {
+        const parallel = poses[i].rot % 180 === poses[bestJ].rot % 180;
+        terms.facing += parallel ? 0 : 1;
+        if (explain) checks.push({ rule: `${items[i].name} runs along ${all[bestJ].name}`, passed: parallel });
+      }
+      // An armchair turns towards the seating it is near: "near" alone let it face the wall.
+      if (items[i].role === 'armchair') {
+        const facing = facesTowards(rects[i], poses[i].rot, seatTarget(all[bestJ], poses[bestJ]));
+        terms.facing += facing ? 0 : 1;
+        if (explain) checks.push({ rule: `${items[i].name} faces the seating`, passed: facing });
       }
       if (explain) {
         const phrase = { 'beside-head': 'beside', front: 'at', opposite: 'facing', beside: 'beside', around: 'at', near: 'near' }[relation];

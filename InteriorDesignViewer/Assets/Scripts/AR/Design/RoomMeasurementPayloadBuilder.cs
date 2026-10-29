@@ -13,9 +13,10 @@ public static class RoomMeasurementPayloadBuilder
 
         var status = scanController.GetScanStatus();
         var room = scanController.ConfirmedRoom;
-        var wallHeight = scanController.CornerBuilder != null
-            ? scanController.CornerBuilder.WallHeight
-            : 0f;
+        // After the floor check on confirm; the corner builder still has the height from the floor point.
+        var wallHeight = scanController.ConfirmedWallHeight > 0f
+            ? scanController.ConfirmedWallHeight
+            : scanController.CornerBuilder != null ? scanController.CornerBuilder.WallHeight : 0f;
 
         var dims = RoomMeasurementUtil.Compute(
             room,

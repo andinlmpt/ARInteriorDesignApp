@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { adminApi, api, type Faq } from '../api/client';
+import { IconArrowDown, IconArrowUp, IconButton, IconTrash } from '../components/ActionIcons';
 import { PageHeader } from '../components/PageHeader';
 import { SearchBar } from '../components/SearchBar';
 import { formatRelativeTime } from '../utils/dashboard';
@@ -152,33 +153,21 @@ export function FaqsPage() {
                   <div className="table-actions">
                     {!searching ? (
                       <>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-small"
-                          onClick={() => moveFaq(faq.key, -1)}
-                          disabled={index === 0}
-                          aria-label={`Move FAQ ${index + 1} up`}
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-small"
+                        <IconButton label="Move up" onClick={() => moveFaq(faq.key, -1)} disabled={index === 0}>
+                          <IconArrowUp />
+                        </IconButton>
+                        <IconButton
+                          label="Move down"
                           onClick={() => moveFaq(faq.key, 1)}
                           disabled={index === faqs.length - 1}
-                          aria-label={`Move FAQ ${index + 1} down`}
                         >
-                          ↓
-                        </button>
+                          <IconArrowDown />
+                        </IconButton>
                       </>
                     ) : null}
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-small btn-danger-text"
-                      onClick={() => removeFaq(faq.key)}
-                    >
-                      Remove
-                    </button>
+                    <IconButton label="Remove FAQ" tone="danger" onClick={() => removeFaq(faq.key)}>
+                      <IconTrash />
+                    </IconButton>
                   </div>
                 </div>
                 <div className="field">

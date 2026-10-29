@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { storeApi, type FurnitureItem } from '../../api/client';
+import { IconButton, IconEdit, IconEye, IconEyeOff, IconTrash } from '../../components/ActionIcons';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { FurnitureFormModal } from '../../components/FurnitureFormModal';
 import { PageHeader } from '../../components/PageHeader';
@@ -31,16 +32,6 @@ function formatPhp(value?: number) {
   return value ? `₱${value.toLocaleString()}` : '—';
 }
 
-function IconMore() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-      <circle cx="12" cy="5" r="1.8" />
-      <circle cx="12" cy="12" r="1.8" />
-      <circle cx="12" cy="19" r="1.8" />
-    </svg>
-  );
-}
-
 export function StoreProductsPage() {
   const { store } = useAuth();
   const canEdit = store?.status === 'approved';
@@ -50,12 +41,10 @@ export function StoreProductsPage() {
   const [message, setMessage] = useState('');
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('name-asc');
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<FurnitureItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<FurnitureItem | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
@@ -91,16 +80,6 @@ export function StoreProductsPage() {
     const timer = setTimeout(() => setMessage(''), 3000);
     return () => clearTimeout(timer);
   }, [message]);
-
-  useEffect(() => {
-    function handleClick(event: MouseEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        setMenuOpenId(null);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -139,19 +118,16 @@ export function StoreProductsPage() {
   }, [items, search, sortBy]);
 
   function openCreate() {
-    setMenuOpenId(null);
     setEditingItem(null);
     setFormOpen(true);
   }
 
   function openEdit(item: FurnitureItem) {
-    setMenuOpenId(null);
     setEditingItem(item);
     setFormOpen(true);
   }
 
   async function toggleVisibility(item: FurnitureItem) {
-    setMenuOpenId(null);
     setError('');
     try {
       await storeApi.updateProduct(item.id, { active: !item.active });
@@ -241,6 +217,7 @@ export function StoreProductsPage() {
                   <th>Quantity</th>
                   <th>In the app</th>
                   <th>Stock</th>
+                  {canEdit ? <th>Actions</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -249,7 +226,6 @@ export function StoreProductsPage() {
                   const status = getStockStatus(qty);
                   const visibility = productVisibility(item);
                   const sizeWarning = modelSizeWarning(compareModelSize(item.modelSize, item));
-                  const menuOpen = menuOpenId === item.id;
 
                   return (
                     <tr key={item.id}>
@@ -287,43 +263,26 @@ export function StoreProductsPage() {
                         ) : null}
                       </td>
                       <td>
-                        <div className="status-cell" ref={menuOpen ? menuRef : undefined}>
-                          <span className={`badge badge-stock badge-${status}`}>{stockLabel(status)}</span>
-                          {canEdit ? (
-                            <div className="row-menu">
-                              <button
-                                type="button"
-                                className="row-menu-trigger"
-                                aria-label={`Actions for ${item.displayName}`}
-                                aria-expanded={menuOpen}
-                                onClick={() => setMenuOpenId(menuOpen ? null : item.id)}
-                              >
-                                <IconMore />
-                              </button>
-                              {menuOpen ? (
-                                <div className="row-menu-dropdown">
-                                  <button type="button" onClick={() => openEdit(item)}>
-                                    Edit
-                                  </button>
-                                  <button type="button" onClick={() => toggleVisibility(item)}>
-                                    {item.active ? 'Hide from app' : 'Show in app'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="danger"
-                                    onClick={() => {
-                                      setMenuOpenId(null);
-                                      setDeleteTarget(item);
-                                    }}
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              ) : null}
-                            </div>
-                          ) : null}
-                        </div>
+                        <span className={`badge badge-stock badge-${status}`}>{stockLabel(status)}</span>
                       </td>
+                      {canEdit ? (
+                        <td>
+                          <div className="table-actions">
+                            <IconButton label="Edit" onClick={() => openEdit(item)}>
+                              <IconEdit />
+                            </IconButton>
+                            <IconButton
+                              label={item.active ? 'Hide from app' : 'Show in app'}
+                              onClick={() => void toggleVisibility(item)}
+                            >
+                              {item.active ? <IconEyeOff /> : <IconEye />}
+                            </IconButton>
+                            <IconButton label="Delete" tone="danger" onClick={() => setDeleteTarget(item)}>
+                              <IconTrash />
+                            </IconButton>
+                          </div>
+                        </td>
+                      ) : null}
                     </tr>
                   );
                 })}

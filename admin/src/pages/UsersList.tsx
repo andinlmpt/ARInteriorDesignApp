@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { adminApi, type AdminUser, type Role, type UserRoleFilter } from '../api/client';
+import { IconButton, IconUserUp } from '../components/ActionIcons';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { PageHeader } from '../components/PageHeader';
 import { SearchBar } from '../components/SearchBar';
@@ -133,9 +134,9 @@ export function UsersListPage() {
                         Managed on Stores
                       </Link>
                     ) : (
-                      <button type="button" className="btn btn-ghost" onClick={() => setPromoteTarget(user)}>
-                        Make admin
-                      </button>
+                      <IconButton label="Make admin" onClick={() => setPromoteTarget(user)}>
+                        <IconUserUp />
+                      </IconButton>
                     )}
                   </td>
                 </tr>

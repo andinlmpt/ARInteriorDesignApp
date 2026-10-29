@@ -64,6 +64,33 @@ describe('catalogLayoutSelector', () => {
     expect(ids).toEqual(expect.arrayContaining(['bed-queen', 'desk-study']));
   });
 
+  test('picked furniture is all the layout gets: no second piece beside it', () => {
+    const roomy = [...pool, mapDocToPlannerItem({
+      id: 'chair-cheap', displayName: 'Chair', category: 'chair', width: 0.5, depth: 0.5, height: 0.9,
+      pricePhp: 1999, quantity: 10, active: true, styles: ['Modern'], roomTypes: ['Living Room'], glbUrl: '/chair.glb',
+    })];
+    const result = selectCatalogFurnitureSet(roomy, {
+      roomType: 'Living Room',
+      style: 'Modern',
+      budgetPhp: 100000,
+      requiredItemIds: ['sofa-large'],
+      variantIndex: 0,
+    });
+    expect(result.furniture.map((item) => item.catalogId)).toEqual(['sofa-large']);
+    expect(result.totalPhp).toBe(32999);
+    expect(result.withinBudget).toBe(true);
+  });
+
+  test('nothing picked: a set is suggested for the room', () => {
+    const result = selectCatalogFurnitureSet(pool, {
+      roomType: 'Bedroom',
+      style: 'Minimalist',
+      budgetPhp: 50000,
+      variantIndex: 0,
+    });
+    expect(result.furniture.length).toBeGreaterThan(1);
+  });
+
   test('budget blocks expensive optional pieces', () => {
     const result = selectCatalogFurnitureSet(
       [...pool, mapDocToPlannerItem({
@@ -84,7 +111,6 @@ describe('catalogLayoutSelector', () => {
         roomType: 'Bedroom',
         style: 'Minimalist',
         budgetPhp: 25000,
-        requiredItemIds: ['bed-queen', 'desk-study'],
         variantIndex: 0,
       },
     );
@@ -121,5 +147,40 @@ describe('catalogLayoutSelector', () => {
     expect(plannerFootprint({ width: 1.2, depth: 0.6, height: 0.75, modelSize: { width: 0, depth: 0.5, height: 0.7 } }))
       .toEqual({ width: 1.2, length: 0.6, height: 0.75 });
     expect(plannerFootprint({})).toEqual({ width: 1, length: 0.8, height: 0.8 });
+  });
+});
+
+describe('suggested extras', () => {
+  // Five cheap sofas: with only the budget as a limit, a living room used to get them all.
+  const sofas = [1, 2, 3, 4, 5].map((n) => mapDocToPlannerItem({
+    id: `sofa-${n}`,
+    displayName: `Sofa ${n}`,
+    category: 'sofa',
+    width: 2,
+    depth: 0.9,
+    height: 0.8,
+    pricePhp: 5000 + n,
+    quantity: 3,
+    active: true,
+    roomTypes: ['Living Room'],
+  }));
+
+  it('suggests at most two of a kind', () => {
+    const { furniture } = selectCatalogFurnitureSet(sofas, { roomType: 'Living Room', style: '', budgetPhp: 100000 });
+    expect(furniture.filter((item) => item.category === 'sofa')).toHaveLength(2);
+  });
+
+  it('stops adding extras when the floor would get crowded', () => {
+    // 6 m² of floor: 40% is 2.4 m², room for one 1.8 m² sofa.
+    const { furniture } = selectCatalogFurnitureSet(sofas, { roomType: 'Living Room', style: '', budgetPhp: 100000, floorArea: 6 });
+    expect(furniture).toHaveLength(1);
+  });
+
+  it('leaves picked furniture alone', () => {
+    const picked = sofas.map((item) => item.catalogId);
+    const { furniture } = selectCatalogFurnitureSet(sofas, {
+      roomType: 'Living Room', style: '', budgetPhp: 100000, requiredItemIds: picked, floorArea: 6,
+    });
+    expect(furniture).toHaveLength(5);
   });
 });

@@ -297,22 +297,16 @@ EXPO_PUBLIC_REPLICATE_API_TOKEN=your-token-here
 
 ## Testing the App
 
-### Login Credentials (Test Users)
+### Accounts
 
-The app includes test users:
-
-| Email | Password |
-|-------|----------|
-| john@example.com | password123 |
-| jane@example.com | password123 |
-| admin@ardesign.com | admin123 |
-| test@test.com | test123 |
+There are no built-in test users: create an account with **Sign up** (the backend must be running
+with MongoDB). Store and admin accounts sign in on the VisionSpace console, not in the app.
 
 ### First Run Flow
 
 1. **Splash Screen** → Shows app branding
 2. **Onboarding** (first time only) → Tutorial slides
-3. **Login Screen** → Sign in with test credentials
+3. **Login Screen** → Sign in, or sign up first
 4. **Home Screen** → Main dashboard with quick actions
 
 ## Development Tips

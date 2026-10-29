@@ -329,6 +329,28 @@ public class FurnitureLockRequest
     public bool locked;
 }
 
+/// <summary>
+/// Every piece that overlaps another piece or runs through a wall (event "placementCheck"). Sent
+/// with each layout change and on request; the app blocks Finish while <see cref="hasErrors"/>.
+/// </summary>
+[Serializable]
+public class PlacementCheckPayload
+{
+    public bool hasErrors;
+    public PlacementIssuePayload[] issues;
+}
+
+[Serializable]
+public class PlacementIssuePayload
+{
+    public string instanceId;
+    public string modelId;
+    /// <summary>The piece it overlaps; empty when the problem is a wall.</summary>
+    public string otherModelId;
+    public bool hitsWall;
+    public string reason;
+}
+
 /// <summary>Placement safety feedback for the selected furniture piece.</summary>
 [Serializable]
 public class PlacementSafetyPayload

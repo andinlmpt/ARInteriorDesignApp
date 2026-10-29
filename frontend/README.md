@@ -45,14 +45,10 @@ npm run web
 npx expo start --clear
 ```
 
-## 🔑 Test Login Credentials
+## 🔑 Accounts
 
-| Email | Password |
-|-------|----------|
-| john@example.com | password123 |
-| jane@example.com | password123 |
-| admin@ardesign.com | admin123 |
-| test@test.com | test123 |
+There are no built-in accounts: create one with **Sign up** in the app. Store and admin accounts use
+the VisionSpace console, not the app.
 
 ## 🎯 Features
 

@@ -13,11 +13,12 @@ import { mockPricePhp } from '../utils/furnitureMockPricing.js';
 import { withPublicVisibility } from '../services/catalogVisibility.js';
 import mongoose from 'mongoose';
 import RoomMeasurement from '../models/RoomMeasurement.js';
-import { describeRoomFeatures, planLayouts } from '../services/layoutPlanner.js';
+import { checkRoomFit, describeRoomFeatures, planOptions } from '../services/layoutPlanner.js';
 import { buildRoomFeatures, resolvePlannerRoom } from '../services/roomFeatures.js';
 import {
   buildCatalogLayoutSets,
   estimateFurnitureCostPhp,
+  mapDocToPlannerItem,
   sumCatalogPricePhp,
 } from '../services/catalogLayoutSelector.js';
 
@@ -356,19 +357,6 @@ const PHP_PRICE_RANGES = {
 
 const DESIGN_LAYOUT_COUNT = 2;
 /** Anchor walls tried per option before accepting a layout that matches an earlier option. */
-const WALL_VARIANTS = 4;
-
-/**
- * Two layouts look the same to a user when the same pieces face the same walls;
- * sliding a piece along its wall is not a different option.
- */
-function sameArrangement(a, b) {
-  const signature = (items) => items
-    .map((item) => `${item.catalogId}@${((Number(item.position?.rotation) || 0) % 360 + 360) % 360}`)
-    .sort()
-    .join('|');
-  return signature(a) === signature(b);
-}
 
 function inferCatalogType(value) {
   const v = String(value || '').toLowerCase();
@@ -654,6 +642,48 @@ async function loadRoomScan({ measurementId, floorPolygon, openings, obstacles }
 }
 
 /**
+ * Which catalog pieces can't fit the scanned room, so the preferences screen leaves them out of
+ * the recommended furniture (adviser, 2026-10-28). Same room, outline, doors and existing
+ * furniture the layouts are planned with.
+ * Body: { dimensions, measurementId?, floorPolygon?, openings?, obstacles? }
+ * → { room, existingCount, checked, unfit: [{ id, reason: 'too-tall'|'too-big'|'no-space' }] }
+ */
+export async function roomFit(req, res, next) {
+  try {
+    const { dimensions, measurementId, floorPolygon, openings, obstacles } = req.body || {};
+    let roomDims = normalizeRoomDimensions(dimensions);
+    if (![roomDims.width, roomDims.length, roomDims.height].every(value => Number.isFinite(value) && value > 0)
+        || roomDims.width > 50 || roomDims.length > 50 || roomDims.height > 10) {
+      return res.status(400).json({ error: 'room dimensions must be positive numbers within supported limits' });
+    }
+    const roomScan = await loadRoomScan({ measurementId, floorPolygon, openings, obstacles });
+    roomDims = resolvePlannerRoom(roomDims, roomScan);
+    const roomFeatures = buildRoomFeatures(roomDims, roomScan);
+
+    const docs = await Furniture.find(await withPublicVisibility({ active: { $ne: false } })).lean();
+    const unfit = [];
+    docs.forEach((doc) => {
+      const { fits, reason } = checkRoomFit(roomDims, mapDocToPlannerItem(doc), roomFeatures);
+      if (!fits) unfit.push({ id: doc.id, reason });
+    });
+
+    res.json({
+      success: true,
+      room: {
+        width: Math.round(roomDims.width * 100) / 100,
+        length: Math.round(roomDims.length * 100) / 100,
+        height: Math.round(roomDims.height * 100) / 100,
+      },
+      existingCount: roomFeatures.obstacles.length,
+      checked: docs.length,
+      unfit,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * Generate AI design proposals
  */
 export async function generateDesign(req, res, next) {
@@ -727,46 +757,32 @@ export async function generateDesign(req, res, next) {
     ];
 
     const requiredIds = Array.isArray(requiredItemIds) ? requiredItemIds : [];
-    const { sets: catalogSets, meta: selectionMeta, poolSize } = await buildCatalogLayoutSets({
+    const { sets: catalogSets, meta: selectionMeta, poolSize, unfitCount } = await buildCatalogLayoutSets({
       roomType: finalRoomType,
       style,
       budgetPhp: budgetValue,
       requiredItemIds: requiredIds,
       variationCount: requestedLayouts,
       existingRoles: roomFeatures.obstacles.map((o) => o.role),
+      fitsRoom: (item) => checkRoomFit(roomDims, item, roomFeatures).fits,
+      floorArea: roomDims.width * roomDims.length,
     });
 
     if (catalogSets.length === 0) {
       return res.status(422).json({
         error: 'No catalog furniture',
-        message: `No priced in-stock items match ${finalRoomType}. Add products in admin or adjust room/budget.`,
+        message: unfitCount > 0 && poolSize === 0
+          ? `None of the ${finalRoomType.toLowerCase()} furniture fits this ${roomDims.width.toFixed(1)} × ${roomDims.length.toFixed(1)} m room with what is already in it.`
+          : `No priced in-stock items match ${finalRoomType}. Add products in admin or adjust room/budget.`,
         poolSize,
       });
     }
 
     const scoredLayouts = [];
-    for (let variant = 0; variant < catalogSets.length; variant += 1) {
-      // Start each option on a different anchor wall; move on to the next wall while the
-      // layout repeats an earlier option. The optimizer can pull every start back to the same
-      // arrangement, so later passes keep the planner's unrefined layout for each wall.
-      // If every try repeats, the last one is kept.
-      let plan = null;
-      for (let attempt = 0; attempt < WALL_VARIANTS * 3; attempt += 1) {
-        const wall = attempt % WALL_VARIANTS;
-        [plan] = planLayouts(roomDims, catalogSets[variant], {
-          count: 1,
-          firstVariant: (variant + wall) % WALL_VARIANTS,
-          seed: startTime + variant * 7919 + attempt * 104729,
-          features: roomFeatures,
-          optimize: attempt < WALL_VARIANTS,
-        });
-        const placed = (plan?.furniture || []).map((item) => ({
-          catalogId: catalogIdFromPlacedItem(item),
-          position: item.position,
-        }));
-        if (!scoredLayouts.some((entry) => sameArrangement(entry.furniture, placed))) break;
-      }
-      if (!plan) continue;
+    // One option per furniture set, each started on a different wall; a repeat of an earlier
+    // option is left out (see planOptions).
+    const options = planOptions(roomDims, catalogSets, { features: roomFeatures, seed: startTime });
+    for (const { variant, plan } of options) {
       const meta = selectionMeta[variant] || {};
       // Guideline scores describe placed furniture; with nothing placed they are vacuous.
       const empty = plan.furniture.length === 0;
@@ -904,6 +920,34 @@ export async function generateDesign(req, res, next) {
     });
   } catch (error) {
     console.error('❌ [AIDesign] Error:', error);
+    next(error);
+  }
+}
+
+/**
+ * The newest design of a project, so a saved project opens its design again instead of
+ * starting over at the preferences. A finalized (saved) design wins over newer generations
+ * that were never saved. 404 when the project has no design yet.
+ */
+export async function getLatestProjectSession(req, res, next) {
+  try {
+    const { projectId } = req.params;
+    if (!projectId) return res.status(400).json({ error: 'projectId is required' });
+    const owner = req.user?.userId || req.user?.id;
+    const filter = { projectId, ...(owner ? { userId: owner } : { userId: null }) };
+    const fields = '_id finalLayout.items finalLayout.updatedAt createdAt';
+    const finalized = await DesignSession.findOne({ ...filter, 'finalLayout.items.0': { $exists: true } })
+      .sort({ 'finalLayout.updatedAt': -1, createdAt: -1 })
+      .select(fields)
+      .lean();
+    const session = finalized || await DesignSession.findOne(filter).sort({ createdAt: -1 }).select(fields).lean();
+    if (!session) return res.status(404).json({ error: 'No design for this project yet' });
+    res.json({
+      sessionId: String(session._id),
+      finalized: Boolean(finalized),
+      updatedAt: new Date(session.finalLayout?.updatedAt || session.createdAt).getTime(),
+    });
+  } catch (error) {
     next(error);
   }
 }
@@ -1133,7 +1177,9 @@ export async function estimateFurnitureCost(req, res) {
 
 export default {
   generateDesign,
+  roomFit,
   getDesignSession,
+  getLatestProjectSession,
   finalizeDesign,
   getFurnitureCatalog,
   estimateFurnitureCost,

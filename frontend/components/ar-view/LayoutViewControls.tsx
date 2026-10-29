@@ -11,6 +11,12 @@ interface LayoutViewControlsProps {
   /** Opens the step 7 final summary (save floor plan + cost). */
   onFinish?: () => void;
   /**
+   * A piece overlaps another or runs through a wall: Finish is greyed out and says "Fix first",
+   * and a tap calls {@link onFinishBlocked} (to say what to fix) instead of finishing.
+   */
+  finishBlocked?: boolean;
+  onFinishBlocked?: () => void;
+  /**
    * Turns the layout 180° onto the opposite wall. Only after lining up by hand: a wall marked
    * with two corners can match either of two equally long walls.
    */
@@ -23,11 +29,20 @@ export function LayoutViewControls({
   onRegenerate,
   regenerating = false,
   onFinish,
+  finishBlocked = false,
+  onFinishBlocked,
   onTurnAround,
 }: LayoutViewControlsProps) {
   const { colors } = useTheme();
 
-  const actions: { key: string; icon: IoniconName; label: string; onPress: () => void; busy?: boolean }[] = [];
+  const actions: {
+    key: string;
+    icon: IoniconName;
+    label: string;
+    onPress: () => void;
+    busy?: boolean;
+    blocked?: boolean;
+  }[] = [];
   if (onTurnAround) {
     actions.push({
       key: 'turn',
@@ -46,12 +61,20 @@ export function LayoutViewControls({
     });
   }
   if (onFinish) {
-    actions.push({
-      key: 'finish',
-      icon: 'checkmark-done-outline',
-      label: 'Finish',
-      onPress: onFinish,
-    });
+    actions.push(finishBlocked
+      ? {
+          key: 'finish',
+          icon: 'alert-circle-outline',
+          label: 'Fix first',
+          onPress: onFinishBlocked ?? (() => {}),
+          blocked: true,
+        }
+      : {
+          key: 'finish',
+          icon: 'checkmark-done-outline',
+          label: 'Finish',
+          onPress: onFinish,
+        });
   }
 
   return (
@@ -59,17 +82,23 @@ export function LayoutViewControls({
       {actions.map((action) => (
         <TouchableOpacity
           key={action.key}
-          style={[styles.button, { backgroundColor: colors.surfacePrimary }]}
+          style={[
+            styles.button,
+            { backgroundColor: action.blocked ? colors.surfaceSecondary : colors.surfacePrimary },
+          ]}
           onPress={action.onPress}
           disabled={action.busy}
-          accessibilityLabel={action.label}
+          accessibilityLabel={action.blocked ? 'Finish unavailable: fix the overlapping furniture first' : action.label}
+          accessibilityState={action.blocked ? { disabled: true } : undefined}
         >
           {action.busy ? (
             <ActivityIndicator size="small" color={colors.accent} />
           ) : (
-            <Ionicons name={action.icon} size={20} color={colors.accent} />
+            <Ionicons name={action.icon} size={20} color={action.blocked ? colors.danger : colors.accent} />
           )}
-          <Text style={[styles.label, { color: colors.textPrimary }]}>{action.label}</Text>
+          <Text style={[styles.label, { color: action.blocked ? colors.textMuted : colors.textPrimary }]}>
+            {action.label}
+          </Text>
         </TouchableOpacity>
       ))}
     </View>

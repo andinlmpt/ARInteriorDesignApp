@@ -98,19 +98,16 @@ Optional override in `frontend/.env`:
 EXPO_PUBLIC_API_BASE_URL=http://192.168.x.x:3000/api/v1
 ```
 
-## Test login credentials
+## Accounts
 
-| Email | Password |
-|-------|----------|
-| test@test.com | test123 |
-| john@example.com | password123 |
-| jane@example.com | password123 |
-| admin@ardesign.com | admin123 |
+There are no built-in accounts. Create one with sign-up in the app (or `POST /api/v1/users/signup`);
+an admin can then make it an admin in the console (Users ▸ Make admin). Stores register from the
+console's sign-in page.
 
-Example:
+Example login:
 
 ```powershell
-$body = '{"email":"test@test.com","password":"test123"}'
+$body = '{"email":"you@example.com","password":"your-password"}'
 Invoke-WebRequest -Uri "http://localhost:3000/api/v1/users/login" `
   -Method POST -Body $body -ContentType "application/json"
 ```

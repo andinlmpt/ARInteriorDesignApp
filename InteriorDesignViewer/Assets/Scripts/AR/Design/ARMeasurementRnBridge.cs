@@ -130,6 +130,11 @@ public class ARMeasurementRnBridge : MonoBehaviour
                 EnsureFurnitureBootstrap()?.RemoveSelectedFurniture();
                 break;
 
+            case "checkPlacement":
+                // Asked before Finish: the app blocks it while any piece overlaps or hits a wall.
+                EnsureFurnitureBootstrap()?.SendPlacementCheck();
+                break;
+
             case "clearScene":
             case "clearFurniture":
                 EnsureFurnitureBootstrap()?.Placement?.ClearFurniture();

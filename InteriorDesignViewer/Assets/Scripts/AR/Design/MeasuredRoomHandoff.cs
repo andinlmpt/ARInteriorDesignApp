@@ -51,7 +51,10 @@ public static class MeasuredRoomHandoff
         var cornerBuilder = scan.CornerBuilder != null
             ? scan.CornerBuilder
             : UnityEngine.Object.FindFirstObjectByType<ARDesignCornerRoomBuilder>();
-        if (cornerBuilder != null && cornerBuilder.WallHeight >= 0.5f)
+        // The confirmed height includes the floor check on confirm (see ScanFloorCorrection).
+        if (scan.ConfirmedWallHeight >= 0.5f)
+            WallHeight = scan.ConfirmedWallHeight;
+        else if (cornerBuilder != null && cornerBuilder.WallHeight >= 0.5f)
             WallHeight = cornerBuilder.WallHeight;
         else if (scan.ConfirmedRoom != null && scan.ConfirmedRoom.hasBounds)
             WallHeight = Mathf.Max(0.5f, scan.ConfirmedRoom.bounds.size.y);
