@@ -34,6 +34,7 @@ import savedItemRoutes from './routes/savedItems.js';
 import { UPLOAD_ROOT } from './services/uploadService.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/logger.js';
+import { verifyToken } from './middleware/auth.js';
 import { initDatabase } from './db/database.js';
 import { connectMongoDB, disconnectMongoDB } from './db/mongodb.js';
 import {
@@ -97,16 +98,66 @@ if (NODE_ENV === 'development') {
 
 app.use(requestLogger);
 
-// Rate limiting per IP. RATE_LIMIT_MAX / RATE_LIMIT_WINDOW_MINUTES in .env can raise it
-// (e.g. while bulk-uploading products); defaults are 100 requests per 15 minutes.
+/** A 429 as JSON with how long to wait: the admin console showed a bare "Request failed (429)". */
+function tooManyRequests(req, res, _next, options) {
+  const resetAt = req.rateLimit?.resetTime?.getTime?.();
+  const seconds = Math.max(1, Math.ceil(((resetAt || Date.now() + options.windowMs) - Date.now()) / 1000));
+  const wait = seconds < 60
+    ? `${seconds} second${seconds === 1 ? '' : 's'}`
+    : `${Math.ceil(seconds / 60)} minute${Math.ceil(seconds / 60) === 1 ? '' : 's'}`;
+  res.status(options.statusCode).json({
+    error: 'Too many requests',
+    code: 'RATE_LIMITED',
+    retryAfterSeconds: seconds,
+    message: options.message || `Too many requests right now. Please wait about ${wait} and try again.`,
+  });
+}
+
+/**
+ * Who a request counts against: the signed-in user (from a verified token, so a made-up id can't
+ * dodge the limit), else the address it came from. Per address only, everyone on one Wi-Fi (a
+ * school, an office) shared one allowance (2026-10-30).
+ */
+async function rateLimitKey(req) {
+  const header = req.get('authorization') || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  if (token) {
+    const decoded = await verifyToken(token);
+    const id = decoded?.userId || decoded?.email;
+    if (id) return `user:${id}`;
+  }
+  return `ip:${req.ip}`;
+}
+
+// 1000 requests per 3 minutes per user (RATE_LIMIT_MAX / RATE_LIMIT_WINDOW_MINUTES in .env change
+// it). 100 ran out within minutes: each console page loads several lists, and the dev console
+// loads them twice (React StrictMode).
 const limiter = rateLimit({
-  windowMs: (Number(process.env.RATE_LIMIT_WINDOW_MINUTES) || 15) * 60 * 1000,
-  max: Number(process.env.RATE_LIMIT_MAX) || 100,
-  message: 'Too many requests from this IP, please try again later.',
+  windowMs: (Number(process.env.RATE_LIMIT_WINDOW_MINUTES) || 3) * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_MAX) || 1000,
+  keyGenerator: rateLimitKey,
   standardHeaders: true,
   legacyHeaders: false,
+  handler: tooManyRequests,
 });
 
+// Wrong passwords have their own, much lower limit, so the generous one above doesn't let anyone
+// guess passwords quickly. Only failed sign-ins count (LOGIN_RATE_LIMIT_MAX per 15 minutes), per
+// address and account: one person's typos don't lock out others on the same Wi-Fi.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.LOGIN_RATE_LIMIT_MAX) || 20,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => `login:${req.ip}:${String(req.body?.email || '').trim().toLowerCase()}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next, options) => tooManyRequests(req, res, next, {
+    ...options,
+    message: 'Too many failed sign-ins from this network. Please wait 15 minutes and try again.',
+  }),
+});
+
+app.use('/api/v1/users/login', loginLimiter);
 app.use('/api/', limiter);
 
 // Serve static files (web view)

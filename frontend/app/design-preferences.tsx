@@ -24,7 +24,7 @@ import { radii, spacing } from '@/components/ui/theme';
 import { getHorizontalPadding } from '@/utils/responsive';
 import { useFurnitureCatalog } from '@/hooks/useFurnitureCatalog';
 import { RoomMeasurementService } from '@/services/RoomMeasurementService';
-import { DesignFlowService } from '@/services/DesignFlowService';
+import { DesignFlowService, type RoomFitReason, type RoomFitResult } from '@/services/DesignFlowService';
 import { saveDesignGeneration } from '@/utils/designFlowStorage';
 import { filterRequiredFurniture, matchesRoom, matchesStyle } from '@/utils/designRequiredFurniture';
 import {
@@ -46,6 +46,12 @@ import {
 import type { RoomMeasurementRecord } from '@/types/room-measurement';
 
 const STEPS = ['Room', 'Style', 'Budget', 'Furniture'] as const;
+
+const UNFIT_LABEL: Record<RoomFitReason, string> = {
+  'too-big': 'Too big for this room',
+  'too-tall': 'Taller than this room',
+  'no-space': 'No free space left for it',
+};
 
 type OptionCardProps = {
   label: string;
@@ -129,6 +135,7 @@ export default function DesignPreferencesScreen() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState(0);
+  const [roomFit, setRoomFit] = useState<RoomFitResult | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
   const stepComplete = [Boolean(roomType), Boolean(style), budgetPhp > 0, true];
@@ -157,9 +164,33 @@ export default function DesignPreferencesScreen() {
     return FALLBACK_REQUIRED_ITEMS;
   }, [products]);
 
+  // Pieces that can't fit the scanned room (with the furniture already in it) aren't recommended
+  // (adviser, 2026-10-28). Only for a real scan: the default room says nothing about the user's room.
+  useEffect(() => {
+    setRoomFit(null);
+    if (!width || !depth || !height) return;
+    let cancelled = false;
+    DesignFlowService.getRoomFit({ width, length: depth, height }, measurementId)
+      .then((result) => {
+        if (!cancelled) setRoomFit(result);
+      })
+      .catch(() => {
+        // Without the check the list is just not narrowed by size; the layouts still drop misfits.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [measurementId, width, depth, height]);
+
+  const unfitReasons = useMemo(
+    () => new Map((roomFit?.unfit ?? []).map((entry) => [entry.id, entry.reason])),
+    [roomFit],
+  );
+  const unfitIds = useMemo(() => new Set(unfitReasons.keys()), [unfitReasons]);
+
   const requiredFilter = useMemo(
-    () => filterRequiredFurniture(requiredOptions, { roomType, style, budgetPhp, selectedIds: requiredIds }),
-    [requiredOptions, roomType, style, budgetPhp, requiredIds],
+    () => filterRequiredFurniture(requiredOptions, { roomType, style, budgetPhp, selectedIds: requiredIds, unfitIds }),
+    [requiredOptions, roomType, style, budgetPhp, requiredIds, unfitIds],
   );
 
   useEffect(() => {
@@ -459,8 +490,9 @@ export default function DesignPreferencesScreen() {
             Required furniture
           </AppText>
           <AppText variant="caption" color="textMuted" style={{ marginBottom: spacing.sm }}>
-            Optional. Showing in-stock catalog pieces for your room that fit your remaining budget (style matches
-            sort first). Selected items are included in every generated layout.
+            Optional. Showing in-stock catalog pieces for your room that fit your remaining budget and the scanned
+            room (style matches sort first). The layouts place only the pieces you select; select none and we
+            suggest a set for you.
           </AppText>
           {catalogLoading ? (
             <ActivityIndicator color={colors.accent} style={{ marginVertical: spacing.md }} />
@@ -531,6 +563,11 @@ export default function DesignPreferencesScreen() {
                         {formatPhp(item.pricePhp)}
                       </AppText>
                     ) : null}
+                    {unfitReasons.has(item.id) ? (
+                      <AppText variant="caption" weight="600" style={{ color: colors.danger, marginTop: 2 }}>
+                        {UNFIT_LABEL[unfitReasons.get(item.id)!]}
+                      </AppText>
+                    ) : null}
                     {style && matchesStyle(item, style) ? (
                       <AppText variant="caption" color="textMuted" style={{ marginTop: 2 }}>
                         Matches {style}
@@ -540,6 +577,17 @@ export default function DesignPreferencesScreen() {
                 );
               })}
             </View>
+            {requiredFilter.hiddenUnfit > 0 && roomFit ? (
+              <AppText variant="caption" color="textMuted" style={{ marginTop: spacing.sm }}>
+                {requiredFilter.hiddenUnfit} more {requiredFilter.hiddenUnfit === 1 ? 'piece is' : 'pieces are'} hidden
+                because {requiredFilter.hiddenUnfit === 1 ? "it doesn't" : "they don't"} fit your{' '}
+                {roomFit.room.width.toFixed(1)} × {roomFit.room.length.toFixed(1)} m room
+                {roomFit.existingCount > 0
+                  ? ` with the ${roomFit.existingCount} ${roomFit.existingCount === 1 ? 'piece' : 'pieces'} already in it`
+                  : ''}
+                .
+              </AppText>
+            ) : null}
             {requiredFilter.hiddenOverBudget > 0 ? (
               <AppText variant="caption" color="textMuted" style={{ marginTop: spacing.sm }}>
                 {requiredFilter.hiddenOverBudget} more matching{' '}

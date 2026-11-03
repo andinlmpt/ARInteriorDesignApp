@@ -22,6 +22,7 @@ export type UnityToRNEvent =
   | 'photoCaptured'
   | 'historyChanged'
   | 'placementSafety'
+  | 'placementCheck'
   | 'furnitureLockBlocked'
   | 'measurementPlanReady'
   | 'measurementPlanClosed'
@@ -53,6 +54,7 @@ export type RNToUnityMethod =
   | 'setFurnitureLocked'
   | 'clearScene'
   | 'getCurrentLayout'
+  | 'checkPlacement'
   | 'exportLayout'
   | 'undo'
   | 'redo'
@@ -283,6 +285,26 @@ export interface SelectionPayload {
   instanceId: string;
   modelId: string;
   selected: boolean;
+}
+
+/** One piece that overlaps another piece or runs through a wall. */
+export interface PlacementIssue {
+  instanceId: string;
+  modelId: string;
+  /** The piece it overlaps; empty when the problem is a wall. */
+  otherModelId: string;
+  hitsWall: boolean;
+  reason: string;
+}
+
+/**
+ * Payload of the `placementCheck` event: every piece that overlaps something or runs through a
+ * wall. Unity sends it with each layout change and when asked (`checkPlacement`); Finish is
+ * blocked while `hasErrors`.
+ */
+export interface PlacementCheckPayload {
+  hasErrors: boolean;
+  issues: PlacementIssue[];
 }
 
 /** Payload of the `placementSafety` event from Unity. */

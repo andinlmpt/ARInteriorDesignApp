@@ -1,6 +1,7 @@
 /**
  * Picks real MongoDB catalog SKUs for layout planning (Phase 3).
- * Hard: requiredItemIds always included. Soft: style match. Budget: greedy fill, never silent clip.
+ * Picked furniture (requiredItemIds): exactly those items. Nothing picked: one per room slot, then
+ * extras while the budget allows. Soft: style match. Budget: greedy fill, never silent clip.
  */
 
 import Furniture from '../models/Furniture.js';
@@ -107,6 +108,11 @@ export function isCatalogEligible(doc, roomType, { requireStock = true } = {}) {
   return true;
 }
 
+/** At most this many of a kind in a suggested set (two by default). */
+const MAX_PER_ROLE = { sofa: 2, bed: 1, 'tv-stand': 1, 'coffee-table': 1, rug: 1, wardrobe: 1, 'dining-table': 1, island: 1 };
+/** Suggested furniture may cover up to this share of the floor; rugs lie under it and don't count. */
+const MAX_FLOOR_SHARE = 0.4;
+
 function styleScore(item, style) {
   if (!style) return 0;
   return item.styles?.includes(style) ? 10 : 0;
@@ -167,6 +173,7 @@ export function selectCatalogFurnitureSet(pool, {
   requiredItemIds = [],
   variantIndex = 0,
   existingRoles = [],
+  floorArea = 0,
 }) {
   const normalizedRoom = normalizeRoomType(roomType);
   const usedIds = new Set();
@@ -186,6 +193,10 @@ export function selectCatalogFurnitureSet(pool, {
       selected.push(forced);
     }
   });
+
+  // The user picked their furniture: the layout places exactly that. Filling the room around it
+  // put a second piece next to a single picked sofa, in the layout and in AR (adviser, 2026-10-28).
+  if (selected.length > 0) return pickedOnly(selected, budgetPhp);
 
   const slots = ROOM_ROLE_SLOTS[normalizedRoom] || ROOM_ROLE_SLOTS['Living Room'];
   const owned = ownedSlots(slots, existingRoles);
@@ -217,11 +228,23 @@ export function selectCatalogFurnitureSet(pool, {
     variantIndex,
   );
 
+  // Two of a kind at most, and no more than the floor takes: with only the budget as a limit, a
+  // 4 × 5 m living room got three sofas and the layout reported two it couldn't fit (2026-10-29).
+  const kinds = new Map();
+  selected.forEach((item) => kinds.set(roleOfItem(item), (kinds.get(roleOfItem(item)) || 0) + 1));
+  const takesFloor = (item) => (roleOfItem(item) === 'rug' ? 0 : (Number(item.width) || 0) * (Number(item.length) || 0));
+  let floorUsed = selected.reduce((sum, item) => sum + takesFloor(item), 0);
+  const maxFloor = floorArea > 0 ? floorArea * MAX_FLOOR_SHARE : Infinity;
   optionalPool.forEach((item) => {
     if (runningTotal + item.pricePhp > budget) return;
+    const role = roleOfItem(item);
+    if ((kinds.get(role) || 0) >= (MAX_PER_ROLE[role] ?? 2)) return;
+    if (floorUsed + takesFloor(item) > maxFloor) return;
     usedIds.add(item.catalogId);
     selected.push(item);
     runningTotal += item.pricePhp;
+    kinds.set(role, (kinds.get(role) || 0) + 1);
+    floorUsed += takesFloor(item);
   });
 
   return {
@@ -232,6 +255,13 @@ export function selectCatalogFurnitureSet(pool, {
   };
 }
 
+/** The furniture the user picked, and nothing else. */
+function pickedOnly(items, budgetPhp) {
+  const totalPhp = items.reduce((sum, item) => sum + item.pricePhp, 0);
+  const overBudget = budgetPhp > 0 && totalPhp > budgetPhp;
+  return { furniture: [...items], totalPhp, overBudget, withinBudget: !overBudget };
+}
+
 /**
  * If over budget, rebuild using the cheapest valid set that still includes required SKUs.
  */
@@ -240,6 +270,8 @@ export function selectCheapestValidSet(pool, options) {
   const requiredItems = requiredIds
     .map((id) => pool.find((item) => item.catalogId === id))
     .filter(Boolean);
+
+  if (requiredItems.length > 0) return pickedOnly(requiredItems, options.budgetPhp);
 
   const requiredCost = requiredItems.reduce((sum, item) => sum + item.pricePhp, 0);
   const budget = options.budgetPhp > 0 ? options.budgetPhp : Infinity;
@@ -321,8 +353,14 @@ export async function buildCatalogLayoutSets({
   requiredItemIds = [],
   variationCount = 3,
   existingRoles = [],
+  fitsRoom = null,
+  floorArea = 0,
 }) {
   let pool = await loadEligibleCatalogPool(roomType);
+  // Suggested pieces must fit the scanned room; picked ones stay (the layout says if it can't place one).
+  const eligibleCount = pool.length;
+  if (typeof fitsRoom === 'function') pool = pool.filter((item) => fitsRoom(item));
+  const unfitCount = eligibleCount - pool.length;
   pool = await ensureRequiredInPool(pool, requiredItemIds);
   const sets = [];
   const meta = [];
@@ -335,6 +373,7 @@ export async function buildCatalogLayoutSets({
       requiredItemIds,
       variantIndex: variant,
       existingRoles,
+      floorArea,
     });
 
     if (selection.overBudget && budgetPhp > 0) {
@@ -380,7 +419,7 @@ export async function buildCatalogLayoutSets({
     }
   }
 
-  return { sets, meta, poolSize: pool.length };
+  return { sets, meta, poolSize: pool.length, unfitCount };
 }
 
 export function sumCatalogPricePhp(furniture) {

@@ -71,9 +71,9 @@ public class ARFurnitureCocoDetector : MonoBehaviour
     [Tooltip("Open Images scores run lower than COCO's; repeat sightings make up for it.")]
     [SerializeField] private float openImagesScoreThreshold = 0.2f;
     [SerializeField] private float openImagesFurnitureConfidence = 0.25f;
-    [Tooltip("Pause after a detection before the next one. Each detection briefly costs a frame or two, " +
-             "so fewer of them keeps the walk smooth; things are still seen several times on the way.")]
-    [SerializeField] private float scanIntervalSeconds = 4.0f;
+    [Tooltip("Pause after a detection before the next one. Each detection runs a few layers a frame, slowing " +
+             "down when frames get slow, so the walk stays smooth. 4 s missed chairs walked past (client, 2026-10-29).")]
+    [SerializeField] private float scanIntervalSeconds = 2.5f;
     [Tooltip("Without depth, furniture further than this (m) isn't placed: the floor ray is too unsure there.")]
     [SerializeField] private float maxFloorRayDistance = 3.5f;
     [Tooltip("A new frame is only captured while the phone turns slower than this (degrees per second).")]
@@ -208,34 +208,147 @@ public class ARFurnitureCocoDetector : MonoBehaviour
     /// <summary>The model is loaded and has run once (its GPU programs are compiled).</summary>
     public bool IsWarm { get; private set; }
 
+    /// <summary>0–1 while <see cref="WarmUpRoutine"/> runs: how much of the first run is done.</summary>
+    public float WarmUpProgress { get; private set; }
+
+    bool warming;
+    int layerCount;
+
+    /// <summary>Layers run per frame during the warm-up while frames stay quick (one when they're slow).</summary>
+    const int WarmUpLayersPerQuickFrame = 4;
+    const float WarmUpQuickFrameSeconds = 0.05f;
+    const float WarmUpTimeoutSeconds = 120f;
+
     /// <summary>
-    /// Loads the model and runs it once on a blank frame. The first run compiles the GPU programs
-    /// and blocks for several seconds (7–8 s on a Realme GT Master); done here, when the scanner
-    /// opens and says so, instead of as a freeze the moment the walk starts.
+    /// Loads the model and runs it once on a blank frame, a few layers per frame. The first run
+    /// compiles every GPU program; done in one go it froze the phone for 11–35 s on the first scan
+    /// after an install (Realme, 2026-10-24). Layer by layer, each program compiles in its own frame:
+    /// the camera keeps moving and <see cref="WarmUpProgress"/> can be shown. The total time is
+    /// about the same. Started by the scanner when it opens, before the walk.
     /// </summary>
-    public void WarmUp()
+    public IEnumerator WarmUpRoutine()
     {
-        if (IsWarm || IsScanning) return;
+        if (IsWarm || warming || IsScanning) yield break;
+        warming = true;
+        WarmUpProgress = 0f;
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        TryLoadModel();
-        var loadMs = watch.Elapsed.TotalMilliseconds;
-        if (ready)
+        var loadMs = 0.0;
+        var frames = 0;
+        var slowestFrame = 0f;
+        // Which layers the slowest frame ran (one GPU program still took 8 s after an install,
+        // 2026-10-30): the next fresh-install log says where.
+        var slowestAt = "load";
+        var steps = 0;
+        try
         {
-            try
+            // The asset is read in the background; building the model from it is the one pause left.
+            if (!ready && !loadAttempted)
             {
-                TextureConverter.ToTensor(inputRt, inputTensor, default);
-                worker.Schedule(inputTensor);
-                // Reading an output waits for the whole run, so every program is compiled now.
-                using var boxes = (worker.PeekOutput(0) as Tensor<float>)?.ReadbackAndClone();
+                var request = Resources.LoadAsync<ModelAsset>(RoomModelResourcePath);
+                yield return request;
             }
-            catch (Exception e)
+            var loadWatch = System.Diagnostics.Stopwatch.StartNew();
+            TryLoadModel();
+            loadMs = loadWatch.Elapsed.TotalMilliseconds;
+            if (!ready) yield break;
+            yield return null;
+
+            var run = StartWarmUpRun();
+            if (run == null) yield break;
+            var more = true;
+            while (more)
             {
-                Debug.LogWarning($"[ARFurnitureCocoDetector] Warm-up failed: {e.Message}");
+                var perFrame = Time.unscaledDeltaTime < WarmUpQuickFrameSeconds ? WarmUpLayersPerQuickFrame : 1;
+                var firstStep = steps;
+                for (var i = 0; i < perFrame && more; i++)
+                {
+                    if (!TryStepWarmUp(run, out more)) yield break;
+                    if (more) steps++;
+                }
+                WarmUpProgress = Mathf.Min(0.95f, steps / (float)Mathf.Max(1, layerCount));
+                if (watch.Elapsed.TotalSeconds > WarmUpTimeoutSeconds)
+                {
+                    Debug.LogWarning("[ARFurnitureCocoDetector] Warm-up timed out; detections will finish the compiling.");
+                    (run as IDisposable)?.Dispose();
+                    yield break;
+                }
+                yield return null;
+                frames++;
+                if (Time.unscaledDeltaTime > slowestFrame)
+                {
+                    slowestFrame = Time.unscaledDeltaTime;
+                    slowestAt = $"steps {firstStep}-{steps}";
+                }
+            }
+            (run as IDisposable)?.Dispose();
+
+            // Wait for the result without blocking, so the last programs finish compiling too.
+            var output = RequestWarmUpReadback();
+            while (output != null && output.count > 0 && !output.IsReadbackRequestDone()
+                   && watch.Elapsed.TotalSeconds < WarmUpTimeoutSeconds)
+            {
+                yield return null;
+                frames++;
+                if (Time.unscaledDeltaTime > slowestFrame)
+                {
+                    slowestFrame = Time.unscaledDeltaTime;
+                    slowestAt = "readback";
+                }
             }
         }
+        finally
+        {
+            warming = false;
+            IsWarm = true;
+            WarmUpProgress = 1f;
+            Debug.Log($"[Perf] Detector warm-up took {watch.Elapsed.TotalMilliseconds:F0} ms over {frames} frames " +
+                      $"(model load {loadMs:F0} ms, slowest frame {slowestFrame * 1000f:F0} ms at {slowestAt}, {layerCount} layers).");
+        }
+    }
 
-        IsWarm = true;
-        Debug.Log($"[Perf] Detector warm-up took {watch.Elapsed.TotalMilliseconds:F0} ms (model load {loadMs:F0} ms).");
+    IEnumerator StartWarmUpRun()
+    {
+        try
+        {
+            TextureConverter.ToTensor(inputRt, inputTensor, default);
+            return worker.ScheduleIterable(inputTensor);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[ARFurnitureCocoDetector] Warm-up failed: {e.Message}");
+            return null;
+        }
+    }
+
+    static bool TryStepWarmUp(IEnumerator run, out bool more)
+    {
+        try
+        {
+            more = run.MoveNext();
+            return true;
+        }
+        catch (Exception e)
+        {
+            more = false;
+            Debug.LogWarning($"[ARFurnitureCocoDetector] Warm-up failed: {e.Message}");
+            (run as IDisposable)?.Dispose();
+            return false;
+        }
+    }
+
+    Tensor<float> RequestWarmUpReadback()
+    {
+        try
+        {
+            var output = worker.PeekOutput(0) as Tensor<float>;
+            if (output != null && output.count > 0) output.ReadbackRequest();
+            return output;
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[ARFurnitureCocoDetector] Warm-up readback failed: {e.Message}");
+            return null;
+        }
     }
 
     void TryLoadModel()
@@ -274,12 +387,12 @@ public class ARFurnitureCocoDetector : MonoBehaviour
             var keep = Functional.NMS(boxCorners, scores, IouThreshold, scoreThreshold);
 
             var backend = SystemInfo.supportsComputeShaders ? BackendType.GPUCompute : BackendType.CPU;
-            worker = new Worker(
-                graph.Compile(
-                    Functional.IndexSelect(boxes, 0, keep),
-                    Functional.IndexSelect(classIds, 0, keep),
-                    Functional.IndexSelect(scores, 0, keep)),
-                backend);
+            var compiled = graph.Compile(
+                Functional.IndexSelect(boxes, 0, keep),
+                Functional.IndexSelect(classIds, 0, keep),
+                Functional.IndexSelect(scores, 0, keep));
+            layerCount = compiled.layers.Count;
+            worker = new Worker(compiled, backend);
             inputTensor = new Tensor<float>(new TensorShape(1, 3, InputSize, InputSize));
             inputRt = new RenderTexture(InputSize, InputSize, 0, RenderTextureFormat.ARGB32);
             ready = true;
@@ -361,6 +474,7 @@ public class ARFurnitureCocoDetector : MonoBehaviour
     {
         var empty = new List<FurnitureAutoSuggestion>();
         if (instance != null && instance != this) return empty;
+        if (warming) return empty;
         if (!ready) TryLoadModel();
         if (arCamera == null) arCamera = Camera.main;
         if (!ready || arCamera == null || (requireInsideRoom && (corners == null || corners.Count < 3)))
@@ -456,12 +570,13 @@ public class ARFurnitureCocoDetector : MonoBehaviour
                 notes.Add($"{what} dropped (outside the room)");
                 continue;
             }
-            if (ARFurniturePlaneAutoScannerOverlapsHelper.Overlaps(center, size, existing, null, yaw))
+            // Only the same object counts: a chair under a marked table's edge is a piece of its own.
+            if (ARFurniturePlaneAutoScannerOverlapsHelper.SameAsAny(center, size, yaw, existing, null))
             {
                 notes.Add($"{what} dropped (already marked)");
                 continue;
             }
-            if (ARFurniturePlaneAutoScannerOverlapsHelper.Overlaps(center, size, null, results, yaw))
+            if (ARFurniturePlaneAutoScannerOverlapsHelper.SameAsAny(center, size, yaw, null, results))
             {
                 notes.Add($"{what} dropped (same object twice in this frame)");
                 continue;
@@ -732,6 +847,7 @@ public class ARFurnitureCocoDetector : MonoBehaviour
     int LayersThisFrame()
     {
         var dt = Time.unscaledDeltaTime;
+        if (warming) return 0;
         if (!IsScanning)
         {
             // The phone's usual frame time, learned while the detector is idle.
@@ -945,6 +1061,34 @@ public class ARFurnitureCocoDetector : MonoBehaviour
 /// <summary>Shared overlap check for plane + coco scanners.</summary>
 public static class ARFurniturePlaneAutoScannerOverlapsHelper
 {
+    /// <summary>The box is the same object as one in either list (see <see cref="FurnitureMatch.SameObject(Vector3, Vector3, float, Vector3, Vector3, float)"/>).</summary>
+    public static bool SameAsAny(
+        Vector3 center,
+        Vector3 size,
+        float yaw,
+        IReadOnlyList<RoomObstaclePayload> existing,
+        IReadOnlyList<FurnitureAutoSuggestion> pending)
+    {
+        if (existing != null)
+        {
+            foreach (var ob in existing)
+            {
+                if (ob?.center == null || ob.size == null) continue;
+                if (FurnitureMatch.SameObject(center, size, yaw,
+                    new Vector3(ob.center.x, ob.center.y, ob.center.z),
+                    new Vector3(ob.size.x, ob.size.y, ob.size.z), ob.yaw)) return true;
+            }
+        }
+
+        if (pending == null) return false;
+        foreach (var s in pending)
+        {
+            if (FurnitureMatch.SameObject(center, size, yaw, s.center, s.size, s.yaw)) return true;
+        }
+
+        return false;
+    }
+
     public static bool Overlaps(
         Vector3 center,
         Vector3 size,

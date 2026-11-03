@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { adminApi, type AdminUser } from '../api/client';
+import { IconButton, IconUserDown } from '../components/ActionIcons';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { PageHeader } from '../components/PageHeader';
 import { SearchBar } from '../components/SearchBar';
@@ -107,9 +108,9 @@ export function AdminsListPage() {
                     {admin.id === me?.id ? (
                       <span className="muted small">You</span>
                     ) : (
-                      <button type="button" className="btn btn-ghost" onClick={() => setDemoteTarget(admin)}>
-                        Make customer
-                      </button>
+                      <IconButton label="Make customer" tone="danger" onClick={() => setDemoteTarget(admin)}>
+                        <IconUserDown />
+                      </IconButton>
                     )}
                   </td>
                 </tr>

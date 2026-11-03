@@ -160,6 +160,32 @@ public class ARMeasurementFurnitureBootstrap : MonoBehaviour
         UnityMessageBridge.SendToApp(
             "placementSafety",
             JsonUtility.ToJson(PlacementSafetyPayload.From(result, furniture)));
+        // One piece moved off (or onto) another: the others' state changed with it.
+        SendPlacementCheck();
+    }
+
+    /// <summary>Tells the app which pieces still overlap something or run through a wall.</summary>
+    public void SendPlacementCheck()
+    {
+        if (placement == null) return;
+        var errors = placement.FindPlacementErrors();
+        var issues = new PlacementIssuePayload[errors.Count];
+        for (var i = 0; i < errors.Count; i++)
+        {
+            var (piece, result) = errors[i];
+            issues[i] = new PlacementIssuePayload
+            {
+                instanceId = piece.InstanceId,
+                modelId = piece.ModelId,
+                otherModelId = result.hasFurnitureCollision ? result.otherModelId ?? string.Empty : string.Empty,
+                hitsWall = !result.hasFurnitureCollision && result.hasWallCollision,
+                reason = result.reason ?? string.Empty,
+            };
+        }
+
+        UnityMessageBridge.SendToApp(
+            "placementCheck",
+            JsonUtility.ToJson(new PlacementCheckPayload { hasErrors = issues.Length > 0, issues = issues }));
     }
 
     void OnLockedGestureBlocked(PlacedFurniture furniture)
@@ -181,6 +207,7 @@ public class ARMeasurementFurnitureBootstrap : MonoBehaviour
         var layout = placement.BuildLayout();
         GetComponent<ARDesignLayoutAlignmentController>()?.FillSourcePoses(layout);
         UnityMessageBridge.SendToApp("layoutChanged", JsonUtility.ToJson(layout));
+        SendPlacementCheck();
     }
 
     public void ReplaceSelectedFurniture(string data)

@@ -25,7 +25,12 @@ export interface User {
   phoneNumber?: string;
   avatar?: string;
   preferences?: Record<string, unknown>;
+  /** user = app customer; store and admin accounts belong on the VisionSpace console. */
+  role?: 'user' | 'store' | 'admin';
 }
+
+/** Store and admin accounts can't sign in to the app (client, 2026-10-29). */
+export const CONSOLE_ACCOUNT_CODE = 'CONSOLE_ACCOUNT';
 
 export interface AuthResponse {
   message: string;
@@ -65,9 +70,19 @@ export const AuthService = {
     try {
       const response = await callApi<AuthResponse>('/users/login', {
         method: 'POST',
-        body: { email, password },
+        // "app" asks the backend to turn away store and admin accounts.
+        body: { email, password, client: 'app' },
         timeoutMs: 20000,
       });
+
+      // A backend without that check still says the role: don't keep the session.
+      const role = response?.user?.role;
+      if (role === 'store' || role === 'admin') {
+        throw new ApiError(403, 'Console account', {
+          code: CONSOLE_ACCOUNT_CODE,
+          message: `This is ${role === 'store' ? 'a store' : 'an admin'} account. Sign in on the VisionSpace console instead.`,
+        });
+      }
 
       if (response && response.token) {
         // Persist token first so /users/me is authorized
@@ -104,7 +119,7 @@ export const AuthService = {
       return response;
     } catch (error) {
       // Wrong email/password is an expected user outcome — don't dump a stack trace.
-      if (error instanceof ApiError && error.status === 401) {
+      if (error instanceof ApiError && (error.status === 401 || error.details?.code === CONSOLE_ACCOUNT_CODE)) {
         throw error;
       }
       const message = error instanceof Error ? error.message : String(error);

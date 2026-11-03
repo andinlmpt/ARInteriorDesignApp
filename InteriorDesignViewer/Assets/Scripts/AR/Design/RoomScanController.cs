@@ -96,6 +96,12 @@ public class RoomScanController : MonoBehaviour
     /// <summary>Floor outline polygon in world XZ (copied at confirm). Used to keep furniture inside the room.</summary>
     public IReadOnlyList<Vector3> FloorPolygon => floorPolygon;
 
+    /// <summary>
+    /// Wall height of the confirmed room (m), after any floor correction on confirm (0 before a
+    /// confirm). The room payload uses it instead of the corner builder's own measurement.
+    /// </summary>
+    public float ConfirmedWallHeight { get; private set; }
+
     readonly List<Vector3> floorPolygon = new();
 
     // Yaw sweep tracking: 24 buckets of 15° each.
@@ -158,6 +164,7 @@ public class RoomScanController : MonoBehaviour
         ConfirmedRoom?.Dispose();
         ConfirmedRoom = null;
         floorPolygon.Clear();
+        ConfirmedWallHeight = 0f;
 
         Array.Clear(yawBuckets, 0, yawBuckets.Length);
         scanStartTime = Time.unscaledTime;
@@ -240,6 +247,7 @@ public class RoomScanController : MonoBehaviour
         ConfirmedRoom?.Dispose();
         ConfirmedRoom = null;
         floorPolygon.Clear();
+        ConfirmedWallHeight = 0f;
 
         Array.Clear(yawBuckets, 0, yawBuckets.Length);
         scanStartTime = Time.unscaledTime;
@@ -277,6 +285,7 @@ public class RoomScanController : MonoBehaviour
         ConfirmedRoom?.Dispose();
         ConfirmedRoom = null;
         floorPolygon.Clear();
+        ConfirmedWallHeight = 0f;
 
         Array.Clear(yawBuckets, 0, yawBuckets.Length);
         cachedProgress = 0f;
@@ -316,11 +325,25 @@ public class RoomScanController : MonoBehaviour
 
         if (cornerBuilder != null && cornerBuilder.CanConfirm)
         {
-            snapshot = RoomGeometryBuilder.CaptureFromFloorCorners(
-                cornerBuilder.Corners, cornerBuilder.WallHeight);
-            CaptureFloorPolygon(cornerBuilder.Corners);
+            IReadOnlyList<Vector3> corners = cornerBuilder.Corners;
+            var wallHeight = cornerBuilder.WallHeight;
+            // The floor point can be set before AR has found the floor (on a bed or a table top):
+            // a large surface now found clearly below it, under the room, is the floor.
+            if (ScanFloorCorrection.TryFindLowerFloor(corners, wallHeight, HorizontalSurfaces(),
+                    out var floorY, out var correctedHeight))
+            {
+                Debug.Log($"[RoomScanController] The floor point was {(correctedHeight - wallHeight) * 100f:F0} cm above " +
+                          $"the floor AR found under the room: the room stands on {floorY:F2} " +
+                          $"(height {wallHeight:F2} → {correctedHeight:F2} m).");
+                corners = ScanFloorCorrection.AtFloor(corners, floorY);
+                wallHeight = correctedHeight;
+            }
+
+            ConfirmedWallHeight = wallHeight;
+            snapshot = RoomGeometryBuilder.CaptureFromFloorCorners(corners, wallHeight);
+            CaptureFloorPolygon(corners);
             // "View in AR" later puts the layout right here when tracking hasn't been reset.
-            ScanPlacement.RememberScan(cornerBuilder.Corners);
+            ScanPlacement.RememberScan(corners);
         }
 
         if (snapshot == null || snapshot.IsEmpty)
@@ -437,6 +460,20 @@ public class RoomScanController : MonoBehaviour
         {
             planeManager.enabled = false;
         }
+    }
+
+    /// <summary>The tracked upward surfaces AR has found, for the floor check on confirm.</summary>
+    List<ScanFloorCorrection.Surface> HorizontalSurfaces()
+    {
+        var surfaces = new List<ScanFloorCorrection.Surface>();
+        if (planeManager == null) return surfaces;
+        foreach (var plane in planeManager.trackables)
+        {
+            if (plane == null || plane.alignment != PlaneAlignment.HorizontalUp) continue;
+            if (plane.trackingState != TrackingState.Tracking) continue;
+            surfaces.Add(new ScanFloorCorrection.Surface(plane.center, plane.size.x * plane.size.y));
+        }
+        return surfaces;
     }
 
     void CaptureFloorPolygon(IReadOnlyList<Vector3> corners)

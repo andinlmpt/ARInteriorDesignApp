@@ -47,6 +47,8 @@ public static class SpatialMappingRegressionChecks
         AutoWallGeometryChecks.Run();
         RoomOutlineCleanupChecks.Run();
         RoomBoxFitChecks.Run();
+        FurnitureMatchChecks.Run();
+        ScanFloorCorrectionChecks.Run();
         AutoOpeningChecks.Run();
         ScanUxChecks.RunFromMenu();
         AutoOpeningChecks.RunDetectorOnTestPhotos();

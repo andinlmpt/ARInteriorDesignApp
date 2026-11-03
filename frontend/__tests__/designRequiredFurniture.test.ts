@@ -45,4 +45,17 @@ describe('filterRequiredFurniture', () => {
     expect(result.visible.map((item) => item.id)).toEqual(['sofa-a']);
     expect(result.overBudget).toBe(true);
   });
+
+  it('leaves out pieces that do not fit the scanned room, unless already picked', () => {
+    const unfitIds = new Set(['sofa-a', 'sofa-c']);
+    const result = filterRequiredFurniture(catalog, {
+      roomType: 'Living Room',
+      style: 'Modern',
+      budgetPhp: 50000,
+      selectedIds: ['sofa-c'],
+      unfitIds,
+    });
+    expect(result.visible.map((item) => item.id)).toEqual(['chair-a', 'sofa-b', 'sofa-c']);
+    expect(result.hiddenUnfit).toBe(1);
+  });
 });

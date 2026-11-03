@@ -23,6 +23,7 @@ import { spacing, radii } from '@/components/ui/theme';
 import { getHorizontalPadding } from '@/utils/responsive';
 import { ImageViewerModal } from '@/components/ui/ImageViewerModal';
 import { projectService } from '@/services/ProjectService';
+import { DesignFlowService } from '@/services/DesignFlowService';
 import type { Project } from '@/types/project';
 import { BRAND } from '@/constants/branding';
 import { buildModelPreviewExportHref } from '@/utils/modelPreviewExport';
@@ -57,6 +58,8 @@ export default function ProjectsScreen() {
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** The project whose design is being looked up (its card shows a spinner). */
+  const [opening, setOpening] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [photoPreview, setPhotoPreview] = useState<{ uri: string; title: string; subtitle: string } | null>(
     null
@@ -164,18 +167,40 @@ export default function ProjectsScreen() {
     });
   };
 
-  const openDesign = (project: Project) => {
-    router.push({
-      pathname: '/design-preferences',
-      params: { projectId: project.id, flow: 'design' },
-    });
+  /**
+   * Opens what the project already has: the saved design, else its generated layouts. Only a
+   * project with no design yet starts at the preferences (it always did, so a saved project
+   * couldn't be viewed again).
+   */
+  const openDesign = async (project: Project) => {
+    if (opening) return;
+    setOpening(project.id);
+    try {
+      const latest = await DesignFlowService.getLatestProjectSession(project.id);
+      if (latest) {
+        router.push({
+          pathname: latest.finalized ? '/design-final' : '/design-layouts',
+          params: { sessionId: latest.sessionId, projectId: project.id },
+        });
+        return;
+      }
+      router.push({
+        pathname: '/design-preferences',
+        params: { projectId: project.id, flow: 'design' },
+      });
+    } catch (error) {
+      console.error('[Projects] Failed to open design:', error);
+      showMessage('Couldn’t open this design', 'Please check your connection and try again.');
+    } finally {
+      setOpening(null);
+    }
   };
 
   const openProject = (project: Project) => {
     const exportPath = project.unityExport?.path;
     const latestPhoto = project.photos?.[project.photos.length - 1];
     if (!exportPath && !latestPhoto) {
-      openDesign(project);
+      void openDesign(project);
       return;
     }
 
@@ -218,7 +243,7 @@ export default function ProjectsScreen() {
       tone: 'ghost',
       onPress: () => {
         closeDialog();
-        openDesign(project);
+        void openDesign(project);
       },
     });
     setDialog({
@@ -315,6 +340,8 @@ export default function ProjectsScreen() {
         </View>
         {isDeleting ? (
           <ActivityIndicator size="small" color={colors.danger} />
+        ) : opening === item.id ? (
+          <ActivityIndicator size="small" color={colors.accent} />
         ) : !selectMode ? (
           <TouchableOpacity
             onPress={() => confirmDelete([item.id])}

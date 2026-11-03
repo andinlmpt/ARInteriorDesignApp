@@ -192,9 +192,17 @@ router.post('/signup', async (req, res, next) => {
   }
 });
 
+/** Accounts that sign in on the VisionSpace console, not in the mobile app. */
+const CONSOLE_ACCOUNT_MESSAGE = {
+  store: 'This is a store account. Sign in on the VisionSpace console to manage your store and products.',
+  admin: 'This is an admin account. Sign in on the VisionSpace console instead.',
+};
+
 /**
  * POST /api/v1/users/login
- * Login user and get JWT token
+ * Login user and get JWT token.
+ * Body: { email, password, client? }. The mobile app sends client "app"; store and admin accounts
+ * are then turned away (403, code CONSOLE_ACCOUNT) since they belong on the console (client, 2026-10-29).
  */
 router.post('/login', async (req, res, next) => {
   try {
@@ -245,6 +253,16 @@ router.post('/login', async (req, res, next) => {
         return res.status(401).json({
           error: 'Authentication failed',
           message: 'Invalid email or password',
+        });
+      }
+
+      // Checked after the password, so the role of an account is never told to someone without it.
+      if (req.body.client === 'app' && CONSOLE_ACCOUNT_MESSAGE[user.role]) {
+        return res.status(403).json({
+          error: 'Console account',
+          code: 'CONSOLE_ACCOUNT',
+          role: user.role,
+          message: CONSOLE_ACCOUNT_MESSAGE[user.role],
         });
       }
 

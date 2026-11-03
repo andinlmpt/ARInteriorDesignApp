@@ -17,8 +17,10 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
     [SerializeField] private float autoScanIntervalSeconds = 2.0f;
     [Tooltip("How often the detector looks during the walk around the room.")]
     [SerializeField] private float earlyScanIntervalSeconds = 2.0f;
-    [SerializeField] private int maxSuggestions = 12;
-    [SerializeField] private int maxEarlySightings = 16;
+    [Tooltip("Furniture kept in Review. 12 left most of a classroom's chairs and tables out (client, 2026-10-29).")]
+    [SerializeField] private int maxSuggestions = 30;
+    [Tooltip("Furniture kept during the walk, before the room is closed.")]
+    [SerializeField] private int maxEarlySightings = 30;
     [SerializeField] private int maxOpeningSightings = 200;
 
     readonly List<FurnitureAutoSuggestion> earlySightings = new();
@@ -31,11 +33,14 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
     /// <summary>The detector has loaded and run once, so the walk won't freeze on its first detection.</summary>
     public bool IsDetectorWarm => cocoDetector != null && cocoDetector.IsWarm;
 
-    /// <summary>Loads and runs the detector once now (a few seconds' freeze, meant for when the scanner opens).</summary>
-    public void WarmUpDetector()
+    /// <summary>0–1: how far the detector's warm-up has got.</summary>
+    public float DetectorWarmUpProgress => cocoDetector != null ? cocoDetector.WarmUpProgress : 0f;
+
+    /// <summary>Loads and runs the detector once, spread over frames (meant for when the scanner opens).</summary>
+    public System.Collections.IEnumerator WarmUpDetectorRoutine()
     {
         cocoDetector = ARFurnitureCocoDetector.EnsureOn(gameObject);
-        cocoDetector?.WarmUp();
+        return cocoDetector != null ? cocoDetector.WarmUpRoutine() : null;
     }
     public int Revision { get; private set; }
 
@@ -101,39 +106,8 @@ public class ARFurnitureAutoSuggestService : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Adds a detected object, or refines the one already listed where it stands: another sighting
-    /// of the same type counts it as seen again, and a more confident one also replaces its
-    /// position and size (keeping its id, so the app sees the same object).
-    /// Returns true when the list changed.
-    /// </summary>
     static bool AddOrRefine(List<FurnitureAutoSuggestion> list, FurnitureAutoSuggestion sighting, int max)
-    {
-        for (var i = 0; i < list.Count; i++)
-        {
-            var known = list[i];
-            if (!ARFurniturePlaneAutoScannerOverlapsHelper.FootprintsOverlap(
-                    sighting.center, sighting.size, sighting.yaw, known.center, known.size, known.yaw))
-                continue;
-            if (known.source != sighting.source || known.type != sighting.type)
-                return false;
-
-            var seen = Mathf.Max(1, known.sightings) + 1;
-            if (sighting.confidence > known.confidence)
-            {
-                sighting.id = known.id;
-                known = sighting;
-            }
-            known.sightings = seen;
-            list[i] = known;
-            return true;
-        }
-
-        if (list.Count >= max) return false;
-        sighting.sightings = Mathf.Max(1, sighting.sightings);
-        list.Add(sighting);
-        return true;
-    }
+        => FurnitureMatch.AddOrRefine(list, sighting, max);
 
     /// <summary>Moves early sightings that fall inside the closed room into the suggestions.</summary>
     public void AdoptEarlySightings(IReadOnlyList<Vector3> corners, List<FurnitureAutoSuggestion> pending)

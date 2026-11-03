@@ -20,6 +20,7 @@ import {
   type UnityInboundMessage,
   type UnityOutboundMessage,
   type PlacementSafetyPayload,
+  type PlacementCheckPayload,
   type LayoutAlignmentPayload,
 } from '@/types/unity-bridge';
 import { isUnityViewAvailable } from '@/utils/unityAvailability';
@@ -78,6 +79,8 @@ export interface UnityARViewerHandle {
   clearScene: () => void;
   /** Asks Unity to push a fresh `layoutChanged` event. */
   getCurrentLayout: () => void;
+  /** Asks Unity for a fresh `placementCheck` (all pieces' overlaps and wall hits). */
+  checkPlacement: () => void;
   /** Writes the room + furniture GLB to disk; the path arrives via `onExportComplete`. */
   exportLayout: () => void;
   /** Screenshots the AR view; result arrives via `onPhotoCaptured`. */
@@ -94,6 +97,12 @@ export interface UnityARViewerHandle {
   prefetchFurniture: (urls: string[]) => void;
   /** Resume native Unity player (required after exit AR — player stays paused until resumed). */
   resumeUnityPlayer: () => void;
+  /**
+   * Pause the native Unity player while its view is still on screen. Call it before leaving the AR
+   * screen: the view library pauses Unity again when the view is dropped, and that pause, made after
+   * the drawing surface was gone, timed out and crashed the app (2026-10-30).
+   */
+  pauseUnityPlayer: () => void;
   /** Resume Unity player + re-arm measured-room planner (Android UaaL). */
   wakeUnityPlayer: () => void;
   /** Unified planner pointer (hit-test drag vs orbit in Unity). */
@@ -156,6 +165,7 @@ interface UnityARViewerProps {
   onPhotoCaptured?: (payload: ARPhotoCapturedPayload) => void;
   onHistoryChanged?: (payload: HistoryStatePayload) => void;
   onPlacementSafety?: (payload: PlacementSafetyPayload) => void;
+  onPlacementCheck?: (payload: PlacementCheckPayload) => void;
   /** The user tried to drag or twist a locked piece. Carries its instance id. */
   onFurnitureLockBlocked?: (instanceId: string) => void;
   onUnityError?: (payload: UnityErrorPayload) => void;
@@ -180,6 +190,7 @@ type UnityViewComponent = React.ComponentType<{
 }> & {
   postMessage?: (gameObject: string, methodName: string, message: string) => void;
   resumeUnity?: () => void;
+  pauseUnity?: (pause: boolean) => void;
   windowFocusChanged?: (hasFocus: boolean) => void;
 };
 
@@ -221,6 +232,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
       onPhotoCaptured,
       onHistoryChanged,
       onPlacementSafety,
+      onPlacementCheck,
       onFurnitureLockBlocked,
       onUnityError,
       onRequestClose,
@@ -234,6 +246,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
     const unityRef = useRef<{
       postMessage?: (a: string, b: string, c: string) => void;
       resumeUnity?: () => void;
+      pauseUnity?: (pause: boolean) => void;
       windowFocusChanged?: (hasFocus: boolean) => void;
     } | null>(null);
     const readyRef = useRef(false);
@@ -260,6 +273,11 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
     const resumeUnityPlayer = useCallback(() => {
       unityRef.current?.resumeUnity?.();
       unityRef.current?.windowFocusChanged?.(true);
+    }, []);
+
+    const pauseUnityPlayer = useCallback(() => {
+      unityRef.current?.windowFocusChanged?.(false);
+      unityRef.current?.pauseUnity?.(true);
     }, []);
 
     const wakeUnityPlayer = useCallback(() => {
@@ -304,6 +322,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
           sendToUnity('setFurnitureLocked', JSON.stringify(request)),
         clearScene: () => sendToUnity('clearScene', ''),
         getCurrentLayout: () => sendToUnity('getCurrentLayout', ''),
+        checkPlacement: () => sendToUnity('checkPlacement', ''),
         exportLayout: () => sendToUnity('exportLayout', ''),
         capturePhoto: () => sendToUnity('capturePhoto', ''),
         undo: () => sendToUnity('undo', ''),
@@ -318,6 +337,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
           ),
         wakeUnityPlayer,
         resumeUnityPlayer,
+        pauseUnityPlayer,
         plannerPointer: (payload) => {
           // Unity hit-tests in physical pixels; RN touches are in dp. Deltas stay in dp (orbit tuning).
           const px = PixelRatio.get();
@@ -364,7 +384,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
         markAlignmentCorner: () => sendToUnity('markAlignmentCorner', ''),
         undoAlignmentCorner: () => sendToUnity('undoAlignmentCorner', ''),
       }),
-      [sendToUnity, wakeUnityPlayer, resumeUnityPlayer]
+      [sendToUnity, wakeUnityPlayer, resumeUnityPlayer, pauseUnityPlayer]
     );
 
     useEffect(() => {
@@ -485,6 +505,12 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
             break;
           }
 
+          case 'placementCheck': {
+            const payload = parseUnityPayload<PlacementCheckPayload>(msg);
+            if (payload) onPlacementCheck?.({ hasErrors: Boolean(payload.hasErrors), issues: payload.issues ?? [] });
+            break;
+          }
+
           case 'furnitureLockBlocked':
             onFurnitureLockBlocked?.(msg.data);
             break;
@@ -530,6 +556,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
         onFurnitureSelected,
         onHistoryChanged,
         onPlacementSafety,
+        onPlacementCheck,
         onFurnitureLockBlocked,
         onLayoutChanged,
         onMeasurementPlanClosed,

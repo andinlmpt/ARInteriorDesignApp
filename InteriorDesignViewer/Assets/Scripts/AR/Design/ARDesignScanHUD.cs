@@ -445,13 +445,14 @@ public class ARDesignScanHUD : MonoBehaviour
         RefreshCornerUi();
         // The app shows a spinner over Unity (it keeps moving while Unity is busy).
         UnityMessageBridge.SendToApp("scannerPreparing", string.Empty);
-        // Let the "getting ready" card and the spinner reach the screen before the phone is busy.
+        // Let the "getting ready" card and the spinner reach the screen before the model loads.
         yield return null;
         yield return new WaitForEndOfFrame();
-        yield return new WaitForSecondsRealtime(0.15f);
         try
         {
-            spatialMapping.WarmUpDetector();
+            // Spread over frames: the camera keeps moving and the card counts up.
+            var warmUp = spatialMapping.WarmUpDetectorRoutine();
+            if (warmUp != null) yield return warmUp;
         }
         finally
         {
@@ -801,7 +802,8 @@ public class ARDesignScanHUD : MonoBehaviour
         if (detectorWarmingUp)
         {
             title = "Getting the scanner ready…";
-            subtitle = "A few seconds · only when the scanner opens";
+            var percent = Mathf.RoundToInt(spatialMapping.DetectorWarmUpProgress * 100f);
+            subtitle = $"{percent}% · longer the first time after an install";
             return;
         }
 
@@ -2391,14 +2393,17 @@ public class ARDesignScanHUD : MonoBehaviour
         BuildHelpCard(root.transform);
     }
 
-    /// <summary>Stretches across the top between the app's back button and the right edge.</summary>
+    /// <summary>
+    /// Centred across the top, clear of the app's back button on the left and as far in on the
+    /// right (the client asked for the instruction centred, 2026-10-26).
+    /// </summary>
     static void PlaceTopBand(RectTransform rt, float top, float height)
     {
         rt.anchorMin = new Vector2(0f, 1f);
         rt.anchorMax = new Vector2(1f, 1f);
         rt.pivot = new Vector2(0.5f, 1f);
         rt.offsetMin = new Vector2(CardLeft, -top - height);
-        rt.offsetMax = new Vector2(-CardRight, -top);
+        rt.offsetMax = new Vector2(-CardLeft, -top);
     }
 
     void BuildInstructionCard(Transform root)

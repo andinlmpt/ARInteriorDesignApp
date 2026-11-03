@@ -153,11 +153,17 @@ public class ARDesignSpatialMappingController : MonoBehaviour
     /// <summary>The object detector is loaded and has run once (or there is none to wait for).</summary>
     public bool IsDetectorWarm => autoSuggest == null || autoSuggest.IsDetectorWarm;
 
-    /// <summary>Loads and runs the object detector once, so its first detection doesn't freeze the walk.</summary>
-    public void WarmUpDetector()
+    /// <summary>0–1: how far the object detector's warm-up has got.</summary>
+    public float DetectorWarmUpProgress => autoSuggest != null ? autoSuggest.DetectorWarmUpProgress : 0f;
+
+    /// <summary>
+    /// Loads and runs the object detector once, a few layers per frame, so its first detection
+    /// doesn't freeze the walk. Null when there is no detector.
+    /// </summary>
+    public System.Collections.IEnumerator WarmUpDetectorRoutine()
     {
         ResolveReferences();
-        autoSuggest?.WarmUpDetector();
+        return autoSuggest != null ? autoSuggest.WarmUpDetectorRoutine() : null;
     }
 
     public IReadOnlyList<RoomOpeningPayload> Openings => openings;
@@ -342,7 +348,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         foreach (var s in autoSuggest.EarlySightings)
         {
             if (s.source != "coco") continue;
-            if (OverlapsAny(s, obstacles) || OverlapsAny(s, removedObstacles)) continue;
+            if (MatchesAny(s, obstacles) || MatchesAny(s, removedObstacles)) continue;
             // Square to the walls walked so far (kept inside them once the room is closed).
             var fitted = ARFurnitureAutoSuggestService.FitToRoom(s, cornerBuilder.Corners, cornerBuilder.IsLoopClosed);
             // Seen once, it shows faint straight away: waiting for a second detection took 8–13 s.
@@ -393,19 +399,12 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         return sb.ToString();
     }
 
-    static bool OverlapsAny(FurnitureAutoSuggestion s, List<RoomObstaclePayload> list)
-    {
-        foreach (var o in list)
-        {
-            if (o?.center == null || o.size == null) continue;
-            if (ARFurniturePlaneAutoScannerOverlapsHelper.FootprintsOverlap(
-                    s.center, s.size, s.yaw,
-                    new Vector3(o.center.x, o.center.y, o.center.z), new Vector3(o.size.x, o.size.y, o.size.z), o.yaw))
-                return true;
-        }
-
-        return false;
-    }
+    /// <summary>
+    /// The find is a piece already marked (or removed by the user). Only the same object counts:
+    /// a chair under a marked table's edge still shows.
+    /// </summary>
+    static bool MatchesAny(FurnitureAutoSuggestion s, List<RoomObstaclePayload> list)
+        => ARFurniturePlaneAutoScannerOverlapsHelper.SameAsAny(s.center, s.size, s.yaw, list, null);
 
     void OnCornersChanged()
     {
@@ -430,7 +429,7 @@ public class ARDesignSpatialMappingController : MonoBehaviour
         if (autoSuggest != null)
         {
             autoSuggest.AdoptEarlySightings(corners, pendingSuggestions);
-            pendingSuggestions.RemoveAll(s => OverlapsAny(s, obstacles) || OverlapsAny(s, removedObstacles));
+            pendingSuggestions.RemoveAll(s => MatchesAny(s, obstacles) || MatchesAny(s, removedObstacles));
         }
 
         AcceptConfidentSuggestions(announce);

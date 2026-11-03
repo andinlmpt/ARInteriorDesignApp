@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import AuthService from '@/services/AuthService';
+import AuthService, { CONSOLE_ACCOUNT_CODE } from '@/services/AuthService';
 import { ApiError } from '@/services/apiClient';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, radii, typography } from '@/components/ui/theme';
@@ -237,7 +237,12 @@ export default function LoginScreen() {
         apiError?.status === 401 ||
         /invalid email or password/i.test(rawMessage);
 
-      if (isWrongCredentials) {
+      if (apiError?.details?.code === CONSOLE_ACCOUNT_CODE) {
+        setAuthDialog({
+          title: 'Use the VisionSpace console',
+          message: rawMessage || 'This account signs in on the VisionSpace console, not in the app.',
+        });
+      } else if (isWrongCredentials) {
         setAuthDialog({
           title: 'Incorrect email or password',
           message: 'Please check your details and try again.',

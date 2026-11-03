@@ -1,4 +1,4 @@
-import { planLayouts, classifyFurniture } from '../../src/services/layoutPlanner.js';
+import { planLayouts, classifyFurniture, checkRoomFit } from '../../src/services/layoutPlanner.js';
 
 const LIVING_ROOM = [
   { id: 'sofa', type: 'sofa', name: '3-Seater Sofa', width: 2.2, length: 0.9, height: 0.85, category: 'seating' },
@@ -102,5 +102,59 @@ describe('layoutPlanner', () => {
     const layouts = planLayouts({ width: 5, length: 6, height: 2.7 }, LIVING_ROOM, { count: 3, seed: 3 });
     const walls = new Set(layouts.map((layout) => layout.primaryWall));
     expect(walls.size).toBeGreaterThan(1);
+  });
+});
+
+describe('checkRoomFit', () => {
+  const sofa = { name: '3-Seater Sofa', type: 'sofa', width: 2.2, length: 0.9, height: 0.85 };
+
+  it('fits a sofa in an empty room, turned to fit the short side if needed', () => {
+    expect(checkRoomFit({ width: 3, length: 3, height: 2.5 }, sofa)).toEqual({ fits: true, reason: null });
+    expect(checkRoomFit({ width: 1.2, length: 3, height: 2.5 }, sofa).fits).toBe(true);
+  });
+
+  it('leaves out a piece bigger than the room, or taller than the ceiling', () => {
+    expect(checkRoomFit({ width: 2, length: 2, height: 2.5 }, sofa)).toEqual({ fits: false, reason: 'too-big' });
+    const wardrobe = { name: 'Wardrobe', width: 1.2, length: 0.6, height: 2.4 };
+    expect(checkRoomFit({ width: 4, length: 4, height: 2.3 }, wardrobe)).toEqual({ fits: false, reason: 'too-tall' });
+  });
+
+  it('leaves out a piece the existing furniture leaves no space for', () => {
+    // A 3 × 3 m room with tables along both sides: a 0.8 m wide strip stays free in the middle.
+    const room = { width: 3, length: 3, height: 2.5 };
+    const features = {
+      obstacles: [
+        { id: 'desk-a', type: 'table', x: 0, z: 0, w: 1.1, d: 3 },
+        { id: 'desk-b', type: 'table', x: 1.9, z: 0, w: 1.1, d: 3 },
+      ],
+    };
+    expect(checkRoomFit(room, sofa, features)).toEqual({ fits: false, reason: 'no-space' });
+    // Exactly as wide as the strip: found by trying the spot right against the table.
+    const chair = { name: 'Accent Chair', width: 0.8, length: 0.8, height: 0.9 };
+    expect(checkRoomFit(room, chair, features).fits).toBe(true);
+  });
+
+  it('keeps a door clear', () => {
+    const room = { width: 2.5, length: 1.5, height: 2.5 };
+    expect(checkRoomFit(room, sofa).fits).toBe(true);
+    const features = { doorZones: [{ id: 'door', x: 1, z: 0, w: 0.9, d: 0.9 }] };
+    expect(checkRoomFit(room, sofa, features)).toEqual({ fits: false, reason: 'no-space' });
+  });
+
+  it('follows an L-shaped outline, not its bounding box', () => {
+    // 4 × 4 m with the 2.5 × 2.5 m corner cut away: the arms are 1.5 m wide.
+    const room = { width: 4, length: 4, height: 2.5 };
+    const polygon = [
+      { x: 0, z: 0 }, { x: 4, z: 0 }, { x: 4, z: 1.5 }, { x: 1.5, z: 1.5 }, { x: 1.5, z: 4 }, { x: 0, z: 4 },
+    ];
+    const bed = { name: 'Queen Bed', width: 1.6, length: 2.1, height: 0.5 };
+    expect(checkRoomFit(room, bed)).toEqual({ fits: true, reason: null });
+    expect(checkRoomFit(room, bed, { polygon })).toEqual({ fits: false, reason: 'too-big' });
+    expect(checkRoomFit(room, sofa, { polygon }).fits).toBe(true);
+  });
+
+  it('always lets a rug through (the planner trims it to the room)', () => {
+    const rug = { name: 'Area Rug', type: 'rug', width: 3, length: 4, height: 0.02 };
+    expect(checkRoomFit({ width: 2, length: 2, height: 2.5 }, rug).fits).toBe(true);
   });
 });

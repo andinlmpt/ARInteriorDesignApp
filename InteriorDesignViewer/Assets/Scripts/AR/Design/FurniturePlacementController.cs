@@ -780,6 +780,25 @@ public class FurniturePlacementController : MonoBehaviour
         return result;
     }
 
+    /// <summary>
+    /// Every piece in this space that overlaps another piece or runs out through a wall (standing
+    /// close to a wall is fine). Finishing a design is blocked while any are left (adviser,
+    /// 2026-10-28); <see cref="RefreshPlacementSafety"/> only ever looks at one piece.
+    /// </summary>
+    public List<(PlacedFurniture piece, FurniturePlacementSafety.Result result)> FindPlacementErrors()
+    {
+        var errors = new List<(PlacedFurniture, FurniturePlacementSafety.Result)>();
+        var plannerActive = layoutMode != null && layoutMode.IsPlannerOrbitActive;
+        foreach (var piece in instances)
+        {
+            if (piece == null || !IsInCurrentSpace(piece)) continue;
+            var result = FurniturePlacementSafety.Evaluate(piece, instances, plannerActive ? null : scanController);
+            if (result.hasFurnitureCollision || result.hasWallCollision) errors.Add((piece, result));
+        }
+
+        return errors;
+    }
+
     /// <summary>Raycasts the floor under a screen point. Used by the manipulator's drag-to-reposition.</summary>
     public bool TryGetFloorPositionAtScreenPoint(Vector2 screenPoint, out Vector3 position)
     {
@@ -1580,14 +1599,36 @@ public class FurniturePlacementController : MonoBehaviour
     {
         if (!ShouldUseLiveFloorHits() || !ScanPlacement.TryGetScanFloorY(out var scanY)) return liveY;
         if (Mathf.Abs(liveY - scanY) <= maxLiveFloorOffset) return liveY;
+        // Below the scanned floor on a large surface: that is the floor, and the scan's floor point
+        // was set too high (a bed floated 27 cm up, 2026-10-30). Nothing stands below the floor, so
+        // only a lower reading overrules the scan; a higher one may be the top of other furniture.
+        var lowerFloor = liveY < scanY && IsLargeFloorAt(liveY);
         // Seating runs every frame of a drag: one line now and then is enough.
         if (Time.unscaledTime >= nextFloorNoteAt)
         {
             nextFloorNoteAt = Time.unscaledTime + 2f;
             Debug.Log($"[FurniturePlacementController] Floor reading {liveY:F2} is {(liveY - scanY) * 100f:F0} cm " +
-                      $"from the scanned floor {scanY:F2}: seated on the scanned floor.");
+                      $"from the scanned floor {scanY:F2}: " +
+                      (lowerFloor ? "seated on the floor AR found (the scanned floor is too high)." : "seated on the scanned floor."));
         }
-        return scanY;
+        return lowerFloor ? liveY : scanY;
+    }
+
+    /// <summary>Smallest surface (m²) that counts as the floor when it is below the scanned floor.</summary>
+    const float LargeFloorArea = 0.5f;
+
+    /// <summary>A large tracked upward surface lies at <paramref name="y"/> (within 5 cm).</summary>
+    bool IsLargeFloorAt(float y)
+    {
+        if (planeManager == null) return false;
+        foreach (var plane in planeManager.trackables)
+        {
+            if (plane == null || plane.alignment != PlaneAlignment.HorizontalUp) continue;
+            if (plane.trackingState != TrackingState.Tracking) continue;
+            if (Mathf.Abs(plane.transform.position.y - y) > 0.05f) continue;
+            if (plane.size.x * plane.size.y >= LargeFloorArea) return true;
+        }
+        return false;
     }
 
     float nextFloorNoteAt;
