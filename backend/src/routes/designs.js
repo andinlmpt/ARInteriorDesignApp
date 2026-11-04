@@ -39,6 +39,18 @@ router.post('/finalize', aiDesignController.finalizeDesign);
 router.get('/furniture/:roomType', aiDesignController.getFurnitureCatalog);
 
 /**
+ * GET /api/v1/designs/projects
+ * The signed-in user's design projects, so the app can rebuild its Projects list.
+ */
+router.get('/projects', aiDesignController.listDesignProjects);
+
+/**
+ * DELETE /api/v1/designs/project/:projectId
+ * Hides a deleted project from that list (the designs stay stored).
+ */
+router.delete('/project/:projectId', aiDesignController.hideDesignProject);
+
+/**
  * GET /api/v1/designs/project/:projectId
  * The project's newest design (a saved one first), so a saved project reopens its design.
  * Declared before /:id, which would otherwise take "project" as a session id.

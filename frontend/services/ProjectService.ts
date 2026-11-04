@@ -13,6 +13,8 @@ import {
 import type { ExportResultPayload } from '@/types/unity-bridge';
 import { getJson, setJson, removeKey } from '@/utils/storage';
 import { AUTH_USER_KEY } from '@/services/AuthService';
+import { callApi } from '@/services/apiClient';
+import { missingProjects, type ServerDesignProject } from '@/utils/restoredProjects';
 
 const STORAGE_KEY_PREFIX = 'userProjects';
 const MAX_PROJECTS = 100;
@@ -63,6 +65,20 @@ class ProjectService {
     } catch (error) {
       console.warn('[ProjectService] Failed to persist projects:', error);
     }
+  }
+
+  /**
+   * Adds this account's design projects that are on the server but not on this phone (after a
+   * reinstall or on a new phone). Returns how many were added.
+   */
+  async syncDesignProjects(): Promise<number> {
+    await this.initialize();
+    const { projects } = await callApi<{ projects?: ServerDesignProject[] }>('/designs/projects', { timeoutMs: 8000 });
+    const added = missingProjects(this.projects, projects ?? []);
+    if (added.length === 0) return 0;
+    this.projects.push(...added);
+    await this.persist();
+    return added.length;
   }
 
   /**
@@ -185,14 +201,7 @@ class ProjectService {
    * Delete a project
    */
   async deleteProject(id: string): Promise<boolean> {
-    await this.initialize();
-
-    const index = this.projects.findIndex(p => p.id === id);
-    if (index === -1) return false;
-
-    this.projects.splice(index, 1);
-    await this.persist();
-    return true;
+    return (await this.deleteProjects([id])) > 0;
   }
 
   /**
@@ -202,6 +211,12 @@ class ProjectService {
     await this.initialize();
 
     const toRemove = new Set(ids);
+    // Design projects are hidden on the server too, or the next sync would bring them back.
+    await Promise.all(
+      this.projects
+        .filter((project) => toRemove.has(project.id) && project.arMode === 'design')
+        .map((project) => callApi(`/designs/project/${encodeURIComponent(project.id)}`, { method: 'DELETE' })),
+    );
     const before = this.projects.length;
     this.projects = this.projects.filter(p => !toRemove.has(p.id));
     const removed = before - this.projects.length;

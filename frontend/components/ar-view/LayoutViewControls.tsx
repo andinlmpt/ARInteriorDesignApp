@@ -21,6 +21,8 @@ interface LayoutViewControlsProps {
    * with two corners can match either of two equally long walls.
    */
   onTurnAround?: () => void;
+  /** Opens the guide to View in AR. */
+  onHelp?: () => void;
 }
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
@@ -32,6 +34,7 @@ export function LayoutViewControls({
   finishBlocked = false,
   onFinishBlocked,
   onTurnAround,
+  onHelp,
 }: LayoutViewControlsProps) {
   const { colors } = useTheme();
 
@@ -43,6 +46,14 @@ export function LayoutViewControls({
     busy?: boolean;
     blocked?: boolean;
   }[] = [];
+  if (onHelp) {
+    actions.push({
+      key: 'help',
+      icon: 'help-circle-outline',
+      label: 'Help',
+      onPress: onHelp,
+    });
+  }
   if (onTurnAround) {
     actions.push({
       key: 'turn',

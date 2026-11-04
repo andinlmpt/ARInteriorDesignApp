@@ -10,8 +10,15 @@ const findOne = jest.fn(() => {
   return query;
 });
 const findById = jest.fn();
+// The sessions GET /projects reads, newest first.
+let listed = [];
+const find = jest.fn(() => {
+  const query = { sort: () => query, limit: () => query, select: () => query, lean: async () => listed };
+  return query;
+});
+const updateMany = jest.fn(async () => ({ modifiedCount: 2 }));
 jest.unstable_mockModule('../../../src/models/DesignSession.js', () => ({
-  default: { findOne, findById },
+  default: { findOne, findById, find, updateMany },
 }));
 jest.unstable_mockModule('../../../src/middleware/auth.js', () => ({
   optionalAuth: (req, _res, next) => {
@@ -66,6 +73,51 @@ describe('GET /api/v1/designs/project/:projectId', () => {
   it('reports a project with no design yet', async () => {
     found = [null, null];
     await request(app).get('/api/v1/designs/project/new-project').set('x-test-user', OWNER).expect(404);
+  });
+});
+
+describe('GET /api/v1/designs/projects', () => {
+  const session = (projectId, day, extra = {}) => ({
+    projectId,
+    createdAt: new Date(2026, 9, day),
+    preferences: { roomType: 'Bedroom', style: 'Modern' },
+    ...extra,
+  });
+
+  it('lists each project once, by its saved design when it has one', async () => {
+    listed = [
+      session('project-a', 28),
+      session('project-a', 27, {
+        finalLayout: { title: 'My bedroom', items: [{ instanceId: 'bed' }], updatedAt: new Date(2026, 9, 27) },
+      }),
+      session('project-b', 26),
+    ];
+    const response = await request(app).get('/api/v1/designs/projects').set('x-test-user', OWNER).expect(200);
+    expect(response.body.projects.map((p) => p.projectId)).toEqual(['project-a', 'project-b']);
+    expect(response.body.projects[0]).toMatchObject({ finalized: true, title: 'My bedroom', roomType: 'Bedroom' });
+    expect(response.body.projects[1]).toMatchObject({ finalized: false, title: '' });
+    expect(find.mock.calls.at(-1)[0]).toMatchObject({ userId: OWNER, projectDeletedAt: null });
+  });
+
+  it('gives nothing without a signed-in user', async () => {
+    const response = await request(app).get('/api/v1/designs/projects').expect(200);
+    expect(response.body.projects).toEqual([]);
+  });
+});
+
+describe('DELETE /api/v1/designs/project/:projectId', () => {
+  it('hides the project for its owner only, and erases nothing', async () => {
+    updateMany.mockClear();
+    const response = await request(app).delete('/api/v1/designs/project/project-a').set('x-test-user', OWNER).expect(200);
+    expect(response.body).toMatchObject({ success: true, hidden: 2 });
+    expect(updateMany.mock.calls[0][0]).toEqual({ projectId: 'project-a', userId: OWNER });
+    expect(updateMany.mock.calls[0][1].$set.projectDeletedAt).toBeInstanceOf(Date);
+  });
+
+  it('does nothing without a signed-in user', async () => {
+    updateMany.mockClear();
+    await request(app).delete('/api/v1/designs/project/project-a').expect(200);
+    expect(updateMany).not.toHaveBeenCalled();
   });
 });
 

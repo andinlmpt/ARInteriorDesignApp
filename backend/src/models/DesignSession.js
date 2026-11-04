@@ -63,6 +63,11 @@ const DesignSessionSchema = new mongoose.Schema({
     default: '',
   },
   /** User-edited layout after AR customize (step 6), saved on finalize (step 7). */
+  /** The user deleted this project: it stays stored but no longer comes back to their Projects list. */
+  projectDeletedAt: {
+    type: Date,
+    default: null,
+  },
   finalLayout: {
     proposalId: { type: String, trim: true, default: '' },
     title: { type: String, trim: true, default: '' },

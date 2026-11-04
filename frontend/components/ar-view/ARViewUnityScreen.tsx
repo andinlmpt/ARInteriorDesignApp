@@ -28,6 +28,8 @@ import { RoomMeasurementSaveModal } from '@/components/ar-view/RoomMeasurementSa
 import { ARToastNotice } from '@/components/ar-view/ARToastNotice';
 import { LayoutAlignmentPanel } from '@/components/ar-view/LayoutAlignmentPanel';
 import { LayoutViewControls } from '@/components/ar-view/LayoutViewControls';
+import { VIEW_AR_GUIDE_SEEN_KEY, VIEW_ONLY_GUIDE_SEEN_KEY, ViewArGuide } from '@/components/ar-view/ViewArGuide';
+import { ViewOnlyControls } from '@/components/ar-view/ViewOnlyControls';
 import { FurnitureCustomizePanel } from '@/components/ar-view/FurnitureCustomizePanel';
 import { useLayoutCustomization } from '@/hooks/useLayoutCustomization';
 import { AppDialog } from '@/components/ui/AppDialog';
@@ -53,6 +55,8 @@ import { RoomMeasurementService } from '@/services/RoomMeasurementService';
 import { projectService } from '@/services/ProjectService';
 import { buildApplyLayoutRequest } from '@/services/DesignFlowService';
 import { loadDesignGeneration } from '@/utils/designFlowStorage';
+import { takeArViewOnlyRequest } from '@/utils/savedDesignAr';
+import { getJson, setJson } from '@/utils/storage';
 import type { DesignFlowGenerationResult, DesignProposalV2 } from '@/types/design-flow';
 import { colors, spacing } from '@/components/ui/theme';
 import { isUnityViewAvailable } from '@/utils/unityAvailability';
@@ -136,6 +140,7 @@ export function ARViewUnityScreen() {
     projectId?: string | string[];
     flow?: string | string[];
     applyLayout?: string | string[];
+    viewOnly?: string | string[];
     proposalId?: string | string[];
     measurementId?: string | string[];
   }>();
@@ -147,6 +152,14 @@ export function ARViewUnityScreen() {
   const measurementIdParam = Array.isArray(params.measurementId) ? params.measurementId[0] : params.measurementId;
   const isDesignFlow = flowParam === 'design';
   const isApplyLayoutFlow = isDesignFlow && applyLayoutParam === '1';
+  const viewOnlyParam = Array.isArray(params.viewOnly) ? params.viewOnly[0] : params.viewOnly;
+  /** Looking at a saved design: no editing controls, every piece locked, nothing saved. */
+  const [viewOnly, setViewOnly] = useState(isApplyLayoutFlow && viewOnlyParam === '1');
+  const viewOnlyRef = useRef(viewOnly);
+  viewOnlyRef.current = viewOnly;
+  /** Final design asked this open AR screen to go view-only: back returns there, not further. */
+  const backToFinalRef = useRef(false);
+  const placedFurnitureRef = useRef<NonNullable<LayoutPayload['furniture']>>([]);
   /** New project — force Unity scene sync (player stays warm across visits). */
   const arSessionKey = activeProjectId ?? '';
   const unityRef = useRef<UnityARViewerHandle>(null);
@@ -354,6 +367,26 @@ export function ARViewUnityScreen() {
   const photoProjectIdRef = useRef<string | undefined>(activeProjectId);
   /** Confirm before leaving AR so we can reset the scene. */
   const [exitConfirmVisible, setExitConfirmVisible] = useState(false);
+  /** How View in AR works: by itself the first time, then from the help buttons. */
+  const [guideVisible, setGuideVisible] = useState(false);
+
+  useEffect(() => {
+    if (!isApplyLayoutFlow) return undefined;
+    let cancelled = false;
+    getJson<boolean>(viewOnly ? VIEW_ONLY_GUIDE_SEEN_KEY : VIEW_AR_GUIDE_SEEN_KEY, false)
+      .then((seen) => {
+        if (!seen && !cancelled) setGuideVisible(true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isApplyLayoutFlow, viewOnly]);
+
+  const closeGuide = useCallback(() => {
+    setGuideVisible(false);
+    setJson(viewOnly ? VIEW_ONLY_GUIDE_SEEN_KEY : VIEW_AR_GUIDE_SEEN_KEY, true).catch(() => {});
+  }, [viewOnly]);
 
   useEffect(() => {
     placementUnlockedRef.current = placementUnlocked;
@@ -777,7 +810,7 @@ export function ARViewUnityScreen() {
   }, []);
 
   const customization = useLayoutCustomization({
-    enabled: isApplyLayoutFlow,
+    enabled: isApplyLayoutFlow && !viewOnly,
     unityRef,
     catalogItems,
     generationRef: applyGenerationRef,
@@ -851,6 +884,8 @@ export function ARViewUnityScreen() {
         params: {
           sessionId: gen?.sessionId || '',
           projectId: gen?.projectId || activeProjectId || '',
+          // This AR screen stays underneath: Final design goes back to it instead of opening another.
+          fromAr: '1',
         },
       });
     } catch {
@@ -1221,8 +1256,20 @@ export function ARViewUnityScreen() {
     }
   }, [activeProjectId, confirmedPayload, pauseUnityThen, router, savingMeasurement]);
 
+  const lockPieces = useCallback((furniture: NonNullable<LayoutPayload['furniture']>) => {
+    furniture
+      .filter((piece) => !piece.locked)
+      .forEach((piece) => unityRef.current?.setFurnitureLocked({ instanceId: piece.instanceId, locked: true }));
+  }, []);
+
+  useEffect(() => {
+    if (viewOnly) lockPieces(placedFurnitureRef.current);
+  }, [lockPieces, viewOnly]);
+
   const handleLayoutChanged = useCallback((payload: LayoutPayload) => {
     const furniture = payload.furniture ?? [];
+    placedFurnitureRef.current = furniture;
+    if (viewOnlyRef.current) lockPieces(furniture);
     setPlacedModelIds(furniture.map((item) => item.modelId));
     const selected = furniture.find((item) => item.selected);
     setSelectedPlacedModelId(selected?.modelId ?? null);
@@ -1237,9 +1284,10 @@ export function ARViewUnityScreen() {
       );
     }
     handleCustomizeLayout(payload);
-  }, [handleCustomizeLayout]);
+  }, [handleCustomizeLayout, lockPieces]);
 
   const handleFurnitureSelected = useCallback((payload: SelectionPayload) => {
+    if (viewOnlyRef.current) return;
     handleCustomizeSelection(payload);
     if (payload.selected && payload.modelId) {
       setSelectedPlacedModelId(payload.modelId);
@@ -1263,6 +1311,7 @@ export function ARViewUnityScreen() {
   }, [catalogItems, handleCustomizeSafety]);
 
   const handleFurnitureLockBlocked = useCallback(() => {
+    if (viewOnlyRef.current) return;
     showToast('This piece is locked. Tap Locked to move it again.');
   }, [showToast]);
 
@@ -1433,6 +1482,10 @@ export function ARViewUnityScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      if (takeArViewOnlyRequest()) {
+        backToFinalRef.current = true;
+        setViewOnly(true);
+      }
       if (!unityAvailable || !mountUnity) return;
       try {
         unityRef.current?.resumeUnityPlayer?.();
@@ -1468,8 +1521,22 @@ export function ARViewUnityScreen() {
 
   const handleBack = useCallback(() => {
     if (closingRef.current) return;
+    if (backToFinalRef.current) {
+      // Final design was on top of this screen: it goes back on top, and AR stays open under it.
+      const gen = applyGenerationRef.current;
+      router.push({
+        pathname: '/design-final',
+        params: { sessionId: gen?.sessionId || '', projectId: gen?.projectId || activeProjectId || '', fromAr: '1' },
+      });
+      return;
+    }
+    // Nothing to lose when only looking: no "Exit?" question.
+    if (viewOnlyRef.current) {
+      exitAr();
+      return;
+    }
     setExitConfirmVisible(true);
-  }, []);
+  }, [activeProjectId, exitAr, router]);
 
   if (Platform.OS === 'web') {
     return null;
@@ -1490,8 +1557,8 @@ export function ARViewUnityScreen() {
           onLayoutAlignment={handleLayoutAlignment}
           onUnityUnavailable={handleUnityUnavailable}
           onRequestClose={() => {
-            // Unity native back — same confirm flow as the RN chevron.
-            setExitConfirmVisible(true);
+            // Unity native back — same flow as the RN chevron.
+            handleBack();
           }}
           onScanStatus={handleScanStatus}
           onRoomScanConfirmed={handleRoomConfirmed}
@@ -1658,10 +1725,25 @@ export function ARViewUnityScreen() {
           onMarkCorner={markAlignmentCorner}
           onUndo={undoAlignmentCorner}
           onBack={handleBack}
+          onHelp={() => setGuideVisible(true)}
         />
       )}
 
-      {furnitureUiReady && !layoutAligning && (
+      {furnitureUiReady && !layoutAligning && viewOnly && (
+        <ViewOnlyControls
+          loading={furnitureLoading}
+          onBack={handleBack}
+          onHelp={() => setGuideVisible(true)}
+          onTurnAround={!alignment?.canTurn
+            ? undefined
+            : () => {
+                unityRef.current?.flipLayoutAlignment();
+                showToast('Layout turned around', 2000);
+              }}
+        />
+      )}
+
+      {furnitureUiReady && !layoutAligning && !viewOnly && (
         <ARPlannerOverlay
           catalogItems={catalogItems}
           catalogLoading={catalogLoading}
@@ -1710,7 +1792,7 @@ export function ARViewUnityScreen() {
         />
       )}
 
-      {furnitureUiReady && isApplyLayoutFlow && layoutAligned && !layoutAligning && !savingPhoto && (
+      {furnitureUiReady && isApplyLayoutFlow && !viewOnly && layoutAligned && !layoutAligning && !savingPhoto && (
         <LayoutViewControls
           onRegenerate={() => {
             void customization.regenerate();
@@ -1721,6 +1803,7 @@ export function ARViewUnityScreen() {
           }}
           finishBlocked={placementIssues.length > 0}
           onFinishBlocked={() => showPlacementIssues(placementIssues)}
+          onHelp={() => setGuideVisible(true)}
           onTurnAround={!alignment?.canTurn
             ? undefined
             : () => {
@@ -1732,6 +1815,7 @@ export function ARViewUnityScreen() {
 
       {furnitureUiReady
         && isApplyLayoutFlow
+        && !viewOnly
         && layoutAligned
         && !layoutAligning
         && !savingPhoto
@@ -1822,6 +1906,8 @@ export function ARViewUnityScreen() {
           </View>
         </View>
       ) : null}
+
+      {guideVisible ? <ViewArGuide viewOnly={viewOnly} onClose={closeGuide} /> : null}
 
       <AppDialog
         inline

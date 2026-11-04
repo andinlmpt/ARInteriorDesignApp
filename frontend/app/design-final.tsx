@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   ScrollView,
   StyleSheet,
   TextInput,
@@ -20,17 +21,20 @@ import { AppText } from '@/components/ui/Text';
 import { useTheme } from '@/contexts/ThemeContext';
 import { radii, spacing } from '@/components/ui/theme';
 import { FloorPlanPreview } from '@/components/design-flow/FloorPlanPreview';
+import { UNITY_AR_EMBED_ENABLED } from '@/config/unity-ar.config';
 import { DesignFlowService } from '@/services/DesignFlowService';
 import { getHorizontalPadding } from '@/utils/responsive';
 import {
   loadCustomizedLayout,
   loadDesignGeneration,
+  saveDesignGeneration,
   loadFinalizedDesign,
   saveFinalizedDesign,
 } from '@/utils/designFlowStorage';
 import { firstParam, formatPhp } from '@/utils/designFlowFormat';
 import { exportFloorPlanPdf } from '@/utils/floorPlanExport';
 import { resolveAvailableColorHex } from '@/utils/furnitureCatalogHelpers';
+import { generationForSavedLayout, layoutEdited, requestArViewOnly } from '@/utils/savedDesignAr';
 import type {
   CustomizedDesignLayout,
   CustomizedLayoutItem,
@@ -85,9 +89,12 @@ export default function DesignFinalScreen() {
     sessionId?: string | string[];
     projectId?: string | string[];
     proposalId?: string | string[];
+    fromAr?: string | string[];
   }>();
   const { colors, statusBarStyle } = useTheme();
   const sessionIdParam = firstParam(params.sessionId);
+  /** AR's Finish opened this screen, so that AR screen is still underneath. */
+  const fromAr = firstParam(params.fromAr) === '1';
   const proposalIdParam = firstParam(params.proposalId);
 
   const [generation, setGeneration] = useState<DesignFlowGenerationResult | null>(null);
@@ -96,7 +103,10 @@ export default function DesignFinalScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [openingAr, setOpeningAr] = useState(false);
   const [savedSessionId, setSavedSessionId] = useState<string | null>(null);
+  /** This session already has a saved design (the button then says "Save changes"). */
+  const [hasSavedVersion, setHasSavedVersion] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -106,15 +116,21 @@ export default function DesignFinalScreen() {
       if (sessionIdParam) {
         const remote = await DesignFlowService.getSession(sessionIdParam);
         const remoteFinal = remote.finalLayout;
+        const customized = await loadCustomizedLayout();
         if (remoteFinal?.items?.length) {
           const proposal = remote.proposals.find((entry) => entry.id === remoteFinal.proposalId);
-          setLayout(remoteFinal);
+          // Back from AR with changes to the saved design: show them, ready to save again.
+          const edited = fromAr && customized?.items?.length
+            && customized.sessionId === sessionIdParam
+            && customized.proposalId === remoteFinal.proposalId
+            && layoutEdited(remoteFinal, customized);
+          setLayout(edited ? customized : remoteFinal);
           setTitle(remoteFinal.title || proposal?.title || 'My design');
           setGeneration(remote);
-          setSavedSessionId(sessionIdParam);
+          setSavedSessionId(edited ? null : sessionIdParam);
+          setHasSavedVersion(true);
           return;
         }
-        const customized = await loadCustomizedLayout();
         const draft = resolveDraftLayout(remote, customized, proposalIdParam);
         if (!draft) {
           setError('No furniture in this layout.');
@@ -164,12 +180,14 @@ export default function DesignFinalScreen() {
     } finally {
       setLoading(false);
     }
-  }, [proposalIdParam, sessionIdParam]);
+  }, [fromAr, proposalIdParam, sessionIdParam]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  const canViewAr =
+    UNITY_AR_EMBED_ENABLED && (Platform.OS === 'ios' || Platform.OS === 'android');
   const budgetPhp = generation?.preferences.budgetPhp ?? 0;
   const overBudget = budgetPhp > 0 && (layout?.totalPhp ?? 0) > budgetPhp;
   const pieceCount = layout?.items.filter((item) => item.role !== 'rug').length ?? 0;
@@ -210,6 +228,35 @@ export default function DesignFinalScreen() {
       setSaving(false);
     }
   }, [generation?.preferences, layout, router, saving, title]);
+
+  /** Shows this design in AR as saved, to look at only (client request, 2026-11-04). */
+  const handleViewAr = useCallback(async () => {
+    if (!layout || !generation || openingAr) return;
+    if (fromAr && router.canGoBack()) {
+      requestArViewOnly();
+      router.back();
+      return;
+    }
+    setOpeningAr(true);
+    try {
+      await saveDesignGeneration(generationForSavedLayout(generation, layout, title.trim() || 'My design'));
+      router.push({
+        pathname: '/ar-view',
+        params: {
+          projectId: generation.projectId || firstParam(params.projectId) || '',
+          flow: 'design',
+          applyLayout: '1',
+          viewOnly: '1',
+          proposalId: layout.proposalId,
+          measurementId: generation.measurementId || '',
+        },
+      });
+    } catch (err) {
+      Alert.alert('Could not open AR', err instanceof Error ? err.message : 'Please try again.');
+    } finally {
+      setOpeningAr(false);
+    }
+  }, [fromAr, generation, layout, openingAr, params.projectId, router, title]);
 
   const handleExportPdf = useCallback(async () => {
     if (!layout || exporting) return;
@@ -368,11 +415,32 @@ export default function DesignFinalScreen() {
                 <>
                   <Ionicons name="cloud-upload-outline" size={20} color="#FFFFFF" />
                   <AppText variant="body" weight="600" style={{ color: '#FFFFFF' }}>
-                    {savedSessionId ? 'Already saved' : 'Save final design'}
+                    {savedSessionId ? 'Already saved' : hasSavedVersion ? 'Save changes' : 'Save final design'}
                   </AppText>
                 </>
               )}
             </TouchableOpacity>
+
+            {canViewAr && generation ? (
+              <TouchableOpacity
+                onPress={() => void handleViewAr()}
+                disabled={openingAr}
+                style={[styles.secondaryBtn, styles.exportBtn, { borderColor: colors.accent, opacity: openingAr ? 0.7 : 1 }]}
+                accessibilityRole="button"
+                accessibilityLabel="View this design in AR"
+              >
+                {openingAr ? (
+                  <ActivityIndicator color={colors.accent} />
+                ) : (
+                  <>
+                    <Ionicons name="cube-outline" size={20} color={colors.accent} />
+                    <AppText variant="body" weight="600" style={{ color: colors.accent }}>
+                      View in AR
+                    </AppText>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : null}
 
             <TouchableOpacity
               onPress={() => void handleExportPdf()}

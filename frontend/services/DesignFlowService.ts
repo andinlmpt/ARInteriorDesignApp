@@ -5,6 +5,7 @@ import { roomLocalToUnity } from '@/utils/roomLocalToUnity';
 import type { DesignProposal, FurnitureItem, GenerativeDesignOutput } from '@/types/ai-design';
 import type {
   CustomizedDesignLayout,
+  CustomizedLayoutItem,
   DesignFlowGenerationResult,
   DesignLayoutItem,
   DesignPreferencesInput,
@@ -374,7 +375,7 @@ export function buildApplyLayoutRequest(
   room: { width: number; length: number; height: number },
   catalog: FurnitureLibraryItem[] = [],
 ): ApplyLayoutRequest {
-  const items: SpawnFurnitureRequest[] = proposal.items
+  const items: SpawnFurnitureRequest[] = (proposal.items as CustomizedLayoutItem[])
     .filter((item) => item.role !== 'rug')
     .map((item) => {
       const match = resolveCatalogForLayoutItem(item, catalog);
@@ -396,6 +397,8 @@ export function buildApplyLayoutRequest(
         hasPosition: true,
         position: { x: pose.x, y: pose.y, z: pose.z },
         rotationY: pose.rotationY,
+        // A saved design keeps the colours chosen in AR.
+        colorHex: item.tintHex,
       };
     });
 
