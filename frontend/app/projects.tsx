@@ -89,6 +89,13 @@ export default function ProjectsScreen() {
       setLoading(true);
       const list = await projectService.getProjects();
       setProjects(list);
+      // What's on this phone shows at once; an empty list waits, so it doesn't flash "no projects".
+      if (list.some(isDesignProject)) setLoading(false);
+      try {
+        if (await projectService.syncDesignProjects() > 0) setProjects(await projectService.getProjects());
+      } catch (error) {
+        console.warn('[Projects] Could not check the server for projects:', error);
+      }
     } catch (error) {
       console.error('[Projects] Failed to load:', error);
       showMessage('Couldn’t load projects', 'Please check your connection and try again.');

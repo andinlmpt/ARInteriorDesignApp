@@ -355,6 +355,8 @@ const PHP_PRICE_RANGES = {
   other: [1500, 8000],
 };
 
+/** Sessions read for the Projects list (each generate is one; the list keeps 100 projects). */
+const MAX_LISTED_SESSIONS = 500;
 const DESIGN_LAYOUT_COUNT = 2;
 /** Anchor walls tried per option before accepting a layout that matches an earlier option. */
 
@@ -952,6 +954,68 @@ export async function getLatestProjectSession(req, res, next) {
   }
 }
 
+/**
+ * The signed-in user's design projects, newest first. The Projects list lives on the phone, so
+ * reinstalling the app or changing phones emptied it while the designs were still here
+ * (2026-11-04); the app adds back whatever it is missing from this list.
+ */
+export async function listDesignProjects(req, res, next) {
+  try {
+    const owner = req.user?.userId || req.user?.id;
+    if (!owner || !mongoose.isValidObjectId(owner)) return res.json({ projects: [] });
+
+    const sessions = await DesignSession.find({
+      userId: owner,
+      projectId: { $nin: ['', null] },
+      projectDeletedAt: null,
+    })
+      .sort({ createdAt: -1 })
+      .limit(MAX_LISTED_SESSIONS)
+      .select('projectId preferences.roomType preferences.style finalLayout.title finalLayout.updatedAt finalLayout.items.instanceId createdAt')
+      .lean();
+
+    const byProject = new Map();
+    sessions.forEach((session) => {
+      const finalized = Boolean(session.finalLayout?.items?.length);
+      const createdAt = new Date(session.createdAt).getTime();
+      const known = byProject.get(session.projectId);
+      const project = {
+        projectId: session.projectId,
+        finalized,
+        title: session.finalLayout?.title || '',
+        roomType: session.preferences?.roomType || 'Living Room',
+        style: session.preferences?.style || '',
+        createdAt: known ? Math.min(known.createdAt, createdAt) : createdAt,
+        updatedAt: new Date(session.finalLayout?.updatedAt || session.createdAt).getTime(),
+      };
+      // Newest first, so the first session stands for the project unless a later one is the saved design.
+      if (!known) byProject.set(session.projectId, project);
+      else if (finalized && !known.finalized) byProject.set(session.projectId, project);
+      else known.createdAt = project.createdAt;
+    });
+
+    res.json({ projects: [...byProject.values()].sort((a, b) => b.updatedAt - a.updatedAt) });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/** The user deleted a project: it is hidden from listDesignProjects, not erased. */
+export async function hideDesignProject(req, res, next) {
+  try {
+    const { projectId } = req.params;
+    const owner = req.user?.userId || req.user?.id;
+    if (!owner || !mongoose.isValidObjectId(owner)) return res.json({ success: true, hidden: 0 });
+    const result = await DesignSession.updateMany(
+      { projectId, userId: owner },
+      { $set: { projectDeletedAt: new Date() } },
+    );
+    res.json({ success: true, hidden: result.modifiedCount || 0 });
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function getDesignSession(req, res, next) {
   try {
     const session = await DesignSession.findById(req.params.id).lean();
@@ -1180,6 +1244,8 @@ export default {
   roomFit,
   getDesignSession,
   getLatestProjectSession,
+  listDesignProjects,
+  hideDesignProject,
   finalizeDesign,
   getFurnitureCatalog,
   estimateFurnitureCost,

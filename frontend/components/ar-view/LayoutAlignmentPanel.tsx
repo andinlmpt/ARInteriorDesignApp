@@ -13,6 +13,8 @@ interface LayoutAlignmentPanelProps {
   onMarkCorner: () => void;
   onUndo: () => void;
   onBack: () => void;
+  /** Opens the guide to View in AR. */
+  onHelp?: () => void;
 }
 
 const ERROR_COPY: Record<Exclude<LayoutAlignmentError, ''>, string> = {
@@ -32,6 +34,7 @@ export function LayoutAlignmentPanel({
   onMarkCorner,
   onUndo,
   onBack,
+  onHelp,
 }: LayoutAlignmentPanelProps) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -39,10 +42,19 @@ export function LayoutAlignmentPanel({
   const canMark = alignment.floorDetected;
   const errorText = alignment.error ? ERROR_COPY[alignment.error] : null;
 
-  const title = secondCorner ? 'Now the other corner' : 'Line up the layout with your room';
+  const title = secondCorner ? 'Now the other end of that wall' : 'Mark one end of any wall';
   const body = secondCorner
-    ? 'Aim the dot at the other end of the same wall, where it meets the floor.'
-    : 'Stand inside the room. Aim the dot at a floor corner where two walls meet, then tap Mark corner.';
+    ? 'Same wall, where it meets the floor.'
+    : 'Stand inside the room. Aim the dot at a corner, where the wall meets the floor.';
+  // One line for what matters now, and short: the aim dot is 65% down the screen, and a taller card
+  // hid it (2026-11-04).
+  const lookingForFloor = !alignment.floorDetected;
+  const message = errorText ?? (lookingForFloor ? 'Looking for the floor. Move your phone slowly.' : body);
+  const sizeNote = secondCorner && alignment.floorDetected
+    ? `Wall so far ${formatMeters(alignment.measuredM)}`
+    : planWidth && planLength
+      ? `Plan ${planWidth.toFixed(1)} × ${planLength.toFixed(1)} m`
+      : '';
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
@@ -53,6 +65,16 @@ export function LayoutAlignmentPanel({
       >
         <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
       </TouchableOpacity>
+
+      {onHelp ? (
+        <TouchableOpacity
+          style={[styles.helpButton, { top: insets.top + spacing.md, backgroundColor: colors.surfacePrimary }]}
+          onPress={onHelp}
+          accessibilityLabel="How View in AR works"
+        >
+          <Ionicons name="help-circle-outline" size={24} color={colors.textPrimary} />
+        </TouchableOpacity>
+      ) : null}
 
       <View
         style={[
@@ -73,38 +95,21 @@ export function LayoutAlignmentPanel({
           <Text style={[styles.stepLabel, { color: colors.textMuted }]}>
             Corner {alignment.step + 1} of 2
           </Text>
+          {sizeNote ? (
+            <Text style={[styles.sizeNote, { color: colors.textPrimary }]}>{sizeNote}</Text>
+          ) : null}
         </View>
 
         <Text style={[styles.title, { color: colors.textPrimary }]}>{title}</Text>
-        <Text style={[styles.body, { color: colors.textSecondary }]}>{body}</Text>
-
-        {planWidth && planLength ? (
-          <Text style={[styles.hint, { color: colors.textMuted }]}>
-            Your plan is {planWidth.toFixed(1)} × {planLength.toFixed(1)} m. Any wall works.
+        <View style={styles.messageRow}>
+          {lookingForFloor && !errorText ? <ActivityIndicator size="small" color={colors.accent} /> : null}
+          <Text
+            style={[styles.body, { color: errorText ? colors.danger : colors.textSecondary }]}
+            numberOfLines={2}
+          >
+            {message}
           </Text>
-        ) : null}
-
-        {secondCorner && alignment.floorDetected ? (
-          <View style={[styles.liveChip, { backgroundColor: colors.surfaceSecondary }]}>
-            <Ionicons name="resize-outline" size={16} color={colors.accent} />
-            <Text style={[styles.liveText, { color: colors.textPrimary }]}>
-              Wall so far: {formatMeters(alignment.measuredM)}
-            </Text>
-          </View>
-        ) : null}
-
-        {!alignment.floorDetected ? (
-          <View style={styles.floorRow}>
-            <ActivityIndicator size="small" color={colors.accent} />
-            <Text style={[styles.floorText, { color: colors.textSecondary }]}>
-              Looking for the floor. Move your phone slowly.
-            </Text>
-          </View>
-        ) : null}
-
-        {errorText ? (
-          <Text style={[styles.error, { color: colors.danger }]}>{errorText}</Text>
-        ) : null}
+        </View>
 
         <View style={styles.actions}>
           {secondCorner ? (
@@ -145,17 +150,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  helpButton: {
+    position: 'absolute',
+    right: spacing.lg,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   card: {
     position: 'absolute',
     left: spacing.md,
     right: spacing.md,
     borderRadius: radii.lg,
-    padding: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
   stepRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: spacing.sm,
+    marginBottom: spacing.xs,
   },
   stepDot: {
     width: 8,
@@ -168,50 +183,29 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: spacing.xs,
-  },
-  body: {
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  hint: {
+  sizeNote: {
+    marginLeft: 'auto',
     fontSize: 12,
-    marginTop: spacing.sm,
-  },
-  liveChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    borderRadius: radii.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    marginTop: spacing.md,
-  },
-  liveText: {
-    marginLeft: spacing.xs,
-    fontSize: 13,
     fontWeight: '600',
   },
-  floorRow: {
+  title: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  messageRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: spacing.md,
+    gap: spacing.sm,
+    marginTop: 2,
   },
-  floorText: {
-    marginLeft: spacing.sm,
-    fontSize: 13,
+  body: {
     flexShrink: 1,
-  },
-  error: {
-    marginTop: spacing.sm,
     fontSize: 13,
+    lineHeight: 18,
   },
   actions: {
     flexDirection: 'row',
-    marginTop: spacing.lg,
+    marginTop: spacing.sm,
   },
   secondaryButton: {
     flexDirection: 'row',
@@ -220,7 +214,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: radii.pill,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    minHeight: 44,
     marginRight: spacing.sm,
   },
   secondaryText: {
@@ -234,7 +228,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.pill,
-    paddingVertical: spacing.md,
+    minHeight: 44,
   },
   primaryText: {
     marginLeft: spacing.xs,
