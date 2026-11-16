@@ -757,7 +757,8 @@ export function ARViewUnityScreen() {
   }, []);
 
   const handleLayoutAligned = useCallback(
-    (payload: LayoutAlignmentPayload) => {
+    (payload: LayoutAlignmentPayload, firstTime: boolean) => {
+      if (!firstTime) unityRef.current?.getCurrentLayout();
       if (payload.autoPlaced) {
         showToast('Placed where you scanned the room', 3000);
         return;
@@ -780,6 +781,7 @@ export function ARViewUnityScreen() {
     handleLayoutAlignment,
     markCorner: markAlignmentCorner,
     undoCorner: undoAlignmentCorner,
+    realign: realignLayout,
   } = useLayoutAlignment({
     enabled: isApplyLayoutFlow,
     ready: isApplyLayoutFlow && applyPayloadReady && placementUnlocked,
@@ -1736,6 +1738,7 @@ export function ARViewUnityScreen() {
       {furnitureUiReady && !layoutAligning && viewOnly && (
         <ViewOnlyControls
           loading={furnitureLoading}
+          onRealign={realignLayout}
           onBack={handleBack}
           onHelp={() => setGuideVisible(true)}
           onTurnAround={!alignment?.canTurn
@@ -1796,6 +1799,7 @@ export function ARViewUnityScreen() {
 
       {furnitureUiReady && isApplyLayoutFlow && !viewOnly && layoutAligned && !layoutAligning && !savingPhoto && (
         <LayoutViewControls
+          onRealign={realignLayout}
           onRegenerate={() => {
             void customization.regenerate();
           }}

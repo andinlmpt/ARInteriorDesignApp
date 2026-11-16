@@ -203,6 +203,9 @@ public class ARAutoRoomScan : MonoBehaviour
     int lastWallCount;
     int lastCornerCount;
     bool wasComplete;
+    // Closing is automatic once per outline. Reopening is an explicit request to edit it,
+    // so retained wall detections must not immediately close it again.
+    bool autoCloseAllowed = true;
     bool holdPaused;
     /// <summary>Last time anything was paused: a hold only counts from then on.</summary>
     float pausedAt = float.NegativeInfinity;
@@ -364,6 +367,7 @@ public class ARAutoRoomScan : MonoBehaviour
         {
             builder.AutoTapped += OnTapped;
             builder.AutoLongPressed += OnLongPressed;
+            builder.CornersChanged += OnOutlineChanged;
         }
         if (scanController != null) scanController.PhaseChanged += OnScanPhase;
         // By hand or automatic, the floor aim reaches into corners.
@@ -376,6 +380,7 @@ public class ARAutoRoomScan : MonoBehaviour
         {
             builder.AutoTapped -= OnTapped;
             builder.AutoLongPressed -= OnLongPressed;
+            builder.CornersChanged -= OnOutlineChanged;
         }
         if (scanController != null) scanController.PhaseChanged -= OnScanPhase;
         if (indicator != null) indicator.ExtendedAim = null;
@@ -660,6 +665,7 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void TickWalls()
     {
+        if (builder.IsLoopClosed) return;
         var now = Time.unscaledTime;
         if (now >= nextEvaluateAt)
         {
@@ -668,6 +674,9 @@ public class ARAutoRoomScan : MonoBehaviour
             Evaluate();
         }
 
+        // Evaluate can close the room and synchronously enter Review. Do not finish a
+        // pending corner hold in the same frame after that transition.
+        if (builder.IsLoopClosed) return;
         UpdateTarget();
         TickCornerHold();
         DrawTarget(now);
@@ -685,6 +694,7 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void Evaluate()
     {
+        if (builder == null || builder.IsLoopClosed) return;
         FollowPins();
         var floorY = builder.FloorY;
         pieces.Clear();
@@ -744,6 +754,8 @@ public class ARAutoRoomScan : MonoBehaviour
         if (complete && !wasComplete) pendingNotes.Add(Note.OutlineComplete);
         wasComplete = complete;
 
+        TryAutoCloseOutline();
+
         if (Time.unscaledTime >= nextLogAt)
         {
             nextLogAt = Time.unscaledTime + 2f;
@@ -754,6 +766,33 @@ public class ARAutoRoomScan : MonoBehaviour
 
         Changed?.Invoke();
         FlushNotes();
+    }
+
+    bool TryAutoCloseOutline()
+    {
+        // Four points alone do not prove a room is complete. Require the detected wall
+        // boundary, no unfinished wall ends, and every currently seen corner to settle.
+        // A six-corner room stays eligible; there is no four-corner cap.
+        if (!autoCloseAllowed || builder.IsLoopClosed || !builder.CanClose
+            || CornerCount < 4 || WallCount < 4 || CornerCount < WallCount
+            || OpenEndCount != 0 || builder.CornerCount != CornerCount
+            || Mathf.Abs(RoomPolygonUtil.SignedArea(builder.Corners)) < 0.05f) return false;
+        foreach (var corner in tracked)
+            if (corner.matched && !corner.confirmed) return false;
+
+        Debug.Log($"[AutoScan] Complete boundary: closing {CornerCount} corners / {WallCount} walls.");
+        return builder.CloseLoop();
+    }
+
+    void OnOutlineChanged()
+    {
+        if (!builder.IsLoopClosed) return;
+        autoCloseAllowed = false;
+        CornerCount = builder.CornerCount;
+        ResetDwell();
+        HideVisuals();
+        // Do this synchronously: a touch callback can arrive before the next Update.
+        if (CurrentStep == Step.Walls) EnterStep(Step.Closed);
     }
 
     /// <summary>Notes are sent after the outline and counts are up to date, so the HUD reads the new numbers.</summary>
@@ -960,7 +999,7 @@ public class ARAutoRoomScan : MonoBehaviour
     /// </summary>
     void TickCornerHold()
     {
-        if (!HasTarget || !builder.IsAimOnFloor || targetWall < 0 || targetWall >= walls.Count)
+        if (builder.IsLoopClosed || !HasTarget || !builder.IsAimOnFloor || targetWall < 0 || targetWall >= walls.Count)
         {
             ResetDwell();
             return;
@@ -1003,7 +1042,7 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void OnTapped(Vector3 world)
     {
-        if (CurrentStep != Step.Walls) return;
+        if (CurrentStep != Step.Walls || builder.IsLoopClosed) return;
         if (!IsTrackingWell)
         {
             Noted?.Invoke(Note.TapIgnored);
@@ -1035,7 +1074,7 @@ public class ARAutoRoomScan : MonoBehaviour
     /// <summary>Press and hold on a corner removes it (a found one stays away).</summary>
     void OnLongPressed(Vector3 world)
     {
-        if (CurrentStep != Step.Walls) return;
+        if (CurrentStep != Step.Walls || builder.IsLoopClosed) return;
         if (!IsTrackingWell)
         {
             Noted?.Invoke(Note.TapIgnored);
@@ -1050,6 +1089,7 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void AddPlaced(Vector2 p)
     {
+        if (builder.IsLoopClosed) return;
         // A found corner right here is replaced by the hand-placed one.
         foreach (var t in tracked.FindAll(t => Vector2.Distance(t.point, p) <= suppressRadius))
         {
@@ -1158,6 +1198,7 @@ public class ARAutoRoomScan : MonoBehaviour
     /// <summary>Takes back the newest corner (found or placed). False when there is none.</summary>
     public bool Undo()
     {
+        if (builder.IsLoopClosed) return false;
         while (history.Count > 0)
         {
             var entry = history[^1];
@@ -1210,6 +1251,7 @@ public class ARAutoRoomScan : MonoBehaviour
     /// <summary>Drops every corner (found, placed, removed) and looks at the walls again.</summary>
     public void StartWallsOver()
     {
+        if (builder.IsLoopClosed) return;
         ClearWalls();
         if (stats != null) stats.backToStart++;
         SeedFloorCorner();
@@ -1248,6 +1290,7 @@ public class ARAutoRoomScan : MonoBehaviour
         lastPushed.Clear();
         lastCornerCount = 0;
         wasComplete = false;
+        autoCloseAllowed = true;
         pendingNotes.Clear();
         CornerCount = 0;
         HasTarget = false;

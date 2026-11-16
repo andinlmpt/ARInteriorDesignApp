@@ -1357,7 +1357,9 @@ public class ARDesignScanHUD : MonoBehaviour
                 ShowToast("corner-removed", "Corner removed", ARScanHaptics.Kind.Tick);
                 break;
             case ARAutoRoomScan.Note.OutlineComplete:
-                ShowToast("outline", "Outline complete · now look around the room", ARScanHaptics.Kind.Success);
+                ShowToast("outline", cornerBuilder.IsLoopClosed
+                    ? "Room closed · review the scan"
+                    : "Outline complete · now look around the room", ARScanHaptics.Kind.Success);
                 break;
             case ARAutoRoomScan.Note.TapIgnored:
                 ShowToast("tracking", "Hold on · finding your place again", ARScanHaptics.Kind.Warning);

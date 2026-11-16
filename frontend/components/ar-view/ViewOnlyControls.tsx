@@ -11,10 +11,11 @@ interface ViewOnlyControlsProps {
   onHelp: () => void;
   /** Turns the layout onto the opposite wall; only after lining up by hand. */
   onTurnAround?: () => void;
+  onRealign?: () => void;
 }
 
 /** AR for looking at a saved design: nothing here can change it. */
-export function ViewOnlyControls({ loading, onBack, onHelp, onTurnAround }: ViewOnlyControlsProps) {
+export function ViewOnlyControls({ loading, onBack, onHelp, onTurnAround, onRealign }: ViewOnlyControlsProps) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const top = insets.top + spacing.md;
@@ -30,6 +31,13 @@ export function ViewOnlyControls({ loading, onBack, onHelp, onTurnAround }: View
       </TouchableOpacity>
 
       <View style={[styles.bottom, { bottom: insets.bottom + spacing.lg }]} pointerEvents="box-none">
+        {onRealign ? (
+          <TouchableOpacity style={[styles.pill, styles.turn, { backgroundColor: colors.surfacePrimary }]}
+            onPress={onRealign} accessibilityLabel="Align room">
+            <Ionicons name="locate-outline" size={18} color={colors.accent} />
+            <Text style={[styles.pillText, { color: colors.accent }]}>Align room</Text>
+          </TouchableOpacity>
+        ) : null}
         {onTurnAround ? (
           <TouchableOpacity
             style={[styles.pill, styles.turn, { backgroundColor: colors.surfacePrimary }]}

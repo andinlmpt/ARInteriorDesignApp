@@ -217,6 +217,11 @@ public class ARMeasurementRnBridge : MonoBehaviour
                 ARDesignLayoutAlignmentController.EnsureOn(gameObject)?.Begin();
                 break;
 
+            case "realignLayout":
+                EnsureFurnitureBootstrap();
+                ARDesignLayoutAlignmentController.EnsureOn(gameObject)?.Begin(forceManual: true);
+                break;
+
             case "markAlignmentCorner":
                 ARDesignLayoutAlignmentController.EnsureOn(gameObject)?.MarkCorner();
                 break;

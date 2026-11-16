@@ -40,6 +40,7 @@ interface UseLayoutAlignmentReturn {
   handleLayoutAlignment: (payload: LayoutAlignmentPayload) => void;
   markCorner: () => void;
   undoCorner: () => void;
+  realign: () => void;
 }
 
 export function useLayoutAlignment({
@@ -56,6 +57,7 @@ export function useLayoutAlignment({
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevRef = useRef<LayoutAlignmentPayload | null>(null);
   const hasAlignedRef = useRef(false);
+  const manualRef = useRef(false);
   const onAlignedRef = useRef(onAligned);
 
   useEffect(() => {
@@ -69,20 +71,33 @@ export function useLayoutAlignment({
     }
   }, []);
 
+  const sendAlignmentCommand = useCallback(() => {
+    if (manualRef.current) unityRef.current?.realignLayout();
+    else unityRef.current?.beginLayoutAlignment();
+  }, [unityRef]);
+
   const sendBegin = useCallback(() => {
     clearRetry();
     heardFromUnityRef.current = false;
     setAlignment((prev) => ({ ...INITIAL_ALIGNING, planM: prev?.planM ?? 0, view: 'real' }));
     unityRef.current?.resumeUnityPlayer?.();
-    unityRef.current?.beginLayoutAlignment();
+    sendAlignmentCommand();
 
     // UaaL can drop the first message right after the scene handoff.
     retryTimerRef.current = setTimeout(() => {
       if (heardFromUnityRef.current || retriesRef.current >= MAX_BEGIN_RETRIES) return;
       retriesRef.current += 1;
-      unityRef.current?.beginLayoutAlignment();
+      sendAlignmentCommand();
     }, BEGIN_RETRY_MS);
-  }, [clearRetry, unityRef]);
+  }, [clearRetry, sendAlignmentCommand, unityRef]);
+
+  const realign = useCallback(() => {
+    if (!enabled || !ready) return;
+    manualRef.current = true;
+    retriesRef.current = 0;
+    prevRef.current = INITIAL_ALIGNING;
+    sendBegin();
+  }, [enabled, ready, sendBegin]);
 
   useEffect(() => {
     if (!enabled || !ready || startedRef.current) return;
@@ -102,7 +117,7 @@ export function useLayoutAlignment({
         // Room shell not confirmed yet — Unity is still rebuilding it.
         retriesRef.current += 1;
         clearRetry();
-        retryTimerRef.current = setTimeout(() => unityRef.current?.beginLayoutAlignment(), 1000);
+        retryTimerRef.current = setTimeout(sendAlignmentCommand, 1000);
         return;
       }
 
@@ -128,7 +143,7 @@ export function useLayoutAlignment({
         onAlignedRef.current?.(payload, firstTime);
       }
     },
-    [enabled, clearRetry, unityRef]
+    [enabled, clearRetry, sendAlignmentCommand]
   );
 
   const markCorner = useCallback(() => unityRef.current?.markAlignmentCorner(), [unityRef]);
@@ -141,5 +156,6 @@ export function useLayoutAlignment({
     handleLayoutAlignment,
     markCorner,
     undoCorner,
+    realign,
   };
 }

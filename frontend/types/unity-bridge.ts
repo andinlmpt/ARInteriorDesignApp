@@ -75,6 +75,7 @@ export type RNToUnityMethod =
   | 'wakePlanner'
   | 'furnitureGesture'
   | 'beginLayoutAlignment'
+  | 'realignLayout'
   | 'markAlignmentCorner'
   | 'undoAlignmentCorner'
   | 'flipLayoutAlignment'

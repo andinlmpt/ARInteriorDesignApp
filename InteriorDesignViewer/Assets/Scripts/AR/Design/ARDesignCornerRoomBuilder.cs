@@ -241,6 +241,11 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     /// </summary>
     void TickAutoPress()
     {
+        if (loopClosed || roomLocked)
+        {
+            pressTouchId = -1;
+            return;
+        }
         if (Touch.activeTouches.Count != 1)
         {
             pressTouchId = -1;
@@ -739,6 +744,8 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
     {
         if (!CanClose) return false;
         CancelSteadyCorner();
+        pressTouchId = -1;
+        pressFired = true;
         if (!autoOutline) CleanUpOutline(closingPoint);
         loopClosed = true;
         HideLivePreview();
@@ -1048,7 +1055,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
 
     void TryAddCorner(Vector3 worldPoint)
     {
-        if (loopClosed) return;
+        if (loopClosed || roomLocked) return;
         worldPoint.y = FindFloorY(worldPoint);
 
         // Close the loop by tapping near the first corner. Where it was tapped shows the drift.
@@ -1653,7 +1660,7 @@ public class ARDesignCornerRoomBuilder : MonoBehaviour
             return;
         }
 
-        var drawClosed = closed || loopClosed || corners.Count >= 3;
+        var drawClosed = closed || loopClosed;
         floorLoop.loop = drawClosed;
         floorLoop.positionCount = corners.Count;
         floorLoop.enabled = !roomLocked;

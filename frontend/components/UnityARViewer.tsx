@@ -132,6 +132,8 @@ export interface UnityARViewerHandle {
   }) => void;
   /** Design layout AR: live camera + start the two-corner alignment. */
   beginLayoutAlignment: () => void;
+  /** Correct the room's placement while keeping the 2D arrangement. */
+  realignLayout: () => void;
   /** Mark the floor point under the reticle as a wall corner. */
   markAlignmentCorner: () => void;
   undoAlignmentCorner: () => void;
@@ -388,6 +390,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
             })
           ),
         beginLayoutAlignment: () => sendToUnity('beginLayoutAlignment', ''),
+        realignLayout: () => sendToUnity('realignLayout', ''),
         markAlignmentCorner: () => sendToUnity('markAlignmentCorner', ''),
         undoAlignmentCorner: () => sendToUnity('undoAlignmentCorner', ''),
       }),

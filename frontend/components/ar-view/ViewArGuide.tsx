@@ -16,7 +16,7 @@ type Step = { icon: IoniconName; title: string; body: string };
 const LINE_UP: Step = {
   icon: 'locate-outline',
   title: 'Line up your room',
-  body: 'If asked, stand inside the room and pick any wall. North, south, east or west makes no difference, and a long wall works best. Aim the dot at one end, where the wall meets the floor, and tap Mark corner. Then do the other end of the same wall. Either end can go first.',
+  body: 'If the furniture appears in the middle of the room or away from the planned wall, tap Align room. Stand inside the room and mark both floor corners of that wall. The whole arrangement moves together. Either end can go first.',
 };
 
 const WALK: Step = {

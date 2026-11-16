@@ -57,6 +57,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
 
     /// <summary>True once RN started the alignment flow; the bootstrap must not force the planner.</summary>
     public bool OwnsView => state != State.Idle;
+    bool HasTrackedFloor => ARAutoRoomScan.IsTrackingWell && indicator != null && indicator.IsLockedOnFloor;
 
     public ARDesignLayoutModeController.ViewMode PreferredView { get; private set; } =
         ARDesignLayoutModeController.ViewMode.RealRoom;
@@ -72,7 +73,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
 
     // ── RN entry points ───────────────────────────────────────────────────────
 
-    public void Begin()
+    public void Begin(bool forceManual = false)
     {
         ResolveReferences();
         if (scan == null || !scan.IsConfirmed)
@@ -82,7 +83,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
         }
 
         // A repeat begin (RN retries) after the layout was placed at the scan: keep it there.
-        if (state == State.Aligned && autoPlaced)
+        if (!forceManual && state == State.Aligned && autoPlaced)
         {
             Send();
             return;
@@ -90,7 +91,8 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
 
         // Same tracking session as the scan: the room is still where it was scanned, so put the
         // layout there. No corner marking, and no chance of matching the wrong wall.
-        if (state == State.Idle && TryPlaceAtScan())
+        // A saved frame cannot locate the real wall while ARCore is still relocalising.
+        if (!forceManual && state == State.Idle && ARAutoRoomScan.IsTrackingWell && TryPlaceAtScan())
             return;
 
         autoPlaced = false;
@@ -117,7 +119,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
         }
 
         indicator?.StartTracking();
-        lastFloorDetected = indicator != null && indicator.IsLockedOnFloor;
+        lastFloorDetected = HasTrackedFloor;
         Send();
     }
 
@@ -126,7 +128,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
         if (state != State.Aligning) return;
         ResolveReferences();
 
-        if (indicator == null || !indicator.IsLockedOnFloor)
+        if (!HasTrackedFloor)
         {
             Send(error: "noFloor");
             return;
@@ -313,7 +315,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
         // Other systems (HUD phase changes, placement commits) may stop the reticle.
         indicator.StartTracking();
 
-        var floor = indicator.IsLockedOnFloor;
+        var floor = HasTrackedFloor;
         var live = 0f;
         if (step == 1 && floor)
         {
@@ -393,11 +395,12 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
 
         // The marked corners are real floor points: pieces are kept on this floor.
         ScanPlacement.RememberMarkedFloor((a.y + b.y) * 0.5f);
-        placement?.TransformAllInstances(m, yawDelta);
-        FindFirstObjectByType<FurnitureLayoutHistory>()?.Clear();
-
+        // History emits source poses synchronously. Set the inverse mapping first so
+        // lining up the room cannot overwrite the 2D arrangement with world coordinates.
         sourceToWorld = m * sourceToWorld;
         sourceYaw += yawDelta;
+        placement?.TransformAllInstances(m, yawDelta);
+        FindFirstObjectByType<FurnitureLayoutHistory>()?.Clear();
         lastA = a;
         lastB = b;
         matchedEdge = edge;
@@ -428,10 +431,10 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
             : 2.5f;
         if (!scan.ApplyMeasuredRoom(corners, wallHeight)) return false;
 
-        placement?.TransformAllInstances(m, yaw);
-        FindFirstObjectByType<FurnitureLayoutHistory>()?.Clear();
         sourceToWorld = m;
         sourceYaw = yaw;
+        placement?.TransformAllInstances(m, yaw);
+        FindFirstObjectByType<FurnitureLayoutHistory>()?.Clear();
         matchedEdge = -1;
         measuredM = 0f;
         planM = 0f;
@@ -594,7 +597,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
                 _ => "idle",
             },
             step = step,
-            floorDetected = indicator != null && indicator.IsLockedOnFloor,
+            floorDetected = HasTrackedFloor,
             measuredM = measuredM,
             planM = planM,
             view = layoutMode != null && layoutMode.CurrentViewMode == ARDesignLayoutModeController.ViewMode.Planner
