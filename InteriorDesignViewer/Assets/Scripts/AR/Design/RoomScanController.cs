@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
@@ -88,6 +89,8 @@ public class RoomScanController : MonoBehaviour
     public event Action<ScanStatusPayload> StatusChanged;
 
     public ScanPhase Phase { get; private set; } = ScanPhase.Idle;
+    public bool IsPreparingScan => prepareScanRoutine != null;
+    Coroutine prepareScanRoutine;
     public bool IsFurniturePlacementOnly => furniturePlacementOnly;
     public bool IsConfirmed => Phase == ScanPhase.Confirmed;
     public RoomGeometrySnapshot ConfirmedRoom { get; private set; }
@@ -130,6 +133,7 @@ public class RoomScanController : MonoBehaviour
 
     void OnDisable()
     {
+        CancelScanPreparation();
         if (cornerBuilder != null)
             cornerBuilder.CornersChanged -= OnCornersChanged;
     }
@@ -241,6 +245,30 @@ public class RoomScanController : MonoBehaviour
     /// <summary>Begins or restarts the scan phase, discarding any previously confirmed room.</summary>
     public void StartRoomScan()
     {
+        ResetToIdle();
+        // Do not accept a height or corner in the previous tracking coordinate frame.
+        if (cornerBuilder != null) cornerBuilder.enabled = false;
+        prepareScanRoutine = StartCoroutine(PrepareScanRoutine());
+    }
+
+    IEnumerator PrepareScanRoutine()
+    {
+        yield return null;
+        var bootstrap = FindFirstObjectByType<ARBootstrap>();
+        if (bootstrap != null) yield return bootstrap.PrepareTrackingForNewScan();
+        BeginPreparedScan();
+        prepareScanRoutine = null;
+    }
+
+    void CancelScanPreparation()
+    {
+        if (prepareScanRoutine == null) return;
+        StopCoroutine(prepareScanRoutine);
+        prepareScanRoutine = null;
+    }
+
+    void BeginPreparedScan()
+    {
         // RN may call this after a furniture-only session — force real measurement mode.
         furniturePlacementOnly = false;
 
@@ -265,12 +293,6 @@ public class RoomScanController : MonoBehaviour
         cornerBuilder?.PrepareForRescan();
         FindFirstObjectByType<ARDesignSpatialMappingController>()?.ResetToOutline();
 
-        // Every new scan gets a fresh AR map, however it was opened. A scan opened from the main
-        // screen kept the old one: in a dim room it drifted from scan to scan (the floor read
-        // -1.17, -0.97, -1.46, -1.62 then -1.79 m and the height 3.31 m within ten minutes).
-        // The reload path resets too; the second request inside the cooldown is skipped.
-        FindFirstObjectByType<ARBootstrap>()?.ResetTrackingForNewScan();
-
         SetPhase(ScanPhase.Scanning);
     }
 
@@ -280,6 +302,7 @@ public class RoomScanController : MonoBehaviour
     /// </summary>
     public void ResetToIdle()
     {
+        CancelScanPreparation();
         furniturePlacementOnly = false;
 
         ConfirmedRoom?.Dispose();

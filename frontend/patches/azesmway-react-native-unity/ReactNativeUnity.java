@@ -88,9 +88,9 @@ public class ReactNativeUnity {
     }
 
     public static void pause() {
-        if (unityPlayer != null) {
-            unityPlayer.pause();
+        if (unityPlayer != null && !_isUnityPaused) {
             _isUnityPaused = true;
+            unityPlayer.pause();
         }
     }
 
@@ -176,7 +176,7 @@ public class ReactNativeUnity {
         group.addView(frame, 0, layoutParams);
         unityPlayer.windowFocusChanged(true);
         unityPlayer.requestFocusPlayer();
-        unityPlayer.resume();
+        resume();
     }
 
     public interface UnityPlayerCallback {

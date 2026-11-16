@@ -304,8 +304,13 @@ function patchAzesmwayUPlayer(projectRoot) {
     return;
   }
 
-  fs.copyFileSync(src, dest);
-  console.log('[withUnity] Applied Unity 6 UPlayer constructor patch');
+  // Apply the lifecycle patches too; a clean install must not silently restore
+  // the upstream Activity resume/unload behavior and reopen a parked camera.
+  for (const name of ['UPlayer.java', 'ReactNativeUnity.java', 'ReactNativeUnityView.java', 'ReactNativeUnityViewManager.java']) {
+    const source = path.join(path.dirname(src), name);
+    if (fs.existsSync(source)) fs.copyFileSync(source, path.join(path.dirname(dest), name));
+  }
+  console.log('[withUnity] Applied Unity player and AR lifecycle patches');
 }
 
 const withUnity = (config) => withUnityAndroidGradle(config);

@@ -87,6 +87,11 @@ public class ARMeasurementRnBridge : MonoBehaviour
         {
             case "ping":
                 UnityMessageBridge.SendToApp("unityReady", MeasurementSceneName);
+                FindFirstObjectByType<ARDesignCameraWatchdog>()?.SendCurrentStatus();
+                break;
+
+            case "retryCamera":
+                FindFirstObjectByType<ARBootstrap>()?.ResumeCamera();
                 break;
 
             case "commitRoomName":
@@ -151,9 +156,16 @@ public class ARMeasurementRnBridge : MonoBehaviour
                 EnsureFurnitureBootstrap()?.History?.Redo();
                 break;
 
+            case "startRoomScan":
+                PendingDesignLayoutPayload = null;
+                lastScanStartedAt = -100f; // An explicit rescan is not a duplicate open.
+                ScheduleReload();
+                break;
+
             case "openRoomMeasurement":
             case "reloadMeasurement":
                 // Already on this scene (or reopening) — soft-reload instead of LoadScene thrash.
+                PendingDesignLayoutPayload = null;
                 ScheduleReload();
                 break;
 
@@ -284,7 +296,12 @@ public class ARMeasurementRnBridge : MonoBehaviour
     {
         yield return null;
 
-        SoftClose(notifyRn: false);
+        SoftClose(notifyRn: false, cancelBoot: false);
+
+        // A scan exited during startup may still be clearing ARCore's old map.
+        // Finish that work before placing a saved layout into its coordinate frame.
+        var cameraBootstrap = UnityEngine.Object.FindFirstObjectByType<ARBootstrap>();
+        if (cameraBootstrap != null) yield return cameraBootstrap.WaitForTrackingPreparation();
 
         var scan = UnityEngine.Object.FindFirstObjectByType<RoomScanController>();
         scan?.ResetToIdle();
@@ -383,7 +400,7 @@ public class ARMeasurementRnBridge : MonoBehaviour
     /// Idle teardown: clear session/HUD/shell without starting a new scan.
     /// Scan starts only from ReloadMeasurement / scene Start.
     /// </summary>
-    void SoftClose(bool notifyRn)
+    void SoftClose(bool notifyRn, bool cancelBoot = true)
     {
         // Closed: the next open is a real reopen, however soon it comes.
         lastScanStartedAt = -100f;
@@ -393,11 +410,16 @@ public class ARMeasurementRnBridge : MonoBehaviour
             exportRoutine = null;
         }
 
-        if (reloadRoutine != null)
+        if (cancelBoot && reloadRoutine != null)
         {
             StopCoroutine(reloadRoutine);
             reloadRoutine = null;
         }
+        if (cancelBoot) PendingDesignLayoutPayload = null;
+        if (armFurnitureRoutine != null) StopCoroutine(armFurnitureRoutine);
+        armFurnitureRoutine = null;
+        if (wakePlannerRoutine != null) StopCoroutine(wakePlannerRoutine);
+        wakePlannerRoutine = null;
 
         ARMeasurementSession.Reset();
         GetComponent<ARDesignLayoutAlignmentController>()?.ResetSession();
@@ -454,6 +476,7 @@ public class ARMeasurementRnBridge : MonoBehaviour
         // Only while that scan is still running: an open after it ended (confirmed, closed without
         // a close message) is a real reopen, however soon it comes.
         var scan = UnityEngine.Object.FindFirstObjectByType<RoomScanController>();
+        if (scan != null && scan.IsPreparingScan) return;
         if (!HasPendingDesignLayout && scan != null && scan.Phase == RoomScanController.ScanPhase.Scanning
             && Time.unscaledTime - lastScanStartedAt < DuplicateOpenSeconds)
         {
@@ -474,7 +497,6 @@ public class ARMeasurementRnBridge : MonoBehaviour
     void FreeEarlierScan()
     {
         RuntimeGltfLoader.ReleaseCachedTemplates();
-        UnityEngine.Object.FindFirstObjectByType<ARBootstrap>()?.ResetTrackingForNewScan();
         Resources.UnloadUnusedAssets();
     }
 
@@ -490,7 +512,7 @@ public class ARMeasurementRnBridge : MonoBehaviour
             yield break;
         }
 
-        SoftClose(notifyRn: false);
+        SoftClose(notifyRn: false, cancelBoot: false);
 
         var scan = UnityEngine.Object.FindFirstObjectByType<RoomScanController>();
         if (HasPendingDesignLayout)
@@ -501,7 +523,10 @@ public class ARMeasurementRnBridge : MonoBehaviour
 
         FreeEarlierScan();
         if (scan != null)
+        {
             scan.StartRoomScan();
+            while (scan.IsPreparingScan) yield return null;
+        }
         lastScanStartedAt = Time.unscaledTime;
 
         ARMainMenuBackButton.SetUiVisible(true);

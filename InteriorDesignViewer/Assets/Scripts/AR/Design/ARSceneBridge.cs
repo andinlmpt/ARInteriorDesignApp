@@ -180,6 +180,9 @@ public class ARSceneBridge : MonoBehaviour
 
         switch (message.method)
         {
+            case "retryCamera":
+                FindFirstObjectByType<ARBootstrap>()?.ResumeCamera();
+                break;
             case "openRoomMeasurement":
                 OpenRoomMeasurement();
                 break;

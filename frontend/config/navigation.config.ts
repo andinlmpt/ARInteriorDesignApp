@@ -139,6 +139,8 @@ export const NAVIGATION_SCREENS: Record<string, ScreenConfig[]> = {
       name: 'ar-view',
       options: {
         ...ANIMATION_PRESETS.slideRight,
+        // Exit through the AR handler so Unity pauses before its surface is removed.
+        gestureEnabled: false,
         orientation: 'portrait',
       },
     },

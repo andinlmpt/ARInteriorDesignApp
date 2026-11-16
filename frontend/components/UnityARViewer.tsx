@@ -139,6 +139,8 @@ export interface UnityARViewerHandle {
 
 interface UnityARViewerProps {
   style?: ViewStyle;
+  /** Only the visible AR screen may run the shared native player. */
+  active?: boolean;
   onUnityReady?: (sceneName?: string) => void;
   /** Soft-reload finished without a cold scene Start (skip RN re-open). */
   onReloadComplete?: (sceneName?: string) => void;
@@ -214,6 +216,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
   function UnityARViewer(
     {
       style,
+      active = true,
       onUnityReady,
       onReloadComplete,
       onMeasuredFurnitureReady,
@@ -250,6 +253,8 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
       windowFocusChanged?: (hasFocus: boolean) => void;
     } | null>(null);
     const readyRef = useRef(false);
+    const activeRef = useRef(active);
+    activeRef.current = active;
     const UnityView = useRef<UnityViewComponent | null>(loadUnityView()).current;
     const unavailableNotified = useRef(false);
 
@@ -271,6 +276,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
     }, []);
 
     const resumeUnityPlayer = useCallback(() => {
+      if (!activeRef.current) return;
       unityRef.current?.resumeUnity?.();
       unityRef.current?.windowFocusChanged?.(true);
     }, []);
@@ -281,6 +287,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
     }, []);
 
     const wakeUnityPlayer = useCallback(() => {
+      if (!activeRef.current) return;
       resumeUnityPlayer();
       sendToUnity('wakePlanner', '');
     }, [sendToUnity, resumeUnityPlayer]);
@@ -389,9 +396,12 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
 
     useEffect(() => {
       const resume = () => {
-        unityRef.current?.resumeUnity?.();
-        unityRef.current?.windowFocusChanged?.(true);
+        resumeUnityPlayer();
       };
+      if (!active) {
+        pauseUnityPlayer();
+        return;
+      }
       resume();
       const t1 = setTimeout(resume, 50);
       const t2 = setTimeout(resume, 250);
@@ -399,7 +409,7 @@ export const UnityARViewer = forwardRef<UnityARViewerHandle, UnityARViewerProps>
         clearTimeout(t1);
         clearTimeout(t2);
       };
-    }, []);
+    }, [active, pauseUnityPlayer, resumeUnityPlayer]);
 
     const handleUnityMessage = useCallback(
       (event: { nativeEvent: { message: string } }) => {
