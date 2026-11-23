@@ -64,7 +64,13 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
             createPlayer(context.getCurrentActivity(), new UnityPlayerCallback() {
               @Override
               public void onReady() throws InvocationTargetException, NoSuchMethodException, IllegalAccessException {
+                // A user can leave while the first player is still being created.
+                if (view == null) {
+                  ReactNativeUnity.pause();
+                  return;
+                }
                 view.setUnityPlayer(getPlayer());
+                if (!view.playerRequestedActive || !view.isAttachedToWindow()) ReactNativeUnity.pause();
               }
 
               @Override
@@ -142,32 +148,33 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
 
   @Override
   public void unloadUnity(ReactNativeUnityView view) {
-    if (isUnityReady()) {
-      unload();
-    }
+    // The JS UnityView sends this from componentWillUnmount, on every AR screen that closes. Unity
+    // was then unloaded while the next AR screen was already showing it, and restarted from its
+    // first scene (ARDesignScene): scenes switched four times in a second, the camera restarted
+    // each time and sometimes stayed black, and opening a saved design lagged (2026-11-12).
+    // Unity stays loaded and is reused by the next screen; leaving AR already pauses it
+    // (onDropViewInstance, and the app pauses it before it navigates away).
   }
 
   @Override
   public void pauseUnity(ReactNativeUnityView view, boolean pause) {
-    if (isUnityReady()) {
-      assert getPlayer() != null;
-      getPlayer().pause();
-    }
+    view.playerRequestedActive = !pause;
+    if (!isUnityReady() || !ownsPlayer(view)) return;
+    if (pause) ReactNativeUnity.pause();
+    else restoreUnityUserState();
   }
 
   @Override
   public void resumeUnity(ReactNativeUnityView view) {
-    if (isUnityReady()) {
-      assert getPlayer() != null;
-      getPlayer().resume();
-    }
+    view.playerRequestedActive = true;
+    if (ownsPlayer(view)) restoreUnityUserState();
   }
 
   @Override
   public void windowFocusChanged(ReactNativeUnityView view, boolean hasFocus) {
-    if (isUnityReady()) {
+    if (isUnityReady() && ownsPlayer(view)) {
       assert getPlayer() != null;
-      getPlayer().windowFocusChanged(hasFocus);
+      getPlayer().windowFocusChanged(hasFocus && view.playerRequestedActive);
     }
   }
 
@@ -206,17 +213,19 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
     // (ARCore paused while the camera opened → black camera on the second scan).
     if (isUnityReady() && ownsPlayer(dropped)) {
       try {
+        dropped.playerRequestedActive = false;
+        ReactNativeUnity.pause();
         addUnityViewToBackground();
-        getPlayer().pause();
       } catch (Exception ignored) {
       }
     }
+    if (view == dropped) view = null;
     super.onDropViewInstance(dropped);
   }
 
   /** False when a newer RN view has already taken the Unity player (its frame sits in that view). */
-  private static boolean ownsPlayer(ReactNativeUnityView candidate) {
-    if (candidate != view) return false;
+  static boolean ownsPlayer(ReactNativeUnityView candidate) {
+    if (candidate == null || candidate != view) return false;
     try {
       FrameLayout frame = getPlayer().requestFrame();
       ViewParent parent = frame.getParent();
@@ -228,18 +237,14 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
 
   @Override
   public void onHostResume() {
-    if (isUnityReady()) {
-      assert getPlayer() != null;
-      getPlayer().resume();
-      restoreUnityUserState();
-    }
+    restoreUnityUserState();
   }
 
   @Override
   public void onHostPause() {
     if (isUnityReady()) {
       assert getPlayer() != null;
-      getPlayer().pause();
+      ReactNativeUnity.pause();
     }
   }
 
@@ -250,7 +255,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
     if (isUnityReady()) {
       try {
         assert getPlayer() != null;
-        getPlayer().pause();
+        ReactNativeUnity.pause();
       } catch (Exception ignored) {
       }
     }
@@ -259,11 +264,12 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
   private void restoreUnityUserState() {
     // Reattach / host resume should run the player (old logic re-paused after 300ms and
     // left planner input dead until the user switched apps).
-    if (!isUnityReady() || getPlayer() == null) {
+    if (!isUnityReady() || getPlayer() == null || view == null
+        || !view.isAttachedToWindow() || !view.playerRequestedActive || !ownsPlayer(view)) {
       return;
     }
     try {
-      getPlayer().resume();
+      ReactNativeUnity.resume();
       getPlayer().windowFocusChanged(true);
     } catch (Exception ignored) {
     }
@@ -271,7 +277,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
 
   @Override
   public void onViewAttachedToWindow(View v) {
-    restoreUnityUserState();
+    if (v == view) restoreUnityUserState();
   }
 
   @Override
@@ -289,7 +295,7 @@ public class ReactNativeUnityViewManager extends ReactNativeUnityViewManagerSpec
 
   @Override
   public void postMessage(ReactNativeUnityView view, String gameObject, String methodName, String message) {
-    if (isUnityReady()) {
+    if (isUnityReady() && ownsPlayer(view)) {
       assert getPlayer() != null;
       UPlayer.UnitySendMessage(gameObject, methodName, message);
     }

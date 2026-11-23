@@ -131,6 +131,15 @@ public class FurniturePlacementController : MonoBehaviour
     PendingModel pending;
     int nextInstanceIndex = 1;
     int activeGlbLoads;
+    /// <summary>
+    /// Goes up whenever the pieces are cleared. A model still downloading from before then is
+    /// dropped when it arrives: after New AI, or after leaving AR (Unity stays loaded), late models
+    /// landed on top of the new layout or in the next scan.
+    /// </summary>
+    int spawnGeneration;
+    /// <summary>Every whole-layout move so far (line-up, Turn), so a late model lands where its layout went.</summary>
+    Matrix4x4 layoutShift = Matrix4x4.identity;
+    float layoutShiftYaw;
     Vector2? deferredPlacementTap;
     string lastSafetyKey = string.Empty;
 
@@ -339,9 +348,29 @@ public class FurniturePlacementController : MonoBehaviour
             }
 
             activeGlbLoads++;
+            var generation = spawnGeneration;
+            var shiftAtRequest = layoutShift;
+            var yawAtRequest = layoutShiftYaw;
             gltfLoader.Load(request.glbUrl, (model, error) =>
             {
                 activeGlbLoads = Mathf.Max(0, activeGlbLoads - 1);
+
+                if (generation != spawnGeneration)
+                {
+                    Debug.Log($"[FurniturePlacementController] '{ResolveModelId(request)}' arrived after its layout " +
+                              "was cleared — not placed.");
+                    if (model != null) Destroy(model);
+                    return;
+                }
+
+                // Lined up or turned while it downloaded: move its pose the same way as the placed pieces.
+                if (request.hasPosition && request.position != null)
+                {
+                    var since = layoutShift * shiftAtRequest.inverse;
+                    var p = new Vector3(request.position.x, request.position.y, request.position.z);
+                    request.position = new ARDesignVec3(since.MultiplyPoint3x4(p));
+                    request.rotationY += layoutShiftYaw - yawAtRequest;
+                }
 
                 if (model == null)
                 {
@@ -536,10 +565,15 @@ public class FurniturePlacementController : MonoBehaviour
     }
 
     /// <summary>Destroys placed furniture in the current AR or Plan workspace only.</summary>
-    public void ClearFurniture()
+    /// <param name="allSpaces">
+    /// Also the pieces of the other view (Real room / Plan). Leaving AR needs this: Unity stays
+    /// loaded, so pieces left in the other view came back in the next AR session.
+    /// </param>
+    public void ClearFurniture(bool allSpaces = false)
     {
         Select(null);
         DiscardPending();
+        spawnGeneration++;
 
         var space = CurrentPlacementSpace;
         for (var i = instances.Count - 1; i >= 0; i--)
@@ -551,9 +585,15 @@ public class FurniturePlacementController : MonoBehaviour
                 continue;
             }
 
-            if (instance.PlacementSpace != space) continue;
+            if (!allSpaces && instance.PlacementSpace != space) continue;
             DestroyInstance(instance.gameObject);
             instances.RemoveAt(i);
+        }
+
+        if (allSpaces)
+        {
+            layoutShift = Matrix4x4.identity;
+            layoutShiftYaw = 0f;
         }
 
         LastRemovedSnapshot = null;
@@ -567,6 +607,8 @@ public class FurniturePlacementController : MonoBehaviour
     {
         Select(null);
         DiscardPending();
+        layoutShift = floorTransform * layoutShift;
+        layoutShiftYaw += yawDeltaDegrees;
 
         for (var i = 0; i < instances.Count; i++)
         {
@@ -1302,7 +1344,11 @@ public class FurniturePlacementController : MonoBehaviour
         instances.Add(placed);
 
         // Push clear of any existing furniture (large sofas need footprint checks, not point clearance alone).
-        var clearPivot = ResolveCollisionFreePivot(placed, placed.transform.position, FindClearSpawnPosition(placed.transform.position));
+        // Not a layout or undo pose: that spot was chosen, and a piece pushed off it sat out of line with
+        // the plan, sometimes half through a wall (adviser, 2026-11-11). An overlap there shows red instead.
+        var clearPivot = model.hasForcedPose
+            ? placed.transform.position
+            : ResolveCollisionFreePivot(placed, placed.transform.position, FindClearSpawnPosition(placed.transform.position));
         if ((clearPivot - placed.transform.position).sqrMagnitude > 1e-6f)
         {
             var clearFloorY = ResolveFloorHeight(clearPivot).y;
@@ -1602,7 +1648,10 @@ public class FurniturePlacementController : MonoBehaviour
         // Below the scanned floor on a large surface: that is the floor, and the scan's floor point
         // was set too high (a bed floated 27 cm up, 2026-10-30). Nothing stands below the floor, so
         // only a lower reading overrules the scan; a higher one may be the top of other furniture.
-        var lowerFloor = liveY < scanY && IsLargeFloorAt(liveY);
+        // Only a little lower, though: a scanned floor that was too high was 27 cm out. A surface 56 cm
+        // below it sank a sofa into the floor (Redmi, 2026-11-12): ARCore's planes from before the
+        // planner don't always line up again.
+        var lowerFloor = liveY < scanY && scanY - liveY <= MaxLowerFloorDrop && IsLargeFloorAt(liveY);
         // Seating runs every frame of a drag: one line now and then is enough.
         if (Time.unscaledTime >= nextFloorNoteAt)
         {
@@ -1616,6 +1665,8 @@ public class FurniturePlacementController : MonoBehaviour
 
     /// <summary>Smallest surface (m²) that counts as the floor when it is below the scanned floor.</summary>
     const float LargeFloorArea = 0.5f;
+    /// <summary>Furthest (m) a surface below the scanned floor can be and still be taken as the floor.</summary>
+    const float MaxLowerFloorDrop = 0.35f;
 
     /// <summary>A large tracked upward surface lies at <paramref name="y"/> (within 5 cm).</summary>
     bool IsLargeFloorAt(float y)

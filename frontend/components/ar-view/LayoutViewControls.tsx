@@ -21,6 +21,7 @@ interface LayoutViewControlsProps {
    * with two corners can match either of two equally long walls.
    */
   onTurnAround?: () => void;
+  onRealign?: () => void;
   /** Opens the guide to View in AR. */
   onHelp?: () => void;
 }
@@ -34,6 +35,7 @@ export function LayoutViewControls({
   finishBlocked = false,
   onFinishBlocked,
   onTurnAround,
+  onRealign,
   onHelp,
 }: LayoutViewControlsProps) {
   const { colors } = useTheme();
@@ -70,6 +72,9 @@ export function LayoutViewControls({
       onPress: onRegenerate,
       busy: regenerating,
     });
+  }
+  if (onRealign) {
+    actions.push({ key: 'align', icon: 'locate-outline', label: 'Align room', onPress: onRealign });
   }
   if (onFinish) {
     actions.push(finishBlocked

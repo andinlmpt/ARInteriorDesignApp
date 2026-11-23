@@ -14,9 +14,12 @@ import {
   ActivityIndicator,
   Platform,
   AppState,
+  Linking,
+  BackHandler,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { UnityARViewer, type UnityARViewerHandle } from '@/components/UnityARViewer';
@@ -37,25 +40,26 @@ import { mapFurnitureIdToUnity } from '@/config/unity-furniture-map';
 import { useFurnitureCatalog } from '@/hooks/useFurnitureCatalog';
 import { useLayoutAlignment } from '@/hooks/useLayoutAlignment';
 import type { FurnitureCategory, FurnitureLibraryItem } from '@/types/ar-view';
-import type {
-  HistoryStatePayload,
-  LayoutPayload,
-  RoomConfirmedPayload,
-  ScanStatusPayload,
-  ARPhotoCapturedPayload,
-  SelectionPayload,
-  PlacementSafetyPayload,
-  PlacementCheckPayload,
-  PlacementIssue,
-  ExportResultPayload,
-  LayoutAlignmentPayload,
-  UnityOutboundMessage,
+import {
+  parseUnityPayload,
+  type CameraStatusPayload,
+  type HistoryStatePayload,
+  type LayoutPayload,
+  type RoomConfirmedPayload,
+  type ScanStatusPayload,
+  type ARPhotoCapturedPayload,
+  type SelectionPayload,
+  type PlacementSafetyPayload,
+  type PlacementCheckPayload,
+  type PlacementIssue,
+  type ExportResultPayload,
+  type LayoutAlignmentPayload,
+  type UnityOutboundMessage,
 } from '@/types/unity-bridge';
 import { RoomMeasurementService } from '@/services/RoomMeasurementService';
 import { projectService } from '@/services/ProjectService';
 import { buildApplyLayoutRequest } from '@/services/DesignFlowService';
 import { loadDesignGeneration } from '@/utils/designFlowStorage';
-import { takeArViewOnlyRequest } from '@/utils/savedDesignAr';
 import { getJson, setJson } from '@/utils/storage';
 import type { DesignFlowGenerationResult, DesignProposalV2 } from '@/types/design-flow';
 import { colors, spacing } from '@/components/ui/theme';
@@ -136,6 +140,11 @@ function scanHintMessage(status: ScanStatusPayload | null): string {
 
 export function ARViewUnityScreen() {
   const router = useRouter();
+  const isFocused = useIsFocused();
+  const [appState, setAppState] = useState(AppState.currentState);
+  const [cameraSuspended, setCameraSuspended] = useState(false);
+  const cameraActive = isFocused && appState === 'active' && !cameraSuspended;
+  const [cameraProblem, setCameraProblem] = useState<CameraStatusPayload | null>(null);
   const params = useLocalSearchParams<{
     projectId?: string | string[];
     flow?: string | string[];
@@ -154,11 +163,9 @@ export function ARViewUnityScreen() {
   const isApplyLayoutFlow = isDesignFlow && applyLayoutParam === '1';
   const viewOnlyParam = Array.isArray(params.viewOnly) ? params.viewOnly[0] : params.viewOnly;
   /** Looking at a saved design: no editing controls, every piece locked, nothing saved. */
-  const [viewOnly, setViewOnly] = useState(isApplyLayoutFlow && viewOnlyParam === '1');
+  const [viewOnly] = useState(isApplyLayoutFlow && viewOnlyParam === '1');
   const viewOnlyRef = useRef(viewOnly);
   viewOnlyRef.current = viewOnly;
-  /** Final design asked this open AR screen to go view-only: back returns there, not further. */
-  const backToFinalRef = useRef(false);
   const placedFurnitureRef = useRef<NonNullable<LayoutPayload['furniture']>>([]);
   /** New project — force Unity scene sync (player stays warm across visits). */
   const arSessionKey = activeProjectId ?? '';
@@ -185,6 +192,7 @@ export function ARViewUnityScreen() {
   const pauseUnityThen = useCallback((navigate: () => void, waitForPlanClosed: boolean) => {
     const pauseAndGo = () => {
       planClosedWaiterRef.current = null;
+      setCameraSuspended(true);
       try {
         unityRef.current?.pauseUnityPlayer?.();
       } catch {
@@ -393,15 +401,20 @@ export function ARViewUnityScreen() {
   }, [placementUnlocked]);
 
   useEffect(() => {
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active' || !mountUnity) return;
-      unityRef.current?.resumeUnityPlayer?.();
-      if (measuredFurnitureActiveRef.current && placementUnlockedRef.current) {
-        unityRef.current?.wakeUnityPlayer?.();
-      }
-    });
+    const sub = AppState.addEventListener('change', setAppState);
     return () => sub.remove();
-  }, [mountUnity]);
+  }, []);
+
+  useEffect(() => {
+    if (isFocused) setCameraSuspended(false);
+  }, [isFocused]);
+
+  useEffect(() => {
+    if (!cameraActive || !mountUnity) return;
+    if (measuredFurnitureActiveRef.current && placementUnlockedRef.current) {
+      unityRef.current?.wakeUnityPlayer?.();
+    }
+  }, [cameraActive, mountUnity]);
 
   useEffect(() => {
     if (!activeProjectId) return;
@@ -744,7 +757,8 @@ export function ARViewUnityScreen() {
   }, []);
 
   const handleLayoutAligned = useCallback(
-    (payload: LayoutAlignmentPayload) => {
+    (payload: LayoutAlignmentPayload, firstTime: boolean) => {
+      if (!firstTime) unityRef.current?.getCurrentLayout();
       if (payload.autoPlaced) {
         showToast('Placed where you scanned the room', 3000);
         return;
@@ -767,6 +781,7 @@ export function ARViewUnityScreen() {
     handleLayoutAlignment,
     markCorner: markAlignmentCorner,
     undoCorner: undoAlignmentCorner,
+    realign: realignLayout,
   } = useLayoutAlignment({
     enabled: isApplyLayoutFlow,
     ready: isApplyLayoutFlow && applyPayloadReady && placementUnlocked,
@@ -879,7 +894,7 @@ export function ARViewUnityScreen() {
       await new Promise((resolve) => setTimeout(resolve, 200));
       await customization.flushCustomizedSave();
       const gen = applyGenerationRef.current;
-      router.push({
+      pauseUnityThen(() => router.push({
         pathname: '/design-final',
         params: {
           sessionId: gen?.sessionId || '',
@@ -887,11 +902,11 @@ export function ARViewUnityScreen() {
           // This AR screen stays underneath: Final design goes back to it instead of opening another.
           fromAr: '1',
         },
-      });
+      }), false);
     } catch {
       showToast('Could not save your edits. Please try again.', 4000);
     }
-  }, [activeProjectId, customization, requestPlacementCheck, router, showPlacementIssues, showToast]);
+  }, [activeProjectId, customization, pauseUnityThen, requestPlacementCheck, router, showPlacementIssues, showToast]);
 
   const furnitureUiReady =
     unityReady && measuredFurnitureActive && measurePlanReady && placementUnlocked;
@@ -911,6 +926,11 @@ export function ARViewUnityScreen() {
   const [scannerPreparing, setScannerPreparing] = useState(false);
   const scannerPreparingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleScannerPreparingMessage = useCallback((message: UnityOutboundMessage) => {
+    if (message.event === 'cameraStatus') {
+      const payload = parseUnityPayload<CameraStatusPayload>(message);
+      if (payload?.state) setCameraProblem(payload.state === 'ready' || payload.state === 'inactive' ? null : payload);
+      return;
+    }
     if (message.event !== 'scannerPreparing' && message.event !== 'scannerReady') return;
     const preparing = message.event === 'scannerPreparing';
     setScannerPreparing(preparing);
@@ -1480,21 +1500,6 @@ export function ARViewUnityScreen() {
     };
   }, [arSessionKey, mountUnity, unityAvailable, bootstrapUnitySceneForSession]);
 
-  useFocusEffect(
-    useCallback(() => {
-      if (takeArViewOnlyRequest()) {
-        backToFinalRef.current = true;
-        setViewOnly(true);
-      }
-      if (!unityAvailable || !mountUnity) return;
-      try {
-        unityRef.current?.resumeUnityPlayer?.();
-      } catch {
-        /* native view may not be attached yet */
-      }
-    }, [unityAvailable, mountUnity])
-  );
-
   const exitAr = useCallback((destination?: '/projects') => {
     if (closingRef.current || exitingRef.current) return;
     exitingRef.current = true;
@@ -1521,22 +1526,22 @@ export function ARViewUnityScreen() {
 
   const handleBack = useCallback(() => {
     if (closingRef.current) return;
-    if (backToFinalRef.current) {
-      // Final design was on top of this screen: it goes back on top, and AR stays open under it.
-      const gen = applyGenerationRef.current;
-      router.push({
-        pathname: '/design-final',
-        params: { sessionId: gen?.sessionId || '', projectId: gen?.projectId || activeProjectId || '', fromAr: '1' },
-      });
-      return;
-    }
     // Nothing to lose when only looking: no "Exit?" question.
     if (viewOnlyRef.current) {
       exitAr();
       return;
     }
     setExitConfirmVisible(true);
-  }, [activeProjectId, exitAr, router]);
+  }, [exitAr]);
+
+  useEffect(() => {
+    if (!isFocused) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [handleBack, isFocused]);
 
   if (Platform.OS === 'web') {
     return null;
@@ -1549,6 +1554,7 @@ export function ARViewUnityScreen() {
       {unityAvailable && mountUnity ? (
         <UnityARViewer
           ref={unityRef}
+          active={cameraActive}
           style={styles.unityLayer}
           onUnityReady={handleUnityReady}
           onUnityMessage={handleScannerPreparingMessage}
@@ -1732,13 +1738,14 @@ export function ARViewUnityScreen() {
       {furnitureUiReady && !layoutAligning && viewOnly && (
         <ViewOnlyControls
           loading={furnitureLoading}
+          onRealign={realignLayout}
           onBack={handleBack}
           onHelp={() => setGuideVisible(true)}
           onTurnAround={!alignment?.canTurn
             ? undefined
             : () => {
                 unityRef.current?.flipLayoutAlignment();
-                showToast('Layout turned around', 2000);
+                showToast('Turned to the next wall', 2000);
               }}
         />
       )}
@@ -1770,10 +1777,8 @@ export function ARViewUnityScreen() {
           onUndo={() => unityRef.current?.undo()}
           onRedo={() => unityRef.current?.redo()}
           onClear={handleClear}
-          onExport={() => {
-            void handleExportMeasure();
-          }}
-          exportDisabled={exportingMeasure}
+          // No Export button at the top right (client, 2026-11-12): it was tapped by accident, and
+          // saving goes through Finish.
           onSavePhoto={handleSavePhoto}
           savingPhoto={savingPhoto}
           onRemoveSelected={() => unityRef.current?.removeSelectedFurniture()}
@@ -1794,6 +1799,7 @@ export function ARViewUnityScreen() {
 
       {furnitureUiReady && isApplyLayoutFlow && !viewOnly && layoutAligned && !layoutAligning && !savingPhoto && (
         <LayoutViewControls
+          onRealign={realignLayout}
           onRegenerate={() => {
             void customization.regenerate();
           }}
@@ -1808,7 +1814,7 @@ export function ARViewUnityScreen() {
             ? undefined
             : () => {
                 unityRef.current?.flipLayoutAlignment();
-                showToast('Layout turned around', 2000);
+                showToast('Turned to the next wall', 2000);
               }}
         />
       )}
@@ -1908,6 +1914,36 @@ export function ARViewUnityScreen() {
       ) : null}
 
       {guideVisible ? <ViewArGuide viewOnly={viewOnly} onClose={closeGuide} /> : null}
+
+      {cameraActive && cameraProblem && (
+        <View style={styles.cameraProblem}>
+          <Text style={styles.cameraProblemText} accessibilityRole="alert">{cameraProblem.message}</Text>
+          {['starting', 'requestingPermission', 'recovering'].includes(cameraProblem.state) ? (
+            <ActivityIndicator size="large" color="#FFFFFF" />
+          ) : (
+            <>
+              {cameraProblem.state === 'permissionDenied' && (
+                <TouchableOpacity style={styles.cameraAction} onPress={() => {
+                  void Linking.openSettings().catch(() => showToast('Open your phone Settings and allow camera access.'));
+                }}>
+                  <Text style={styles.cameraActionText}>Open Settings</Text>
+                </TouchableOpacity>
+              )}
+              {cameraProblem.state !== 'unsupported' && (
+                <TouchableOpacity style={styles.cameraAction} onPress={() => {
+                  setCameraProblem({ state: 'starting', message: 'Opening the camera…' });
+                  unityRef.current?.sendToUnity('retryCamera', '');
+                }}>
+                  <Text style={styles.cameraActionText}>Retry camera</Text>
+                </TouchableOpacity>
+              )}
+            </>
+          )}
+          <TouchableOpacity style={styles.cameraAction} onPress={handleBack}>
+            <Text style={styles.cameraActionText}>Go back</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <AppDialog
         inline
@@ -2018,6 +2054,18 @@ export function ARViewUnityScreen() {
 }
 
 const styles = StyleSheet.create({
+  cameraProblem: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+    gap: spacing.md,
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    zIndex: 50,
+  },
+  cameraProblemText: { color: '#FFFFFF', fontSize: 17, textAlign: 'center' },
+  cameraAction: { padding: spacing.md, borderRadius: 12, backgroundColor: '#FFFFFF' },
+  cameraActionText: { color: '#0C295F', fontWeight: '600' },
   scannerPreparing: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',

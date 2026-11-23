@@ -203,6 +203,9 @@ public class ARAutoRoomScan : MonoBehaviour
     int lastWallCount;
     int lastCornerCount;
     bool wasComplete;
+    // Closing is automatic once per outline. Reopening is an explicit request to edit it,
+    // so retained wall detections must not immediately close it again.
+    bool autoCloseAllowed = true;
     bool holdPaused;
     /// <summary>Last time anything was paused: a hold only counts from then on.</summary>
     float pausedAt = float.NegativeInfinity;
@@ -364,6 +367,7 @@ public class ARAutoRoomScan : MonoBehaviour
         {
             builder.AutoTapped += OnTapped;
             builder.AutoLongPressed += OnLongPressed;
+            builder.CornersChanged += OnOutlineChanged;
         }
         if (scanController != null) scanController.PhaseChanged += OnScanPhase;
         // By hand or automatic, the floor aim reaches into corners.
@@ -376,6 +380,7 @@ public class ARAutoRoomScan : MonoBehaviour
         {
             builder.AutoTapped -= OnTapped;
             builder.AutoLongPressed -= OnLongPressed;
+            builder.CornersChanged -= OnOutlineChanged;
         }
         if (scanController != null) scanController.PhaseChanged -= OnScanPhase;
         if (indicator != null) indicator.ExtendedAim = null;
@@ -383,6 +388,7 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void OnDestroy()
     {
+        UnpinAll();
         FinishSession("left");
         foreach (var panel in wallPanels)
         {
@@ -440,6 +446,7 @@ public class ARAutoRoomScan : MonoBehaviour
 
         var step = ResolveStep();
         if (step != CurrentStep) EnterStep(step);
+        TrackTurnRate();
 
         // Lost or shaky tracking moves every point: hold everything as it is until it's back.
         if (IsPaused && CurrentStep is Step.Floor or Step.Height or Step.Walls)
@@ -658,6 +665,7 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void TickWalls()
     {
+        if (builder.IsLoopClosed) return;
         var now = Time.unscaledTime;
         if (now >= nextEvaluateAt)
         {
@@ -666,6 +674,9 @@ public class ARAutoRoomScan : MonoBehaviour
             Evaluate();
         }
 
+        // Evaluate can close the room and synchronously enter Review. Do not finish a
+        // pending corner hold in the same frame after that transition.
+        if (builder.IsLoopClosed) return;
         UpdateTarget();
         TickCornerHold();
         DrawTarget(now);
@@ -683,6 +694,8 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void Evaluate()
     {
+        if (builder == null || builder.IsLoopClosed) return;
+        FollowPins();
         var floorY = builder.FloorY;
         pieces.Clear();
         var vertical = CollectPieces(floorY, pieces);
@@ -691,7 +704,10 @@ public class ARAutoRoomScan : MonoBehaviour
         // On the copies shown, so the tracker keeps following what ARCore actually sees.
         AutoWallGeometry.SquareWalls(walls);
         innerWalls = AutoWallGeometry.FindInnerWalls(walls, settings);
-        TrackCorners(AutoWallGeometry.FindCorners(walls, settings));
+        // While the phone spins, ARCore's picture of the room drifts with it (walls and corners were
+        // dragged round with the turn and came back on the way back, 2026-11-12): corners seen then
+        // are where the drift put them, so they neither count towards locking nor move.
+        if (!TurningFast) TrackCorners(AutoWallGeometry.FindCorners(walls, settings));
 
         // Confirmed corners found this round keep their walls (for ordering); ones missed this
         // round and hand-placed corners go in as plain points.
@@ -738,6 +754,8 @@ public class ARAutoRoomScan : MonoBehaviour
         if (complete && !wasComplete) pendingNotes.Add(Note.OutlineComplete);
         wasComplete = complete;
 
+        TryAutoCloseOutline();
+
         if (Time.unscaledTime >= nextLogAt)
         {
             nextLogAt = Time.unscaledTime + 2f;
@@ -748,6 +766,33 @@ public class ARAutoRoomScan : MonoBehaviour
 
         Changed?.Invoke();
         FlushNotes();
+    }
+
+    bool TryAutoCloseOutline()
+    {
+        // Four points alone do not prove a room is complete. Require the detected wall
+        // boundary, no unfinished wall ends, and every currently seen corner to settle.
+        // A six-corner room stays eligible; there is no four-corner cap.
+        if (!autoCloseAllowed || builder.IsLoopClosed || !builder.CanClose
+            || CornerCount < 4 || WallCount < 4 || CornerCount < WallCount
+            || OpenEndCount != 0 || builder.CornerCount != CornerCount
+            || Mathf.Abs(RoomPolygonUtil.SignedArea(builder.Corners)) < 0.05f) return false;
+        foreach (var corner in tracked)
+            if (corner.matched && !corner.confirmed) return false;
+
+        Debug.Log($"[AutoScan] Complete boundary: closing {CornerCount} corners / {WallCount} walls.");
+        return builder.CloseLoop();
+    }
+
+    void OnOutlineChanged()
+    {
+        if (!builder.IsLoopClosed) return;
+        autoCloseAllowed = false;
+        CornerCount = builder.CornerCount;
+        ResetDwell();
+        HideVisuals();
+        // Do this synchronously: a touch callback can arrive before the next Update.
+        if (CurrentStep == Step.Walls) EnterStep(Step.Closed);
     }
 
     /// <summary>Notes are sent after the outline and counts are up to date, so the HUD reads the new numbers.</summary>
@@ -871,6 +916,7 @@ public class ARAutoRoomScan : MonoBehaviour
         if (IsNearPlaced(corner.point)) return;
         placed.Add(corner.point);
         locked.Add(corner.point);
+        Pin(corner.point);
         history.Add(new HistoryEntry { auto = false, placed = corner.point });
         pendingNotes.Add(Note.CornerFound);
         if (stats != null) stats.cornersAutoFound++;
@@ -882,6 +928,7 @@ public class ARAutoRoomScan : MonoBehaviour
     {
         var point = placed[index];
         placed.RemoveAt(index);
+        Unpin(point);
         if (locked.Remove(point)) suppressed.Add(point);
     }
 
@@ -952,7 +999,7 @@ public class ARAutoRoomScan : MonoBehaviour
     /// </summary>
     void TickCornerHold()
     {
-        if (!HasTarget || !builder.IsAimOnFloor || targetWall < 0 || targetWall >= walls.Count)
+        if (builder.IsLoopClosed || !HasTarget || !builder.IsAimOnFloor || targetWall < 0 || targetWall >= walls.Count)
         {
             ResetDwell();
             return;
@@ -995,7 +1042,7 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void OnTapped(Vector3 world)
     {
-        if (CurrentStep != Step.Walls) return;
+        if (CurrentStep != Step.Walls || builder.IsLoopClosed) return;
         if (!IsTrackingWell)
         {
             Noted?.Invoke(Note.TapIgnored);
@@ -1027,7 +1074,7 @@ public class ARAutoRoomScan : MonoBehaviour
     /// <summary>Press and hold on a corner removes it (a found one stays away).</summary>
     void OnLongPressed(Vector3 world)
     {
-        if (CurrentStep != Step.Walls) return;
+        if (CurrentStep != Step.Walls || builder.IsLoopClosed) return;
         if (!IsTrackingWell)
         {
             Noted?.Invoke(Note.TapIgnored);
@@ -1042,6 +1089,7 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void AddPlaced(Vector2 p)
     {
+        if (builder.IsLoopClosed) return;
         // A found corner right here is replaced by the hand-placed one.
         foreach (var t in tracked.FindAll(t => Vector2.Distance(t.point, p) <= suppressRadius))
         {
@@ -1050,6 +1098,7 @@ public class ARAutoRoomScan : MonoBehaviour
         }
 
         placed.Add(p);
+        Pin(p);
         history.Add(new HistoryEntry { auto = false, placed = p });
         pendingNotes.Add(Note.CornerAdded);
         lastProgressAt = Time.unscaledTime;
@@ -1149,6 +1198,7 @@ public class ARAutoRoomScan : MonoBehaviour
     /// <summary>Takes back the newest corner (found or placed). False when there is none.</summary>
     public bool Undo()
     {
+        if (builder.IsLoopClosed) return false;
         while (history.Count > 0)
         {
             var entry = history[^1];
@@ -1201,6 +1251,7 @@ public class ARAutoRoomScan : MonoBehaviour
     /// <summary>Drops every corner (found, placed, removed) and looks at the walls again.</summary>
     public void StartWallsOver()
     {
+        if (builder.IsLoopClosed) return;
         ClearWalls();
         if (stats != null) stats.backToStart++;
         SeedFloorCorner();
@@ -1230,6 +1281,7 @@ public class ARAutoRoomScan : MonoBehaviour
     /// <summary>Drops every corner (found, placed, removed) but keeps the walls seen so far.</summary>
     void ClearCorners()
     {
+        UnpinAll();
         tracked.Clear();
         placed.Clear();
         locked.Clear();
@@ -1238,6 +1290,7 @@ public class ARAutoRoomScan : MonoBehaviour
         lastPushed.Clear();
         lastCornerCount = 0;
         wasComplete = false;
+        autoCloseAllowed = true;
         pendingNotes.Clear();
         CornerCount = 0;
         HasTarget = false;
@@ -1259,6 +1312,7 @@ public class ARAutoRoomScan : MonoBehaviour
         if (index < 0)
         {
             placed.Insert(0, p);
+            Pin(p);
             index = 0;
         }
 
@@ -1274,13 +1328,144 @@ public class ARAutoRoomScan : MonoBehaviour
 
     void ImportBuilderCorners()
     {
+        UnpinAll();
         placed.Clear();
         history.Clear();
         foreach (var c in builder.Corners)
         {
             placed.Add(XZ(c));
+            Pin(XZ(c));
             history.Add(new HistoryEntry { auto = false, placed = XZ(c) });
         }
+    }
+
+    // ── Turning speed ─────────────────────────────────────────────────────────
+
+    /// <summary>Turning faster than this (degrees per second) drifts tracking too much to find corners.</summary>
+    const float MaxCornerTurnDegreesPerSecond = 30f;
+
+    float turnRate;
+    float lastYaw = float.NaN;
+
+    /// <summary>The phone is turning faster than corners can be found reliably.</summary>
+    public bool TurningFast => turnRate > MaxCornerTurnDegreesPerSecond;
+
+    void TrackTurnRate()
+    {
+        if (arCamera == null) return;
+        var yaw = arCamera.transform.eulerAngles.y;
+        var dt = Time.unscaledDeltaTime;
+        if (!float.IsNaN(lastYaw) && dt > 1e-4f)
+        {
+            var rate = Mathf.Abs(Mathf.DeltaAngle(lastYaw, yaw)) / dt;
+            // Smoothed over a few frames; a single jumpy frame shouldn't stop corner finding.
+            turnRate = Mathf.Lerp(turnRate, rate, Mathf.Clamp01(dt * 6f));
+        }
+
+        lastYaw = yaw;
+    }
+
+    // ── Corners stay on the real corners ─────────────────────────────────────
+
+    /// <summary>
+    /// A corner of <see cref="placed"/> and the AR anchor made where it was set. ARCore keeps
+    /// correcting its picture of the room while you walk round it: the walls (planes) moved with the
+    /// room, but a found corner stayed a fixed point and slid off the real corner (2026-11-12).
+    /// Corners placed by hand in the manual scan were already pinned like this.
+    /// </summary>
+    sealed class CornerPin
+    {
+        public Vector2 point;
+        public ARAnchor anchor;
+        public bool released;
+    }
+
+    readonly List<CornerPin> pins = new();
+    ARAnchorManager anchorManager;
+
+    /// <summary>Anchor jitter below this (5 mm) is ignored.</summary>
+    const float PinMoveEpsilon = 0.005f;
+
+    void Pin(Vector2 point)
+    {
+        if (anchorManager == null) anchorManager = FindFirstObjectByType<ARAnchorManager>();
+        if (anchorManager == null || !anchorManager.isActiveAndEnabled) return;
+        var pin = new CornerPin { point = point };
+        pins.Add(pin);
+        CreatePinAsync(pin, new Vector3(point.x, builder.FloorY, point.y));
+    }
+
+    async void CreatePinAsync(CornerPin pin, Vector3 world)
+    {
+        try
+        {
+            var result = await anchorManager.TryAddAnchorAsync(new Pose(world, Quaternion.identity));
+            if (!result.status.IsSuccess() || result.value == null) return;
+            if (pin.released || this == null)
+            {
+                Destroy(result.value.gameObject);
+                return;
+            }
+
+            pin.anchor = result.value;
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[AutoScan] Corner anchor failed: {e.Message}");
+        }
+    }
+
+    void Unpin(Vector2 point)
+    {
+        var index = pins.FindIndex(p => p.point == point);
+        if (index < 0) return;
+        Release(pins[index]);
+        pins.RemoveAt(index);
+    }
+
+    void UnpinAll()
+    {
+        foreach (var pin in pins) Release(pin);
+        pins.Clear();
+    }
+
+    static void Release(CornerPin pin)
+    {
+        if (pin.released) return;
+        pin.released = true;
+        if (pin.anchor != null) Destroy(pin.anchor.gameObject);
+        pin.anchor = null;
+    }
+
+    /// <summary>Moves each pinned corner to where its anchor is now, so it stays on the real corner.</summary>
+    void FollowPins()
+    {
+        foreach (var pin in pins)
+        {
+            if (pin.anchor == null || pin.anchor.trackingState != TrackingState.Tracking) continue;
+            var now = XZ(pin.anchor.transform.position);
+            if (Vector2.Distance(now, pin.point) < PinMoveEpsilon) continue;
+            MoveCorner(pin.point, now);
+            pin.point = now;
+        }
+    }
+
+    /// <summary>A corner moved with its anchor: everything that refers to it follows.</summary>
+    void MoveCorner(Vector2 from, Vector2 to)
+    {
+        var i = placed.IndexOf(from);
+        if (i >= 0) placed[i] = to;
+        var j = locked.IndexOf(from);
+        if (j >= 0) locked[j] = to;
+        for (var k = 0; k < history.Count; k++)
+        {
+            if (history[k].auto || history[k].placed != from) continue;
+            var entry = history[k];
+            entry.placed = to;
+            history[k] = entry;
+        }
+
+        if (hasStartCorner && startCorner == from) startCorner = to;
     }
 
     // ── Hold-still helper ─────────────────────────────────────────────────────

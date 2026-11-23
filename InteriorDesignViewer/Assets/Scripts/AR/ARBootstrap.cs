@@ -22,6 +22,12 @@ public class ARBootstrap : MonoBehaviour
 
     bool starting;
     bool sessionReady;
+    public bool IsStarting => starting;
+    public bool CameraPermissionDenied { get; private set; }
+    public bool CameraUnsupported { get; private set; }
+
+    void ReportCameraStatus(string state, string message) =>
+        GetComponent<ARDesignCameraWatchdog>()?.ReportStatus(state, message);
 
     /// <summary>
     /// Goes up every time AR tracking is reset (the world frame starts over). Positions saved in
@@ -101,33 +107,69 @@ public class ARBootstrap : MonoBehaviour
 #endif
     }
 
+    Coroutine scanResetRoutine;
+
     /// <summary>
     /// A new room scan: forget the planes ARCore has mapped so far. Unity stays loaded between
     /// scans, so without this every earlier scan's floor and wall planes stay tracked, the count
     /// keeps growing and each reopened scan gets slower. The camera feed is kicked the same way as
     /// on resume, so the reset doesn't leave it black.
     /// </summary>
-    public void ResetTrackingForNewScan()
+    public IEnumerator PrepareTrackingForNewScan()
     {
         // No layout checks here: a new scan replaces any layout shown before it (planner or real
         // room), so there are no placed pieces to keep. Skipping the reset after a layout view left
         // the old map in place, often skewed by pauses, and the next scan measured a 3.1 m ceiling.
-        if (!isActiveAndEnabled || arSession == null) return;
-        StartCoroutine(ResetWhenIdle());
-    }
+        if (!isActiveAndEnabled || arSession == null) yield break;
 
-    IEnumerator ResetWhenIdle()
-    {
-        // A resume/focus restart may be running; the reset must not be skipped because of it.
-        while (starting) yield return null;
-        if (Time.unscaledTime - lastResetAt < ResetCooldownSeconds)
+        // The first scan after the app starts has no earlier map to clear: resetting there only
+        // restarted the camera that had just opened (a cold start reset it twice and it came up
+        // "stuck in Ready", 2026-11-11/12).
+        if (!anyScanStarted)
         {
-            Debug.Log("[ARBootstrap] New scan — tracking was just reset, earlier planes are already gone.");
+            anyScanStarted = true;
+            Debug.Log("[ARBootstrap] First scan since the app started — the AR map is new, no reset.");
+            while (starting) yield return null;
             yield break;
         }
 
-        Debug.Log("[ARBootstrap] New scan — resetting AR tracking (clears earlier planes).");
-        yield return EnsureSessionRunning(resetTracking: true);
+        if (scanResetRoutine == null)
+            scanResetRoutine = StartCoroutine(ResetWhenIdle());
+        while (scanResetRoutine != null) yield return null;
+    }
+
+    public IEnumerator WaitForTrackingPreparation()
+    {
+        while (scanResetRoutine != null || starting) yield return null;
+    }
+
+    /// <summary>A scan has started since the app launched (static: Unity scenes reload, the AR map doesn't).</summary>
+    static bool anyScanStarted;
+
+    IEnumerator ResetWhenIdle()
+    {
+        // Always defer so the caller can store the coroutine before it finishes.
+        yield return null;
+        try
+        {
+            // A resume/focus restart may be running; wait before clearing the map.
+            while (starting) yield return null;
+            if (Time.unscaledTime - lastResetAt < ResetCooldownSeconds)
+            {
+                Debug.Log("[ARBootstrap] New scan — tracking was just reset, earlier planes are already gone.");
+                yield break;
+            }
+
+            Debug.Log("[ARBootstrap] New scan — resetting AR tracking (clears earlier planes).");
+            yield return EnsureSessionRunning(resetTracking: true);
+            // Let the plane manager consume removals before accepting room points.
+            yield return null;
+            yield return null;
+        }
+        finally
+        {
+            scanResetRoutine = null;
+        }
     }
 
     /// <summary>Resets within this long of each other count as one (each restarts ARCore's camera).</summary>
@@ -152,6 +194,8 @@ public class ARBootstrap : MonoBehaviour
     public void ResumeCamera()
     {
         if (!isActiveAndEnabled) return;
+        CameraPermissionDenied = false;
+        GetComponent<ARDesignCameraWatchdog>()?.ResetRecovery();
         StartCoroutine(EnsureSessionRunning(resetTracking: false));
     }
 
@@ -186,10 +230,20 @@ public class ARBootstrap : MonoBehaviour
 #if UNITY_ANDROID && !UNITY_EDITOR
             if (!Permission.HasUserAuthorizedPermission(Permission.Camera))
             {
-                Permission.RequestUserPermission(Permission.Camera);
+                if (CameraPermissionDenied)
+                {
+                    ReportCameraStatus("permissionDenied", "Allow camera access in Settings to scan rooms or view furniture in AR.");
+                    yield break;
+                }
+                ReportCameraStatus("requestingPermission", "Allow camera access to continue.");
+                var denied = false;
+                var callbacks = new PermissionCallbacks();
+                callbacks.PermissionDenied += _ => denied = true;
+                callbacks.PermissionDeniedAndDontAskAgain += _ => denied = true;
+                Permission.RequestUserPermission(Permission.Camera, callbacks);
 
                 var elapsed = 0f;
-                while (!Permission.HasUserAuthorizedPermission(Permission.Camera) &&
+                while (!denied && !Permission.HasUserAuthorizedPermission(Permission.Camera) &&
                        elapsed < permissionTimeoutSeconds)
                 {
                     elapsed += Time.unscaledDeltaTime;
@@ -200,13 +254,26 @@ public class ARBootstrap : MonoBehaviour
             if (!Permission.HasUserAuthorizedPermission(Permission.Camera))
             {
                 Debug.LogError("[ARBootstrap] Camera permission not granted — camera will stay black.");
+                CameraPermissionDenied = true;
+                ReportCameraStatus("permissionDenied", "Allow camera access in Settings to scan rooms or view furniture in AR.");
+                yield break;
+            }
+#elif UNITY_IOS && !UNITY_EDITOR
+            if (!Application.HasUserAuthorization(UserAuthorization.WebCam))
+                yield return Application.RequestUserAuthorization(UserAuthorization.WebCam);
+            if (!Application.HasUserAuthorization(UserAuthorization.WebCam))
+            {
+                CameraPermissionDenied = true;
+                ReportCameraStatus("permissionDenied", "Allow camera access in Settings to scan rooms or view furniture in AR.");
                 yield break;
             }
 #endif
+            CameraPermissionDenied = false;
 
             if (arSession == null)
             {
                 Debug.LogError("[ARBootstrap] No ARSession in the scene.");
+                ReportCameraStatus("unavailable", "The AR camera could not start. Go back and try again.");
                 yield break;
             }
 
@@ -226,6 +293,8 @@ public class ARBootstrap : MonoBehaviour
 
             if (ARSession.state == ARSessionState.Unsupported)
             {
+                CameraUnsupported = true;
+                ReportCameraStatus("unsupported", "This device does not support room scanning or AR furniture.");
 #if UNITY_EDITOR
                 Debug.LogWarning(
                     "[ARBootstrap] AR is unsupported in the Editor on this machine. " +
@@ -237,15 +306,22 @@ public class ARBootstrap : MonoBehaviour
                 yield break;
             }
 
+            CameraUnsupported = false;
+            // A new scan replaces the previous layout even if its camera mode is still active.
+            if (resetTracking)
+                ResetSession("new scan");
+
             // Orbit planner owns the camera — never re-enable passthrough or reset
             // tracking (that would yank the locked orbit view).
             if (IsPlannerOrbitActive())
             {
                 layoutMode?.ReapplyPlannerCamera();
+                ReportCameraStatus("inactive", string.Empty);
                 Debug.Log("[ARBootstrap] Planner orbit active — skipped AR camera resume.");
                 yield break;
             }
 
+            ReportCameraStatus("starting", "Opening the camera…");
             // Kick the camera pipeline — after resume ARCameraBackground often
             // stops blitting even though the session reports Tracking.
             if (cameraManager != null)
@@ -275,8 +351,6 @@ public class ARBootstrap : MonoBehaviour
             // Cold start: enabling the session is enough. ARSession.Reset() on
             // Xiaomi / ARCore often leaves the camera texture black after splash.
             sessionReady = true;
-            if (resetTracking)
-                ResetSession("new scan");
 
             var wait = 0f;
             while (wait < 2.5f &&

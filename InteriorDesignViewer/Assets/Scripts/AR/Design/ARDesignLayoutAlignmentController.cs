@@ -31,6 +31,9 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
     Vector3 lastA;
     Vector3 lastB;
     int matchedEdge = -1;
+    /// <summary>The plan walls Turn steps through, the best length match first.</summary>
+    readonly List<int> wallOrder = new();
+    int wallIndex;
     float measuredM;
     float planM;
 
@@ -54,6 +57,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
 
     /// <summary>True once RN started the alignment flow; the bootstrap must not force the planner.</summary>
     public bool OwnsView => state != State.Idle;
+    bool HasTrackedFloor => ARAutoRoomScan.IsTrackingWell && indicator != null && indicator.IsLockedOnFloor;
 
     public ARDesignLayoutModeController.ViewMode PreferredView { get; private set; } =
         ARDesignLayoutModeController.ViewMode.RealRoom;
@@ -69,7 +73,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
 
     // ── RN entry points ───────────────────────────────────────────────────────
 
-    public void Begin()
+    public void Begin(bool forceManual = false)
     {
         ResolveReferences();
         if (scan == null || !scan.IsConfirmed)
@@ -79,7 +83,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
         }
 
         // A repeat begin (RN retries) after the layout was placed at the scan: keep it there.
-        if (state == State.Aligned && autoPlaced)
+        if (!forceManual && state == State.Aligned && autoPlaced)
         {
             Send();
             return;
@@ -87,13 +91,16 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
 
         // Same tracking session as the scan: the room is still where it was scanned, so put the
         // layout there. No corner marking, and no chance of matching the wrong wall.
-        if (state == State.Idle && TryPlaceAtScan())
+        // A saved frame cannot locate the real wall while ARCore is still relocalising.
+        if (!forceManual && state == State.Idle && ARAutoRoomScan.IsTrackingWell && TryPlaceAtScan())
             return;
 
         autoPlaced = false;
         state = State.Aligning;
         step = 0;
         measuredM = 0f;
+        wallOrder.Clear();
+        wallIndex = 0;
         ClearMarkers();
 
         if (layoutMode != null)
@@ -112,7 +119,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
         }
 
         indicator?.StartTracking();
-        lastFloorDetected = indicator != null && indicator.IsLockedOnFloor;
+        lastFloorDetected = HasTrackedFloor;
         Send();
     }
 
@@ -121,7 +128,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
         if (state != State.Aligning) return;
         ResolveReferences();
 
-        if (indicator == null || !indicator.IsLockedOnFloor)
+        if (!HasTrackedFloor)
         {
             Send(error: "noFloor");
             return;
@@ -149,6 +156,9 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
             return;
         }
 
+        wallOrder.Clear();
+        wallOrder.AddRange(BuildWallOrder(scan.FloorPolygon, matchedEdge, measuredM));
+        wallIndex = 0;
         FinishAligning();
     }
 
@@ -160,22 +170,65 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
         Send();
     }
 
-    /// <summary>Puts the opposite plan wall on the marked wall (rotates the layout 180°).</summary>
+    /// <summary>
+    /// Puts the next plan wall on the marked wall: the opposite one first (layout turned 180°),
+    /// then the side walls. Matching by length alone picks the wrong wall when two are close
+    /// (a 3.40 × 3.20 m room marked 3.22 m), and only offering the opposite wall then left the
+    /// layout turned 90° with no way to fix it.
+    /// </summary>
     public void Flip()
     {
-        if (state != State.Aligned || matchedEdge < 0) return;
+        if (state != State.Aligned || matchedEdge < 0 || wallOrder.Count < 2) return;
         ResolveReferences();
 
         var poly = scan != null ? scan.FloorPolygon : null;
-        var opposite = FindOppositeEdge(poly, matchedEdge);
-        if (opposite < 0)
+        if (poly == null)
         {
             Send();
             return;
         }
 
-        Solve(lastA, lastB, opposite, swapForUserSide: false);
+        for (var tries = 1; tries < wallOrder.Count; tries++)
+        {
+            var next = (wallIndex + tries) % wallOrder.Count;
+            if (wallOrder[next] >= poly.Count) continue;
+            if (!Solve(lastA, lastB, wallOrder[next], swapForUserSide: false)) continue;
+            wallIndex = next;
+            break;
+        }
+
         Send();
+    }
+
+    /// <summary>
+    /// The walls Turn offers, in order: the matched wall, its opposite, then every other wall of at
+    /// least <see cref="MinWallLength"/> by how close its length is to the marked one.
+    /// </summary>
+    public static List<int> BuildWallOrder(IReadOnlyList<Vector3> poly, int matched, float measured)
+    {
+        var order = new List<int>();
+        if (poly == null || poly.Count < 3 || matched < 0 || matched >= poly.Count) return order;
+
+        order.Add(matched);
+        var opposite = FindOppositeEdge(poly, matched);
+        if (opposite >= 0) order.Add(opposite);
+
+        var rest = new List<int>();
+        for (var i = 0; i < poly.Count; i++)
+        {
+            if (order.Contains(i)) continue;
+            if (Flat(poly[(i + 1) % poly.Count] - poly[i]).magnitude < MinWallLength) continue;
+            rest.Add(i);
+        }
+
+        rest.Sort((x, y) =>
+        {
+            var dx = Mathf.Abs(Flat(poly[(x + 1) % poly.Count] - poly[x]).magnitude - measured);
+            var dy = Mathf.Abs(Flat(poly[(y + 1) % poly.Count] - poly[y]).magnitude - measured);
+            return dx != dy ? dx.CompareTo(dy) : x.CompareTo(y);
+        });
+        order.AddRange(rest);
+        return order;
     }
 
     public void SetView(string view)
@@ -241,6 +294,8 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
         step = 0;
         autoPlaced = false;
         matchedEdge = -1;
+        wallOrder.Clear();
+        wallIndex = 0;
         sourceToWorld = Matrix4x4.identity;
         sourceYaw = 0f;
         PreferredView = ARDesignLayoutModeController.ViewMode.RealRoom;
@@ -260,7 +315,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
         // Other systems (HUD phase changes, placement commits) may stop the reticle.
         indicator.StartTracking();
 
-        var floor = indicator.IsLockedOnFloor;
+        var floor = HasTrackedFloor;
         var live = 0f;
         if (step == 1 && floor)
         {
@@ -318,7 +373,14 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
 
         var yawDelta = YawOf(dirW) - YawOf(dirL);
         var rotation = Quaternion.Euler(0f, yawDelta, 0f);
-        var m = Matrix4x4.TRS(a, rotation, Vector3.one) * Matrix4x4.Translate(-l0);
+        // Middle on middle: the plan wall and the marked wall are rarely the same length (3.40 m
+        // planned, 3.22 m marked on the Redmi, 2026-11-12), and pinning the plan's corner on the
+        // first mark put all of the difference at the far end.
+        var midW = (a + b) * 0.5f;
+        midW.y = a.y;
+        var midL = (l0 + l1) * 0.5f;
+        midL.y = l0.y;
+        var m = Matrix4x4.TRS(midW, rotation, Vector3.one) * Matrix4x4.Translate(-midL);
 
         var corners = new Vector3[poly.Count];
         for (var i = 0; i < poly.Count; i++)
@@ -331,11 +393,14 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
         if (!scan.ApplyMeasuredRoom(corners, wallHeight))
             return false;
 
-        placement?.TransformAllInstances(m, yawDelta);
-        FindFirstObjectByType<FurnitureLayoutHistory>()?.Clear();
-
+        // The marked corners are real floor points: pieces are kept on this floor.
+        ScanPlacement.RememberMarkedFloor((a.y + b.y) * 0.5f);
+        // History emits source poses synchronously. Set the inverse mapping first so
+        // lining up the room cannot overwrite the 2D arrangement with world coordinates.
         sourceToWorld = m * sourceToWorld;
         sourceYaw += yawDelta;
+        placement?.TransformAllInstances(m, yawDelta);
+        FindFirstObjectByType<FurnitureLayoutHistory>()?.Clear();
         lastA = a;
         lastB = b;
         matchedEdge = edge;
@@ -366,10 +431,10 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
             : 2.5f;
         if (!scan.ApplyMeasuredRoom(corners, wallHeight)) return false;
 
-        placement?.TransformAllInstances(m, yaw);
-        FindFirstObjectByType<FurnitureLayoutHistory>()?.Clear();
         sourceToWorld = m;
         sourceYaw = yaw;
+        placement?.TransformAllInstances(m, yaw);
+        FindFirstObjectByType<FurnitureLayoutHistory>()?.Clear();
         matchedEdge = -1;
         measuredM = 0f;
         planM = 0f;
@@ -532,7 +597,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
                 _ => "idle",
             },
             step = step,
-            floorDetected = indicator != null && indicator.IsLockedOnFloor,
+            floorDetected = HasTrackedFloor,
             measuredM = measuredM,
             planM = planM,
             view = layoutMode != null && layoutMode.CurrentViewMode == ARDesignLayoutModeController.ViewMode.Planner
@@ -540,8 +605,7 @@ public class ARDesignLayoutAlignmentController : MonoBehaviour
                 : "real",
             error = error ?? string.Empty,
             autoPlaced = autoPlaced,
-            canTurn = state == State.Aligned && !autoPlaced && scan != null
-                      && FindOppositeEdge(scan.FloorPolygon, matchedEdge) >= 0,
+            canTurn = state == State.Aligned && !autoPlaced && wallOrder.Count > 1,
         };
         UnityMessageBridge.SendToApp("layoutAlignment", JsonUtility.ToJson(payload));
     }

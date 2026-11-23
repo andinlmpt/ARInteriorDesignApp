@@ -15,6 +15,8 @@ import java.lang.reflect.InvocationTargetException;
 public class ReactNativeUnityView extends FrameLayout {
   private UPlayer view;
   public boolean keepPlayerMounted = false;
+  // Window focus and Activity resume must respect an explicit pause from the AR route.
+  public boolean playerRequestedActive = true;
 
   public ReactNativeUnityView(Context context) {
     super(context);
@@ -29,11 +31,11 @@ public class ReactNativeUnityView extends FrameLayout {
   public void onWindowFocusChanged(boolean hasWindowFocus) {
     super.onWindowFocusChanged(hasWindowFocus);
 
-    if (view == null) {
+    if (view == null || !ReactNativeUnityViewManager.ownsPlayer(this)) {
       return;
     }
 
-    view.windowFocusChanged(hasWindowFocus);
+    view.windowFocusChanged(hasWindowFocus && playerRequestedActive);
 
     if (!keepPlayerMounted || !_isUnityReady) {
       return;
@@ -42,10 +44,10 @@ public class ReactNativeUnityView extends FrameLayout {
     // pause Unity on blur, resume on focus. Through ReactNativeUnity so _isUnityPaused follows:
     // UPlayer.pause() left it false, so focus coming back (a dialog closing) never resumed Unity
     // and the AR screen stayed frozen on its last frame.
-    if (hasWindowFocus && _isUnityPaused) {
+    if (hasWindowFocus && playerRequestedActive && _isUnityPaused) {
       // view.requestFocus();
       ReactNativeUnity.resume();
-    } else if (!hasWindowFocus && !_isUnityPaused) {
+    } else if ((!hasWindowFocus || !playerRequestedActive) && !_isUnityPaused) {
       ReactNativeUnity.pause();
     }
   }

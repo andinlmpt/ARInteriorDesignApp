@@ -4,6 +4,7 @@ export const UNITY_AR_GAME_OBJECT = 'Managers';
 export const UNITY_AR_RECEIVE_METHOD = 'ReceiveMessage';
 
 export type UnityToRNEvent =
+  | 'cameraStatus'
   | 'unityReady'
   | 'reloadComplete'
   | 'furniturePlaced'
@@ -35,6 +36,7 @@ export type UnityToRNEvent =
   | 'scannerReady';
 
 export type RNToUnityMethod =
+  | 'retryCamera'
   | 'selectFurniture'
   | 'clearFurniture'
   // ARDesignScene (Unity: ARSceneBridge.cs)
@@ -73,6 +75,7 @@ export type RNToUnityMethod =
   | 'wakePlanner'
   | 'furnitureGesture'
   | 'beginLayoutAlignment'
+  | 'realignLayout'
   | 'markAlignmentCorner'
   | 'undoAlignmentCorner'
   | 'flipLayoutAlignment'
@@ -81,6 +84,11 @@ export type RNToUnityMethod =
 export interface UnityOutboundMessage {
   event: UnityToRNEvent | string;
   data: string;
+}
+
+export interface CameraStatusPayload {
+  state: 'starting' | 'requestingPermission' | 'permissionDenied' | 'unsupported' | 'recovering' | 'unavailable' | 'ready' | 'inactive';
+  message: string;
 }
 
 export interface UnityInboundMessage {
